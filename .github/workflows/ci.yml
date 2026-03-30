@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-check:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Check quality catalog
+        shell: pwsh
+        run: |
+          if (Test-Path "quality/test-catalog.json") {
+            npm run quality:catalog:check
+          } else {
+            Write-Host "Skipping quality catalog check because quality/test-catalog.json is not present."
+          }
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build frontend assets
+        run: npm run build
+
+      - name: Check Rust crate
+        run: cargo check --manifest-path src-tauri/Cargo.toml
