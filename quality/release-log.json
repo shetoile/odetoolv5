@@ -1,0 +1,325 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "rn-20260309195614",
+      "date": "2026-03-09T19:56:14.299Z",
+      "category": "functionality",
+      "title": "System editor now includes mentions, node links, relations, and AI proposals",
+      "details": "System editing now lets users insert inline node links directly in section text through @ mentions or the picker, keep explicit cross-node relations in a dedicated right-rail Connections panel, add short external links to online tools, request an AI rewrite proposal with explicit accept or reject confirmation, and reuse the existing mind-map level color palette across System cards and section accents. Copy, PDF, and DOCX export stay aligned with the same authored section content.",
+      "qaReport": "quality/reports/qa-report-20260309-195606.json"
+    },
+    {
+      "id": "rn-20260309191245",
+      "date": "2026-03-09T19:12:45.109Z",
+      "category": "functionality",
+      "title": "System view now uses an editor-first layout",
+      "details": "Reworked the old published-style screen into an editor-first System workspace: the selected node stays open in the center editor, quick inserts and node links sit in the right context rail, and copy/export actions stay visible in the top bar so authoring is faster and more predictable.",
+      "qaReport": "quality/reports/qa-report-20260309-191223.json"
+    },
+    {
+      "id": "rn-20260309185239",
+      "date": "2026-03-09T18:52:39.669Z",
+      "category": "functionality",
+      "title": "Favorite group tabs now use a trash icon for delete",
+      "details": "Replaced the plain x delete affordance on favorite group tabs with the shared trash-bin icon so the action reads as deletion instead of close. Updated the related help text to refer to the trash button on the group tab.",
+      "qaReport": "quality/reports/qa-report-20260309-185233.json"
+    },
+    {
+      "id": "rn-20260309185021",
+      "date": "2026-03-09T18:50:21.207Z",
+      "category": "functionality",
+      "title": "AI Command Bar now includes inline Mistral key setup",
+      "details": "Added a new AI Settings tab directly inside the ODE AI command bar so users can add, remove, test, and save Mistral API keys without leaving the panel. Updated missing-key guidance and help copy to point to the in-panel tab instead of the old separate settings modal wording.",
+      "qaReport": "quality/reports/qa-report-20260309-185012.json"
+    },
+    {
+      "id": "rn-20260309183357",
+      "date": "2026-03-09T18:33:57.878Z",
+      "category": "functionality",
+      "title": "AI Options now records document action telemetry with context",
+      "details": "Every AI Options execution now writes one structured telemetry event that captures the chosen document action, detected document shape, selected section, NA match, and whether the user followed the recommended action. Assistant Activity now shows that context directly so document-advisor runs are auditable without inspecting raw localStorage, while document-review runs triggered from AI Options no longer double-log.",
+      "qaReport": "quality/reports/qa-report-20260309-183619.json"
+    },
+    {
+      "id": "rn-20260309093109",
+      "date": "2026-03-09T09:31:09+01:00",
+      "category": "feature",
+      "title": "System view now supports structured sections, relations, and PDF or DOCX export",
+      "details": "Desktop > System now behaves like a structured business-system editor: sections write inline with live preview, quote/code/divider patterns plus Business, Operations, UX/UI, and AI architecture insight blocks stay available, rendered node links can jump across workspaces, explicit relations stay visible outside the prose, short external links can point to tools like Jira or SharePoint, and the assembled system can be exported directly to PDF or DOCX.",
+      "qaReport": "quality/reports/qa-report-20260309-115639.json"
+    },
+    {
+      "id": "rn-20260308135501",
+      "date": "2026-03-08T13:55:01.8753078+01:00",
+      "category": "functionality",
+      "title": "QA checklist expanded and AI Tester now runs more active regression checks",
+      "details": "Added recent regression coverage for blank inline rename on new nodes, Timeline status plus Parents filtering, Backspace navigate-up behavior, linked-workspace Re-sync visibility, Quick Access double-click open, Mind Map root interaction, and connector cleanup. AI Tester now prioritizes automatable high-risk items first and automatically exercises Enter-create blank rename, Timeline parent-filter behavior, and Backspace navigate-up.",
+      "qaReport": "quality/reports/qa-report-20260309-102834.json"
+    },
+    {
+      "id": "rn-20260307174741",
+      "date": "2026-03-07T17:47:41.184Z",
+      "category": "functionality",
+      "title": "Utility panel windows now support minimize and maximize",
+      "details": "Release Notes, Help, and QA Checklist utility windows now use ODE-themed minimize, maximize/restore, close, and header double-click behavior so they stay consistent with the main desktop window.",
+      "qaReport": "quality/reports/qa-report-20260307-165202.json"
+    },
+    {
+      "id": "rn-20260307163928",
+      "date": "2026-03-07T16:39:28.155Z",
+      "category": "functionality",
+      "title": "QA proof capture now targets the app and attachments open directly",
+      "details": "QA failed-item proofs now open directly from the checklist, screenshot capture hides the QA utility window and captures from the main app before auto-attaching the image, and saved QA PDF reports auto-open after they are written.",
+      "qaReport": "quality/reports/qa-report-20260307-163432.json"
+    },
+    {
+      "id": "rn-20260307144508",
+      "date": "2026-03-07T14:45:08.287Z",
+      "category": "functionality",
+      "title": "QA evidence, exact filters, and single-instance desktop hardening",
+      "details": "QA report export now saves a real PDF file with failed-item reason and proof capture, a second EXE launch refocuses the existing app instead of opening another full instance, and FILLED folders no longer leak into TASK-only or DATA-only filtered views.",
+      "qaReport": "quality/reports/qa-report-20260307-143657.json"
+    },
+    {
+      "id": "rn-20260307132356",
+      "date": "2026-03-07T13:23:56.310Z",
+      "category": "functionality",
+      "title": "Inline spelling suggestions now use the ODE theme",
+      "details": "Right-click during inline rename now opens an ODE-themed spelling and text-edit menu instead of the native browser menu, with local multi-language suggestions plus Cut, Copy, Paste, and Select all actions in the same minimalist style.",
+      "qaReport": "quality/reports/qa-report-20260307-132341.json"
+    },
+    {
+      "id": "rn-20260307123210",
+      "date": "2026-03-07T12:32:10.031Z",
+      "category": "functionality",
+      "title": "Filtered views, workspace moves, and inline rename are now more reliable",
+      "details": "Node-state filters can now show only matching results or include parents on demand, Grid/Mind Map/Details recurse through the current folder instead of going empty on descendant matches, Timeline status filtering can hide parents too, Move to Workspace now switches into the target workspace before refreshing selection, and inline rename enables native spellcheck suggestions.",
+      "qaReport": "quality/reports/qa-report-20260307-123154.json"
+    },
+    {
+      "id": "rn-20260307112234",
+      "date": "2026-03-07T11:22:34.822Z",
+      "category": "functionality",
+      "title": "Shared create routing now stays consistent across tree, desktop, and timeline",
+      "details": "All New Topic, Enter, Tab, and no-selection create paths now use one shared surface-aware routing rule set: Tree creates at workspace root, Desktop creates in the current folder, Timeline creates under the selected visible row when available, and file targets create siblings instead of invalid children.",
+      "qaReport": "quality/reports/qa-report-20260307-112226.json"
+    },
+    {
+      "id": "rn-20260307110544",
+      "date": "2026-03-07T11:05:44.397Z",
+      "category": "functionality",
+      "title": "Right-click menus now behave like keyboard-driven action menus",
+      "details": "Context menus now focus the first enabled action automatically, New Topic is the default first action on folders across tree, desktop, and timeline, and Enter, Arrow keys, and Tab navigate and execute actions without falling through to global shortcuts.",
+      "qaReport": "quality/reports/qa-report-20260307-111251.json"
+    },
+    {
+      "id": "rn-20260307105647",
+      "date": "2026-03-07T10:56:47.576Z",
+      "category": "functionality",
+      "title": "Timeline child creation now follows the visible timeline branch",
+      "details": "Tab child creation now follows the active Timeline surface, row context menus include New Topic for direct child creation, and blank-space New Topic in Timeline respects the selected visible timeline parent instead of escaping the branch.",
+      "qaReport": "quality/reports/qa-report-20260307-105637.json"
+    },
+    {
+      "id": "rn-20260307100659",
+      "date": "2026-03-07T10:06:59.827Z",
+      "category": "functionality",
+      "title": "Workspace root branch shortcuts now stay inside the active workspace",
+      "details": "Aligned duplicate, paste, and no-selection keyboard creation with workspace scoping so they stay visible inside the active workspace, and blocked cut on the fixed workspace root instead of pretending to move it.",
+      "qaReport": "quality/reports/qa-report-20260307-101342.json"
+    },
+    {
+      "id": "rn-20260307095633",
+      "date": "2026-03-07T09:56:33.335Z",
+      "category": "functionality",
+      "title": "Enter on workspace root now creates a visible top-level branch",
+      "details": "Fixed keyboard sibling creation on the active workspace root so Enter creates a top-level child inside the current workspace instead of an invisible node outside project scope.",
+      "qaReport": "quality/reports/qa-report-20260307-095626.json"
+    },
+    {
+      "id": "rn-20260307013958",
+      "date": "2026-03-07T01:39:58.876Z",
+      "category": "feature",
+      "title": "Older ODE trees now backfill metadata on demand",
+      "details": "When AI touches an older ODE branch created before metadata support, ODETool now infers the NA path from titles and depth, persists the missing ODE metadata, and reuses that backfill for protection rules and chantier routing.",
+      "qaReport": "quality/reports/qa-report-20260307-013953.json"
+    },
+    {
+      "id": "rn-20260307012428",
+      "date": "2026-03-07T01:24:28.655Z",
+      "category": "feature",
+      "title": "ODE-aware document WBS now auto-routes into chantier mode",
+      "details": "Document-based WBS generation now switches automatically to chantier-aware AI prompts when the target is a Level 4 NA or an existing chantier, keeping ODE work inside the dynamic chantier structure instead of generic WBS containers.",
+      "qaReport": "quality/reports/qa-report-20260307-012423.json"
+    },
+    {
+      "id": "rn-20260307011244",
+      "date": "2026-03-07T01:12:44.983Z",
+      "category": "feature",
+      "title": "ODE chantier creation under mapped Level 4 NA",
+      "details": "Added Create Chantier from AI in AI Options, introduced chantier-specific AI generation with ODE-safe fallback, resolved mapped Level 4 NA targets inside the active workspace, and materialized ODE-generated roots as real chantier folders instead of generic WBS containers.",
+      "qaReport": "quality/reports/qa-report-20260307-011239.json"
+    },
+    {
+      "id": "rn-20260307001310",
+      "date": "2026-03-07T00:13:10.105Z",
+      "category": "feature",
+      "title": "ODE NA mapping and protected-level policy foundation",
+      "details": "Added an ODE NA catalog and policy helpers, introduced document-to-NA mapping in AI Options, saved suggested NA metadata on documents, and began protecting Levels 1-4 from AI-generated structure writes while annotating imported ODE outlines.",
+      "qaReport": "quality/reports/qa-report-20260307-001303.json"
+    },
+    {
+      "id": "rn-20260306231905",
+      "date": "2026-03-06T23:19:05.966Z",
+      "category": "feature",
+      "title": "Document AI advisor, section trees, and linked-workspace cleanup",
+      "details": "Added AI Options for selected documents with action ranking, enabled section-scoped tree generation, fixed the section-action route, refreshed Help/QA guidance, and stopped linked-workspace mirrors from writing .ode-context sidecar files.",
+      "qaReport": "quality/reports/qa-report-20260306-231853.json"
+    },
+    {
+      "id": "rn-20260306101151",
+      "date": "2026-03-06T10:11:51.876Z",
+      "category": "general",
+      "title": "v1.029 release hardening and QA discipline sync",
+      "details": "Updated Help Center guidance (EN/FR/DE/ES), appended in-app release logs 36-38, expanded regression checklist scenarios, and synced quality test-catalog coverage. Ran full quality gate before recording this release.",
+      "qaReport": "quality/reports/qa-report-20260306-101117.json"
+    },
+    {
+      "id": "rn-20260306001549",
+      "date": "2026-03-06T00:15:49.506Z",
+      "category": "functionality",
+      "title": "Help content localized for FR/DE/ES",
+      "details": "Help Center categories, topic summaries, and step-by-step guidance are now localized for French, German, and Spanish, and automatically switch with the selected app language while keeping English as fallback.",
+      "qaReport": "quality/reports/qa-report-20260306-001535.json"
+    },
+    {
+      "id": "rn-20260306001037",
+      "date": "2026-03-06T00:10:37.987Z",
+      "category": "functionality",
+      "title": "Tree and details virtualization for large datasets",
+      "details": "Added windowed rendering for Sidebar tree rows and Desktop Details rows with spacer-based virtualization, selection-follow auto-scroll, and overscan thresholds to keep interaction smooth on very large node lists while preserving existing behavior.",
+      "qaReport": "quality/reports/qa-report-20260306-001023.json"
+    },
+    {
+      "id": "rn-20260306000518",
+      "date": "2026-03-06T00:05:18.500Z",
+      "category": "functionality",
+      "title": "Performance pass for large trees and timelines",
+      "details": "Optimized backend sibling lookups to use direct DB helper paths, reduced keyboard navigation linear scans via index maps, and tightened timeline scroll/index updates to cut redundant render work while preserving existing behavior.",
+      "qaReport": "quality/reports/qa-report-20260306-000406.json"
+    },
+    {
+      "id": "rn-20260305230344",
+      "date": "2026-03-05T23:03:44.877Z",
+      "category": "general",
+      "title": "Package import/export feedback now uses themed notices",
+      "details": "Replaced blocking browser alert dialogs in node package import/export with in-app success/error notices to keep UX consistent with ODE modal theme and avoid native popup interruptions.",
+      "qaReport": "quality/reports/qa-report-20260305-230334.json"
+    },
+    {
+      "id": "rn-20260305225108",
+      "date": "2026-03-05T22:51:08.456Z",
+      "category": "functionality",
+      "title": "Workspace index legacy fallback hardening",
+      "details": "Hardened workspace loading against legacy Surreal Value revision records, added quoted-folder-path normalization for project import, and expanded regression coverage before release.",
+      "qaReport": "quality/reports/qa-report-20260305-225059.json"
+    },
+    {
+      "id": "rn-20260305174505",
+      "date": "2026-03-05T17:45:05.626Z",
+      "category": "functionality",
+      "title": "Tauri desktop build pipeline and executable delivery",
+      "details": "Confirmed Tauri-based desktop packaging flow, built production bundles successfully, generated direct app executable and NSIS installer, and delivered desktop-ready executables for local testing.",
+      "qaReport": "quality/reports/qa-report-20260304-140714.json"
+    },
+    {
+      "id": "rn-20260303224236",
+      "date": "2026-03-03T22:42:36.700Z",
+      "category": "functionality",
+      "title": "Workspace persistence and sync reliability hardening",
+      "details": "Persisted active workspace/current folder/selected node across restarts, prevented premature workspace list trimming before tree load, kept workspace selection on transient load errors, retained workspaces even when path is offline, and fixed mirror copy self-path edge case during re-sync.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303125320",
+      "date": "2026-03-03T12:53:20.256Z",
+      "category": "functionality",
+      "title": "Manual workspace Re-sync action (two-way)",
+      "details": "Added a Workspace Re-sync button that runs PC->app import from the selected workspace path and then app->PC projection sync, scoped to the active workspace only to avoid background performance impact.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303120859",
+      "date": "2026-03-03T12:08:59.070Z",
+      "category": "functionality",
+      "title": "Project sync uses recovered workspace list",
+      "details": "Project-folder projection now resolves root-path mapping via get_projects (same source as UI) so recovered/legacy workspaces are also synced from app changes to PC paths.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303114846",
+      "date": "2026-03-03T11:48:46.292Z",
+      "category": "functionality",
+      "title": "Project sync fallback via workspace records",
+      "details": "Project-path projection now resolves sync targets from workspace records (rootNodeId->rootPath) with node-property fallback, improving reliability when projectPath metadata is missing.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303113306",
+      "date": "2026-03-03T11:33:06.707Z",
+      "category": "functionality",
+      "title": "Project-folder sync from app to PC path",
+      "details": "Added projection sync to imported workspace project paths so app-created folders/files are written to the actual PC project directory, with managed-entry tracking and cleanup for updates/removals.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303095811",
+      "date": "2026-03-03T09:58:11.408Z",
+      "category": "functionality",
+      "title": "Desktop numbering normalization and bracket projection",
+      "details": "Normalized numbering prefixes on project-folder import (e.g., [2], (3), 1.2) before storing node names, and changed desktop mirror projection to always render [number] Name format while preserving app numbering labels.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303092619",
+      "date": "2026-03-03T09:26:19.418Z",
+      "category": "functionality",
+      "title": "Workspace keyboard node creation fix",
+      "details": "Fixed Enter/Tab node creation when a workspace root is selected or no node is selected in project scope; new nodes now always create inside the active workspace instead of hidden global root.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260303085339",
+      "date": "2026-03-03T08:53:39.355Z",
+      "category": "general",
+      "title": "Baseline quality workflow initialized",
+      "details": "Established mandatory change workflow: quality gate report, issue fix loop, and categorized release note entries linked to QA report.",
+      "qaReport": "quality/reports/qa-report-20260303-085143.json"
+    },
+    {
+      "id": "rn-20260310120229",
+      "date": "2026-03-10T12:02:29.1119567Z",
+      "category": "functionality",
+      "title": "System view now surfaces status coverage and keeps section tools inline",
+      "details": "Desktop > System now keeps node-link, external-link, quote, divider, and business or operations insert actions directly above the active editor, shifts the right rail toward status overview, connections, external links, and branch sections, and includes the same workspace or node coverage summary in PDF and DOCX export so authors can judge documentation progress without leaving the editor flow.",
+      "qaReport": "quality/reports/qa-report-20260310-120936.json"
+    },
+    {
+      "id": "rn-20260311000328",
+      "date": "2026-03-11T00:03:28.1679756Z",
+      "category": "functionality",
+      "title": "Quick Access now behaves like a launcher with focused group actions",
+      "details": "Quick Access cards now open the selected favorite into the workspace and switch to Node Tree for a clear return path, while right-click menus are scoped to favorite cards, group headers, and empty background so users only see launcher and group-management actions instead of generic New Topic/Paste commands. Help Center guidance and the QA checklist were updated to match the new flow.",
+      "qaReport": "quality/reports/qa-report-20260310-120936.json"
+    },
+    {
+      "id": "rn-20260315120000",
+      "date": "2026-03-15T12:00:00.000Z",
+      "category": "functionality",
+      "title": "Search precision, timeline clarity, and System tabs",
+      "details": "Tightened workspace search to favor visible node names and paths over noisy internal metadata, made Timeline search focus scheduled execution tasks while filtering the visible row set to exact matches, restored a very light daily grid with warmer month boundaries for faster reading, split Desktop > System into Objective and Deliverables tabs, disabled intrusive native search suggestions, and refreshed Help plus QA checklist guidance to cover the new flow.",
+      "qaReport": "quality/reports/qa-report-20260310-120936.json"
+    }
+  ]
+}

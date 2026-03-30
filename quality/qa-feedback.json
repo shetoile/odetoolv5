@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "Add client feedback and comments here before release so the AI tester can include them as categorized QA checklist inputs. Recommended categories: bug, issue, feature, functionality, general.",
+  "entries": []
+}

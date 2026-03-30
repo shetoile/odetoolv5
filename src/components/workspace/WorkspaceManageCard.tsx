@@ -1,0 +1,342 @@
+import { useEffect, useRef, useState } from "react";
+import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import { partitionWorkspaceProjects } from "@/features/workspace/manage";
+import { hasLinkedWorkspaceFolder, resolveActiveProject } from "@/features/workspace/scope";
+import type { TranslationParams } from "@/lib/i18n";
+import type { ProjectSummary } from "@/lib/types";
+
+type TranslateFn = (key: string, params?: TranslationParams) => string;
+
+interface WorkspaceManageCardProps {
+  t: TranslateFn;
+  projects: ProjectSummary[];
+  activeProjectId: string | null;
+  defaultProjectId: string | null;
+  workspaceNameInput: string;
+  workspaceLocalPathInput: string;
+  isProjectImporting: boolean;
+  isWorkspaceCreating: boolean;
+  isProjectResyncing: boolean;
+  isProjectDeleting: boolean;
+  workspaceCreateInlineOpen: boolean;
+  workspaceExternalChangeCount: number;
+  isWorkspaceExternalChangeChecking: boolean;
+  workspaceError: string | null;
+  workspaceNotice: string | null;
+  onProjectSelectionChange: (projectId: string) => void;
+  onWorkspaceNameInputChange: (value: string) => void;
+  onWorkspaceLocalPathInputChange: (value: string) => void;
+  onOpenCreateWorkspace: () => void;
+  onCancelCreateWorkspace: () => void;
+  onCreateWorkspace: () => void;
+  onPickAndImportProjectFolder: () => void;
+  onPickWorkspaceLocalFolder: () => void;
+  onSetWorkspaceLocalPath: () => void;
+  onReSyncWorkspace: () => void;
+  onDeleteProjectWorkspace: () => void;
+  onSetDefaultWorkspace: () => void;
+  onOpenWorkspaceFolderLocation: () => void;
+  workspaceRootNumberingEnabled: boolean;
+  onWorkspaceRootNumberingEnabledChange: (enabled: boolean) => void;
+}
+
+export function WorkspaceManageCard({
+  t,
+  projects,
+  activeProjectId,
+  defaultProjectId,
+  workspaceNameInput,
+  workspaceLocalPathInput,
+  isProjectImporting,
+  isWorkspaceCreating,
+  isProjectResyncing,
+  isProjectDeleting,
+  workspaceCreateInlineOpen,
+  workspaceExternalChangeCount,
+  isWorkspaceExternalChangeChecking,
+  workspaceError,
+  workspaceNotice,
+  onProjectSelectionChange,
+  onWorkspaceNameInputChange,
+  onWorkspaceLocalPathInputChange,
+  onOpenCreateWorkspace,
+  onCancelCreateWorkspace,
+  onCreateWorkspace,
+  onPickAndImportProjectFolder,
+  onPickWorkspaceLocalFolder,
+  onSetWorkspaceLocalPath,
+  onReSyncWorkspace,
+  onDeleteProjectWorkspace,
+  onSetDefaultWorkspace,
+  onOpenWorkspaceFolderLocation,
+  workspaceRootNumberingEnabled,
+  onWorkspaceRootNumberingEnabledChange
+}: WorkspaceManageCardProps) {
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
+  const workspaceNameInputRef = useRef<HTMLInputElement | null>(null);
+  const isActiveDefault = Boolean(activeProjectId && activeProjectId === defaultProjectId);
+  const { linkedProjects, internalProjects } = partitionWorkspaceProjects(projects);
+  const activeProject = resolveActiveProject(projects, activeProjectId);
+  const activeProjectIsLinked = hasLinkedWorkspaceFolder(activeProject);
+  const activeProjectLabel = activeProject?.name ?? t("project.none");
+
+  useEffect(() => {
+    if (!workspaceMenuOpen) return;
+
+    const onPointerDown = (event: MouseEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (workspaceMenuRef.current?.contains(event.target)) return;
+      setWorkspaceMenuOpen(false);
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setWorkspaceMenuOpen(false);
+      }
+    };
+
+    window.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [workspaceMenuOpen]);
+
+  useEffect(() => {
+    setWorkspaceMenuOpen(false);
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!workspaceCreateInlineOpen) return;
+    workspaceNameInputRef.current?.focus();
+    workspaceNameInputRef.current?.select();
+  }, [workspaceCreateInlineOpen]);
+
+  const renderWorkspaceOption = (projectId: string, label: string) => {
+    const selected = (activeProjectId ?? "") === projectId;
+    return (
+      <button
+        key={projectId || "__all__"}
+        type="button"
+        role="option"
+        aria-selected={selected}
+        className={`flex w-full items-center rounded-md px-3 py-2 text-left text-[0.82rem] transition-colors ${
+          selected
+            ? "bg-[rgba(35,128,184,0.28)] text-[var(--ode-text)] shadow-[inset_0_0_0_1px_rgba(74,194,255,0.35)]"
+            : "text-[var(--ode-text-muted)] hover:bg-[rgba(10,48,74,0.72)] hover:text-[var(--ode-text)]"
+        }`}
+        onClick={() => {
+          onProjectSelectionChange(projectId);
+          setWorkspaceMenuOpen(false);
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--ode-border)] bg-[rgba(4,25,42,0.62)] p-2.5">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-[0.72rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
+          {t("project.scope_title")}
+        </p>
+      </div>
+      <div className="mb-2 grid items-start gap-2 sm:grid-cols-[auto_minmax(0,1fr)]">
+        <span className="pt-2 text-[0.8rem] text-[var(--ode-text-muted)]">{t("project.select")}</span>
+        <div className="min-w-0" ref={workspaceMenuRef}>
+          <button
+            type="button"
+            className={`ode-input flex h-8 w-full items-center justify-between rounded-md px-3 text-[0.82rem] ${
+              workspaceMenuOpen ? "border-[var(--ode-border-accent)] shadow-[0_0_0_1px_rgba(74,194,255,0.18)]" : ""
+            }`}
+            aria-haspopup="listbox"
+            aria-expanded={workspaceMenuOpen}
+            onClick={() => setWorkspaceMenuOpen((prev) => !prev)}
+          >
+            <span className="truncate text-left text-[var(--ode-text)]">{activeProjectLabel}</span>
+            <span className={`ml-3 shrink-0 text-[0.72rem] text-[var(--ode-text-dim)] transition-transform ${workspaceMenuOpen ? "rotate-180" : ""}`}>
+              v
+            </span>
+          </button>
+          {workspaceMenuOpen ? (
+            <div
+              role="listbox"
+              className="mt-1 max-h-64 overflow-y-auto overscroll-contain rounded-lg border border-[var(--ode-border-strong)] bg-[linear-gradient(180deg,rgba(7,34,56,0.98),rgba(4,22,39,0.98))] p-2 shadow-[0_18px_42px_rgba(0,0,0,0.34)]"
+            >
+              {renderWorkspaceOption("", t("project.none"))}
+              {linkedProjects.length > 0 ? (
+                <div className="px-3 pb-1 pt-2 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[var(--ode-accent)]">
+                  {t("project.scope_linked")}
+                </div>
+              ) : null}
+              {linkedProjects.map((project) => renderWorkspaceOption(project.id, project.name))}
+              {internalProjects.length > 0 ? (
+                <div className="px-3 pb-1 pt-2 text-[0.68rem] font-semibold uppercase tracking-[0.12em] text-[var(--ode-accent)]">
+                  {t("project.scope_internal")}
+                </div>
+              ) : null}
+              {internalProjects.map((project) => renderWorkspaceOption(project.id, project.name))}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          className="ode-mini-btn h-8 px-3"
+          onClick={onOpenCreateWorkspace}
+          disabled={isProjectImporting || isWorkspaceCreating || isProjectResyncing || isProjectDeleting}
+        >
+          {isWorkspaceCreating ? t("project.creating") : t("project.create_btn")}
+        </button>
+        <button
+          className="ode-mini-btn h-8 px-3"
+          onClick={onPickAndImportProjectFolder}
+          disabled={isProjectImporting || isWorkspaceCreating || isProjectResyncing || isProjectDeleting}
+        >
+          {isProjectImporting ? t("project.importing") : t("project.import_btn")}
+        </button>
+        {activeProjectId ? (
+          <button
+            className="ode-mini-btn h-8 px-3"
+            onClick={onSetWorkspaceLocalPath}
+            disabled={isProjectImporting || isWorkspaceCreating || isProjectResyncing || isProjectDeleting}
+          >
+            {t("project.local_path_btn")}
+          </button>
+        ) : null}
+        {activeProjectIsLinked ? (
+          <div className="flex items-center gap-2">
+            <button
+              className="ode-mini-btn h-8 px-3"
+              onClick={onReSyncWorkspace}
+              disabled={isProjectImporting || isProjectResyncing || isProjectDeleting}
+            >
+              {isProjectResyncing ? t("project.resyncing_short") : t("project.resync_btn")}
+            </button>
+            {workspaceExternalChangeCount > 0 ? (
+              <span className="inline-flex h-8 items-center rounded-full border border-[rgba(214,170,82,0.5)] bg-[rgba(71,51,14,0.86)] px-3 text-[0.72rem] font-medium text-[#f2d38b]">
+                {t("project.external_changes_badge", { count: workspaceExternalChangeCount })}
+              </span>
+            ) : isWorkspaceExternalChangeChecking ? (
+              <span className="inline-flex h-8 items-center rounded-full border border-[var(--ode-border)] bg-[rgba(5,29,46,0.55)] px-3 text-[0.72rem] text-[var(--ode-text-dim)]">
+                {t("project.external_changes_checking")}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {activeProjectId ? (
+          <button
+            className={`ode-mini-btn h-8 px-3 ${isActiveDefault ? "text-[var(--ode-accent)]" : ""}`}
+            onClick={onSetDefaultWorkspace}
+            disabled={isProjectImporting || isProjectResyncing || isProjectDeleting || isActiveDefault}
+          >
+            {isActiveDefault ? t("project.default_active") : t("project.set_default_btn")}
+          </button>
+        ) : null}
+        {activeProjectId ? (
+          <button
+            className="ode-mini-btn h-8 px-3"
+            onClick={onOpenWorkspaceFolderLocation}
+            disabled={isProjectImporting || isProjectResyncing || isProjectDeleting}
+          >
+            {t("project.open_folder_btn")}
+          </button>
+        ) : null}
+        {activeProjectId ? (
+          <button
+            className="ode-mini-btn h-8 px-3 text-[#ffb8b8]"
+            onClick={onDeleteProjectWorkspace}
+            disabled={isProjectImporting || isProjectResyncing || isProjectDeleting}
+          >
+            {isProjectDeleting ? t("project.deleting") : t("project.delete_btn")}
+          </button>
+        ) : null}
+      </div>
+      {workspaceCreateInlineOpen ? (
+        <div className="mt-2 rounded-lg border border-[var(--ode-border)] bg-[rgba(5,29,46,0.5)] p-3">
+          <p className="mb-1 text-[0.78rem] text-[var(--ode-text)]">{t("project.name_modal_title")}</p>
+          <div className="flex flex-col gap-2">
+            <input
+              ref={workspaceNameInputRef}
+              type="text"
+              value={workspaceNameInput}
+              onChange={(event) => onWorkspaceNameInputChange(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onCreateWorkspace();
+                  return;
+                }
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  onCancelCreateWorkspace();
+                }
+              }}
+              placeholder=""
+              className="ode-input h-9 min-w-0 flex-1 rounded-md px-3 text-[0.84rem]"
+            />
+            <div className="rounded-lg border border-[var(--ode-border)] bg-[rgba(5,29,46,0.36)] p-2.5">
+              <label className="mb-1 block text-[0.72rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
+                {t("project.local_path_label")}
+              </label>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <input
+                  type="text"
+                  value={workspaceLocalPathInput}
+                  onChange={(event) => onWorkspaceLocalPathInputChange(event.target.value)}
+                  placeholder=""
+                  className="ode-input h-9 min-w-0 flex-1 rounded-md px-3 text-[0.8rem]"
+                />
+                <button
+                  type="button"
+                  className="ode-mini-btn h-9 px-3"
+                  onClick={onPickWorkspaceLocalFolder}
+                  disabled={isWorkspaceCreating}
+                >
+                  {t("project.local_path_browse_btn")}
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="ode-mini-btn h-9 px-3"
+                onClick={onCreateWorkspace}
+                disabled={!workspaceNameInput.trim() || isWorkspaceCreating}
+              >
+                {isWorkspaceCreating ? t("project.creating") : t("project.name_modal_confirm")}
+              </button>
+              <button
+                type="button"
+                className="ode-mini-btn h-9 px-3"
+                onClick={onCancelCreateWorkspace}
+                disabled={isWorkspaceCreating}
+              >
+                {t("project.name_modal_cancel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      <label className="mt-2 flex items-center gap-2 rounded-lg border border-[var(--ode-border)] bg-[rgba(5,29,46,0.5)] px-2.5 py-2 text-[0.78rem] text-[var(--ode-text)]">
+        <input
+          type="checkbox"
+          className="mt-[2px] h-3.5 w-3.5 accent-[var(--ode-accent)]"
+          checked={workspaceRootNumberingEnabled}
+          onChange={(event) => onWorkspaceRootNumberingEnabledChange(event.target.checked)}
+        />
+        <span>{t("project.root_numbering_label")}</span>
+      </label>
+      {workspaceError ? (
+        <OdeTooltip label={workspaceError} side="top">
+          <p className="mt-2 text-[0.75rem] text-[#ffb2b2]">{workspaceError}</p>
+        </OdeTooltip>
+      ) : null}
+      {workspaceNotice ? <p className="mt-2 text-[0.75rem] text-[var(--ode-accent)]">{workspaceNotice}</p> : null}
+    </div>
+  );
+}

@@ -1,0 +1,45 @@
+{
+  "name": "odetool-rebuild",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "python scripts/generate-brand-logo.py && python scripts/finalize-tauri-icons.py && python scripts/generate-installer-branding.py && tsc -b && vite build",
+    "preview": "vite preview",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "icons:refresh": "python scripts/generate-brand-logo.py && python scripts/finalize-tauri-icons.py && python scripts/generate-installer-branding.py",
+    "typecheck": "tsc -b --pretty false",
+    "quality:catalog:check": "node scripts/check-test-catalog.mjs",
+    "mock:test": "npm run quality:catalog:check && npm run typecheck && npm run build && cargo test --manifest-path src-tauri/Cargo.toml --lib",
+    "quality:run": "node scripts/run-quality-gate.mjs",
+    "release:record": "node scripts/record-release-note.mjs",
+    "release:guard": "node scripts/require-release-note-entry.mjs",
+    "test:guard": "node scripts/require-test-evidence.mjs",
+    "test:quick": "npm run test:guard && npm run release:guard && npm run typecheck",
+    "hooks:install": "git config core.hooksPath .githooks"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
+    "docx": "^9.6.0",
+    "jspdf": "^4.2.0",
+    "nspell": "^2.1.5",
+    "pdfjs-dist": "^5.5.207",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.12",
+    "@tauri-apps/cli": "^2.10.0",
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.0.12",
+    "@types/react-dom": "^19.0.5",
+    "@vitejs/plugin-react": "^5.0.2",
+    "tailwindcss": "^4.1.12",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.3"
+  }
+}
