@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-04T14:27:23.487Z",
+  "gitHead": "e6377e1",
+  "gitBranch": "main",
+  "suite": "mock:test",
+  "result": "pass",
+  "totals": {
+    "items": 40,
+    "passed": 40,
+    "failed": 0
+  },
+  "items": [
+    {
+      "id": "catalog-001",
+      "releaseLogKey": "release.log.1",
+      "category": "functionality",
+      "title": "System editor now includes mentions, node links, relations, and AI proposals",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-002",
+      "releaseLogKey": "release.log.2",
+      "category": "functionality",
+      "title": "System view now uses an editor-first layout",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-003",
+      "releaseLogKey": "release.log.3",
+      "category": "functionality",
+      "title": "Favorite group tabs now use a trash icon for delete",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-004",
+      "releaseLogKey": "release.log.4",
+      "category": "functionality",
+      "title": "AI Command Bar now includes inline Mistral key setup",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-005",
+      "releaseLogKey": "release.log.5",
+      "category": "functionality",
+      "title": "AI Options now records document action telemetry with context",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-006",
+      "releaseLogKey": "release.log.6",
+      "category": "feature",
+      "title": "System view now supports structured sections, relations, and PDF or DOCX export",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-007",
+      "releaseLogKey": "release.log.7",
+      "category": "functionality",
+      "title": "QA checklist expanded and AI Tester now runs more active regression checks",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-008",
+      "releaseLogKey": "release.log.8",
+      "category": "functionality",
+      "title": "Utility panel windows now support minimize and maximize",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-009",
+      "releaseLogKey": "release.log.9",
+      "category": "functionality",
+      "title": "QA proof capture now targets the app and attachments open directly",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-010",
+      "releaseLogKey": "release.log.10",
+      "category": "functionality",
+      "title": "QA evidence, exact filters, and single-instance desktop hardening",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-011",
+      "releaseLogKey": "release.log.11",
+      "category": "functionality",
+      "title": "Inline spelling suggestions now use the ODE theme",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-012",
+      "releaseLogKey": "release.log.12",
+      "category": "functionality",
+      "title": "Filtered views, workspace moves, and inline rename are now more reliable",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-013",
+      "releaseLogKey": "release.log.13",
+      "category": "functionality",
+      "title": "Shared create routing now stays consistent across tree, desktop, and timeline",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-014",
+      "releaseLogKey": "release.log.14",
+      "category": "functionality",
+      "title": "Right-click menus now behave like keyboard-driven action menus",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-015",
+      "releaseLogKey": "release.log.15",
+      "category": "functionality",
+      "title": "Timeline child creation now follows the visible timeline branch",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-016",
+      "releaseLogKey": "release.log.16",
+      "category": "functionality",
+      "title": "Workspace root branch shortcuts now stay inside the active workspace",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-017",
+      "releaseLogKey": "release.log.17",
+      "category": "functionality",
+      "title": "Enter on workspace root now creates a visible top-level branch",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-018",
+      "releaseLogKey": "release.log.18",
+      "category": "feature",
+      "title": "Older ODE trees now backfill metadata on demand",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-019",
+      "releaseLogKey": "release.log.19",
+      "category": "feature",
+      "title": "ODE-aware document WBS now auto-routes into chantier mode",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-020",
+      "releaseLogKey": "release.log.20",
+      "category": "feature",
+      "title": "ODE chantier creation under mapped Level 4 NA",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-021",
+      "releaseLogKey": "release.log.21",
+      "category": "feature",
+      "title": "ODE NA mapping and protected-level policy foundation",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-022",
+      "releaseLogKey": "release.log.22",
+      "category": "feature",
+      "title": "Document AI advisor, section trees, and linked-workspace cleanup",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-023",
+      "releaseLogKey": "release.log.23",
+      "category": "general",
+      "title": "v1.029 release hardening and QA discipline sync",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-024",
+      "releaseLogKey": "release.log.24",
+      "category": "functionality",
+      "title": "Help content localized for FR/DE/ES",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-025",
+      "releaseLogKey": "release.log.25",
+      "category": "functionality",
+      "title": "Tree and details virtualization for large datasets",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-026",
+      "releaseLogKey": "release.log.26",
+      "category": "functionality",
+      "title": "Performance pass for large trees and timelines",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-027",
+      "releaseLogKey": "release.log.27",
+      "category": "general",
+      "title": "Package import/export feedback now uses themed notices",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-028",
+      "releaseLogKey": "release.log.28",
+      "category": "functionality",
+      "title": "Workspace index legacy fallback hardening",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-029",
+      "releaseLogKey": "release.log.29",
+      "category": "functionality",
+      "title": "Tauri desktop build pipeline and executable delivery",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-030",
+      "releaseLogKey": "release.log.30",
+      "category": "functionality",
+      "title": "Workspace persistence and sync reliability hardening",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-031",
+      "releaseLogKey": "release.log.31",
+      "category": "functionality",
+      "title": "Manual workspace Re-sync action (two-way)",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-032",
+      "releaseLogKey": "release.log.32",
+      "category": "functionality",
+      "title": "Project sync uses recovered workspace list",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-033",
+      "releaseLogKey": "release.log.33",
+      "category": "functionality",
+      "title": "Project sync fallback via workspace records",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-034",
+      "releaseLogKey": "release.log.34",
+      "category": "functionality",
+      "title": "Project-folder sync from app to PC path",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-035",
+      "releaseLogKey": "release.log.35",
+      "category": "functionality",
+      "title": "Desktop numbering normalization and bracket projection",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-036",
+      "releaseLogKey": "release.log.36",
+      "category": "functionality",
+      "title": "Workspace keyboard node creation fix",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-037",
+      "releaseLogKey": "release.log.37",
+      "category": "general",
+      "title": "Baseline quality workflow initialized",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-038",
+      "releaseLogKey": "release.log.38",
+      "category": "functionality",
+      "title": "System view now surfaces status coverage and keeps section tools inline",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-039",
+      "releaseLogKey": "release.log.39",
+      "category": "functionality",
+      "title": "Quick Access now behaves like a launcher with focused group actions",
+      "status": "pass",
+      "evidence": "mock:test"
+    },
+    {
+      "id": "catalog-040",
+      "releaseLogKey": "release.log.40",
+      "category": "functionality",
+      "title": "Search precision, timeline clarity, and System tabs",
+      "status": "pass",
+      "evidence": "mock:test"
+    }
+  ]
+}

@@ -1,3 +1,5 @@
+import { UploadGlyphSmall } from "@/components/Icons";
+import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import type { TranslationParams } from "@/lib/i18n";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
@@ -12,8 +14,10 @@ interface DesktopNodeTabBarProps {
   tabs: DesktopNodeTabItem[];
   activeTabId: string | null;
   isSidebarCollapsed?: boolean;
+  showUploadAction?: boolean;
   onActivateTab: (nodeId: string) => void;
   onCloseTab: (nodeId: string) => void;
+  onTriggerUpload?: () => void;
 }
 
 export function DesktopNodeTabBar({
@@ -21,14 +25,30 @@ export function DesktopNodeTabBar({
   tabs,
   activeTabId,
   isSidebarCollapsed = false,
+  showUploadAction = false,
   onActivateTab,
-  onCloseTab
+  onCloseTab,
+  onTriggerUpload
 }: DesktopNodeTabBarProps) {
-  if (tabs.length === 0) return null;
+  if (tabs.length === 0 && !showUploadAction) return null;
 
   return (
     <div className={`bg-transparent py-1 ${isSidebarCollapsed ? "pl-0 pr-4" : "px-4"}`}>
       <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+        {showUploadAction ? (
+          <OdeTooltip label={t("desktop.upload")} side="top" align="start">
+            <button
+              type="button"
+              className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-[rgba(86,175,214,0.24)] bg-[linear-gradient(180deg,rgba(10,45,66,0.82),rgba(6,27,43,0.94))] text-[var(--ode-text-dim)] shadow-[inset_0_1px_0_rgba(135,220,255,0.1)] transition hover:border-[rgba(111,209,248,0.42)] hover:text-[var(--ode-text)]"
+              onClick={() => {
+                onTriggerUpload?.();
+              }}
+              aria-label={t("desktop.upload")}
+            >
+              <UploadGlyphSmall />
+            </button>
+          </OdeTooltip>
+        ) : null}
         {tabs.map((tab) => {
           const active = tab.nodeId === activeTabId;
           return (

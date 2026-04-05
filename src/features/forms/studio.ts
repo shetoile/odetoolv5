@@ -1,3 +1,5 @@
+import { buildAppStorageKey } from "@/lib/appIdentity";
+
 export type FormFieldType =
   | "short_text"
   | "long_text"
@@ -69,7 +71,7 @@ export interface FormsStudioState {
   records: FormRecordDefinition[];
 }
 
-export const FORMS_STUDIO_STORAGE_KEY = "odetool.forms.studio.v1";
+export const FORMS_STUDIO_STORAGE_KEY = buildAppStorageKey("forms.studio.v1");
 
 export const FORM_FIELD_TYPES: FormFieldType[] = [
   "short_text",

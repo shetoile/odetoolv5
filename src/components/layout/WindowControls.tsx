@@ -28,6 +28,10 @@ export function WindowControls({
   const suppressWindowDrag = (event: ReactMouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
   };
+  const sharedButtonProps = {
+    "data-ode-window-drag-ignore": "true",
+    "data-tauri-drag-region": "false"
+  } as const;
 
   const minimizeButton = (
     <OdeTooltip label={t("window.minimize")} side="bottom">
@@ -38,9 +42,13 @@ export function WindowControls({
         onMouseDown={suppressWindowDrag}
         onDoubleClick={suppressWindowDrag}
         aria-label={t("window.minimize")}
+        data-window-control="minimize"
         disabled={disabled}
+        {...sharedButtonProps}
       >
-        <span className="ode-window-icon ode-window-icon-min" />
+        <span className="ode-window-icon-shell" aria-hidden="true">
+          <span className="ode-window-icon ode-window-icon-min" />
+        </span>
       </button>
     </OdeTooltip>
   );
@@ -57,11 +65,16 @@ export function WindowControls({
         onMouseDown={suppressWindowDrag}
         onDoubleClick={suppressWindowDrag}
         aria-label={isWindowMaximized ? t("window.restore") : t("window.maximize")}
+        aria-pressed={isWindowMaximized}
+        data-window-control={isWindowMaximized ? "restore" : "maximize"}
         disabled={disabled}
+        {...sharedButtonProps}
       >
-        <span
-          className={`ode-window-icon ${isWindowMaximized ? "ode-window-icon-restore" : "ode-window-icon-max"}`}
-        />
+        <span className="ode-window-icon-shell" aria-hidden="true">
+          <span
+            className={`ode-window-icon ${isWindowMaximized ? "ode-window-icon-restore" : "ode-window-icon-max"}`}
+          />
+        </span>
       </button>
     </OdeTooltip>
   );
@@ -79,9 +92,13 @@ export function WindowControls({
         onMouseDown={suppressWindowDrag}
         onDoubleClick={suppressWindowDrag}
         aria-label={t("window.close")}
+        data-window-control="close"
         disabled={disabled}
+        {...sharedButtonProps}
       >
-        <span className="ode-window-icon ode-window-icon-close">x</span>
+        <span className="ode-window-icon-shell" aria-hidden="true">
+          <span className="ode-window-icon ode-window-icon-close" />
+        </span>
       </button>
     </OdeTooltip>
   );
@@ -97,8 +114,11 @@ export function WindowControls({
           onDoubleClick={suppressWindowDrag}
           aria-label={t("window.close")}
           disabled={disabled}
+          {...sharedButtonProps}
         >
-          x
+          <span className="ode-window-icon-shell" aria-hidden="true">
+            <span className="ode-window-icon ode-window-icon-close" />
+          </span>
         </button>
       </OdeTooltip>
     );
@@ -106,16 +126,16 @@ export function WindowControls({
 
   if (variant === "topbar") {
     return (
-      <>
+      <div className="ode-window-controls">
         {minimizeButton}
         {maximizeButton}
         {closeButton}
-      </>
+      </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="ode-window-controls ode-window-controls-utility">
       {minimizeButton}
       {maximizeButton}
       {closeButton}

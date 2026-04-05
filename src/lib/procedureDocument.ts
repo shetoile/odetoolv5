@@ -1,6 +1,8 @@
 import { ROOT_PARENT_ID, type AppNode, type ScheduleStatus } from "@/lib/types";
-import type { NodeQuickAppKind } from "@/lib/nodeQuickApps";
+import { QUICK_APP_ICON_OPTIONS, type NodeQuickAppIconKey, type NodeQuickAppKind } from "@/lib/nodeQuickApps";
 import { isHiddenExecutionTaskNode } from "@/features/workspace/execution";
+import { decodeProcedureRecordToken } from "@/lib/procedureDatabase";
+import { readProcedureRichTextHtml } from "@/lib/procedureRichText";
 
 export type ProcedureInsightDomain = "business" | "operations" | "ux" | "ai";
 export type ProcedureConnectionType = "receives_from" | "hands_off_to" | "decision_from" | "escalates_to";
@@ -18,9 +20,18 @@ export interface ProcedureAppLinkPayload {
   appName?: string | null;
   kind: NodeQuickAppKind;
   target: string;
+  iconKey?: NodeQuickAppIconKey | null;
+  customIconDataUrl?: string | null;
   sourceNodeId?: string | null;
   sourceNodeName?: string | null;
   workspaceName?: string | null;
+}
+
+function normalizeProcedureAppIconKey(value: unknown): NodeQuickAppIconKey | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return QUICK_APP_ICON_OPTIONS.some((option) => option.key === trimmed) ? (trimmed as NodeQuickAppIconKey) : null;
 }
 
 export type ProcedureInlineToken =
@@ -29,6 +40,8 @@ export type ProcedureInlineToken =
   | { type: "italic"; value: string }
   | { type: "external_link"; label: string; href: string }
   | { type: "node_link"; label: string; nodeId: string }
+  | { type: "record_link"; label: string; tableNodeId: string; recordId: string }
+  | { type: "image_link"; alt: string; nodeId: string }
   | {
       type: "app_link";
       label: string;
@@ -36,19 +49,22 @@ export type ProcedureInlineToken =
       appName: string | null;
       kind: NodeQuickAppKind;
       target: string;
+      iconKey: NodeQuickAppIconKey | null;
+      customIconDataUrl: string | null;
       sourceNodeId: string | null;
       sourceNodeName: string | null;
       workspaceName: string | null;
     };
 
 export type ProcedureBlock =
-  | { type: "heading"; level: 1 | 2 | 3 | 4; text: string }
+  | { type: "heading"; level: 1 | 2 | 3 | 4 | 5 | 6; text: string }
   | { type: "paragraph"; lines: string[] }
   | { type: "bullets"; items: string[] }
   | { type: "numbers"; items: string[] }
   | { type: "quote"; lines: string[] }
   | { type: "code"; code: string; language: string }
   | { type: "divider" }
+  | { type: "page_break" }
   | { type: "insight"; domain: ProcedureInsightDomain; lines: string[] };
 
 export interface ProcedureSectionData {
@@ -56,6 +72,7 @@ export interface ProcedureSectionData {
   depth: number;
   headingNumber: string;
   body: string;
+  bodyHtml: string | null;
   references: AppNode[];
   children: ProcedureSectionData[];
 }
@@ -98,6 +115,11 @@ export function encodeProcedureAppLinkPayload(payload: ProcedureAppLinkPayload):
     appName: typeof payload.appName === "string" ? payload.appName.trim() || null : null,
     kind: payload.kind === "local_path" ? "local_path" : "url",
     target: typeof payload.target === "string" ? payload.target.trim() : "",
+    iconKey: normalizeProcedureAppIconKey(payload.iconKey),
+    customIconDataUrl:
+      typeof payload.customIconDataUrl === "string" && /^data:image\//i.test(payload.customIconDataUrl.trim())
+        ? payload.customIconDataUrl.trim()
+        : null,
     sourceNodeId: typeof payload.sourceNodeId === "string" ? payload.sourceNodeId.trim() || null : null,
     sourceNodeName: typeof payload.sourceNodeName === "string" ? payload.sourceNodeName.trim() || null : null,
     workspaceName: typeof payload.workspaceName === "string" ? payload.workspaceName.trim() || null : null
@@ -117,6 +139,11 @@ export function decodeProcedureAppLinkPayload(rawValue: string): ProcedureAppLin
       appName: typeof parsed.appName === "string" ? parsed.appName.trim() || null : null,
       kind: parsed.kind === "local_path" ? "local_path" : "url",
       target,
+      iconKey: normalizeProcedureAppIconKey(parsed.iconKey),
+      customIconDataUrl:
+        typeof parsed.customIconDataUrl === "string" && /^data:image\//i.test(parsed.customIconDataUrl.trim())
+          ? parsed.customIconDataUrl.trim()
+          : null,
       sourceNodeId: typeof parsed.sourceNodeId === "string" ? parsed.sourceNodeId.trim() || null : null,
       sourceNodeName: typeof parsed.sourceNodeName === "string" ? parsed.sourceNodeName.trim() || null : null,
       workspaceName: typeof parsed.workspaceName === "string" ? parsed.workspaceName.trim() || null : null
@@ -231,7 +258,7 @@ export function readProcedureConnections(node: AppNode | null): ProcedureConnect
 }
 
 export function parseProcedureInlineTokens(text: string): ProcedureInlineToken[] {
-  const pattern = /(\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|_([^_]+)_|\*([^*]+)\*)/;
+  const pattern = /(!?\[([^\]]*)\]\(([^)]+)\)|\*\*([^*]+)\*\*|_([^_]+)_|\*([^*]+)\*)/;
   const match = pattern.exec(text);
   if (!match) return [{ type: "text", value: text }];
 
@@ -242,14 +269,32 @@ export function parseProcedureInlineTokens(text: string): ProcedureInlineToken[]
   if (before) tokens.push({ type: "text", value: before });
 
   if (match[2] !== undefined && match[3] !== undefined) {
-    const label = match[2] || match[3];
+    const label = match[2] ?? "";
     const href = match[3].trim();
-    if (href.startsWith("ode://node/")) {
+    if (matchedValue.startsWith("!") && href.startsWith("ode://node/")) {
+      tokens.push({
+        type: "image_link",
+        alt: label || "Image",
+        nodeId: decodeNodeLinkId(href)
+      });
+    } else if (href.startsWith("ode://node/")) {
       tokens.push({
         type: "node_link",
         label,
         nodeId: decodeNodeLinkId(href)
       });
+    } else if (decodeProcedureRecordToken(href)) {
+      const recordRef = decodeProcedureRecordToken(href);
+      if (recordRef) {
+        tokens.push({
+          type: "record_link",
+          label,
+          tableNodeId: recordRef.tableNodeId,
+          recordId: recordRef.recordId
+        });
+      } else {
+        tokens.push({ type: "external_link", label, href });
+      }
     } else if (href.startsWith(PROCEDURE_APP_LINK_PREFIX)) {
       const payload = decodeProcedureAppLinkPayload(href);
       if (payload) {
@@ -260,6 +305,8 @@ export function parseProcedureInlineTokens(text: string): ProcedureInlineToken[]
           appName: payload.appName ?? null,
           kind: payload.kind,
           target: payload.target,
+          iconKey: payload.iconKey ?? null,
+          customIconDataUrl: payload.customIconDataUrl ?? null,
           sourceNodeId: payload.sourceNodeId ?? null,
           sourceNodeName: payload.sourceNodeName ?? null,
           workspaceName: payload.workspaceName ?? null
@@ -296,7 +343,7 @@ function collectProcedureBodyLinkedNodeIds(text: string): string[] {
           : [];
     for (const line of lineCandidates) {
       for (const token of parseProcedureInlineTokens(line)) {
-        if (token.type === "node_link" && token.nodeId) {
+        if ((token.type === "node_link" || token.type === "image_link") && token.nodeId) {
           ids.add(token.nodeId);
         }
       }
@@ -346,6 +393,8 @@ export function inlineTokensToPlainText(text: string): string {
       if (token.type === "bold") return token.value;
       if (token.type === "italic") return token.value;
       if (token.type === "external_link") return `${token.label} (${token.href})`;
+      if (token.type === "record_link") return `${token.label} [${token.recordId}]`;
+      if (token.type === "image_link") return token.alt || "Image";
       if (token.type === "app_link") return token.label || token.appName || "App";
       return `${token.label} [${token.nodeId}]`;
     })
@@ -459,9 +508,32 @@ export function parseProcedureBlocks(text: string): ProcedureBlock[] {
       continue;
     }
 
+    if (/^\[page-break\]$/i.test(trimmed)) {
+      flushParagraph();
+      blocks.push({ type: "page_break" });
+      index += 1;
+      continue;
+    }
+
     if (/^[-\u2500]{3,}$/.test(trimmed)) {
       flushParagraph();
       blocks.push({ type: "divider" });
+      index += 1;
+      continue;
+    }
+
+    const headingLevel6Match = /^######\s+(.+)$/.exec(trimmed);
+    if (headingLevel6Match) {
+      flushParagraph();
+      blocks.push({ type: "heading", level: 6, text: headingLevel6Match[1] ?? "" });
+      index += 1;
+      continue;
+    }
+
+    const headingLevel5Match = /^#####\s+(.+)$/.exec(trimmed);
+    if (headingLevel5Match) {
+      flushParagraph();
+      blocks.push({ type: "heading", level: 5, text: headingLevel5Match[1] ?? "" });
       index += 1;
       continue;
     }
@@ -560,7 +632,7 @@ export function buildProcedureCopyText(
   scopedNumbering: Map<string, string>,
   depth = 0
 ): string {
-  const headingNumber = node.id === rootNodeId ? "" : scopedNumbering.get(node.id) ?? "";
+  const headingNumber = scopedNumbering.get(node.id) ?? "";
   const headingPrefix = `${"#".repeat(Math.min(depth + 1, 6))} `;
   const heading = `${headingPrefix}${headingNumber ? `${headingNumber} ` : ""}${node.name}`.trimEnd();
   const lines = [heading];
@@ -595,8 +667,9 @@ export function buildProcedureSectionTree(
   return {
     node,
     depth,
-    headingNumber: node.id === rootNodeId ? "" : scopedNumbering.get(node.id) ?? "",
+    headingNumber: scopedNumbering.get(node.id) ?? "",
     body: getNodeBody(node),
+    bodyHtml: readProcedureRichTextHtml(node),
     references,
     children: structuralChildren.map((child) =>
       buildProcedureSectionTree(child, rootNodeId, byParent, scopedNumbering, depth + 1)

@@ -16,11 +16,8 @@ import {
   setWindowsClipboardFilePaths,
   updateNodeProperties
 } from "@/lib/nodeService";
+import { APP_SOURCE_ID } from "@/lib/appIdentity";
 import { ROOT_PARENT_ID, isFileLikeNode, type AppNode, type ODEExecutionTaskItem } from "@/lib/types";
-import type { TranslationParams } from "@/lib/i18n";
-
-type TranslateFn = (key: string, params?: TranslationParams) => string;
-
 export type BranchSnapshot = {
   name: string;
   type: AppNode["type"];
@@ -44,7 +41,7 @@ export type BranchTreeClipboard = {
   root: BranchSnapshot;
   roots: BranchSnapshot[];
   copiedAt: number;
-  sourceApp: "odetool-rebuild";
+  sourceApp: typeof APP_SOURCE_ID;
 };
 
 export type ExecutionTaskClipboard = {
@@ -54,7 +51,7 @@ export type ExecutionTaskClipboard = {
   sourceNodeIds: string[];
   items: ExecutionTaskClipboardItem[];
   copiedAt: number;
-  sourceApp: "odetool-rebuild";
+  sourceApp: typeof APP_SOURCE_ID;
 };
 
 export type BranchClipboard = BranchTreeClipboard | ExecutionTaskClipboard;
@@ -66,7 +63,6 @@ export type ClipboardMutationResult = {
 };
 
 type UseBranchClipboardActionsParams = {
-  t: TranslateFn;
   selectedNode: AppNode | null;
   nodeById: Map<string, AppNode>;
   byParent: Map<string, AppNode[]>;
@@ -89,7 +85,6 @@ type UseBranchClipboardActionsParams = {
   readBranchClipboardFromSystem: () => Promise<BranchClipboard | null>;
   clearBranchClipboardFromSystem: () => Promise<void>;
   pasteExternalFilesFromClipboard: (targetNodeId?: string | null, surface?: SelectionSurface) => Promise<void | boolean>;
-  buildCopyNameWithSuffix: (name: string, nodeType: AppNode["type"], copySuffix: string) => string;
   ensureStructureMutationAllowed: (
     nodeIds: Array<string | null | undefined>,
     options?: { scope?: "organization" | "workarea" | "content" }
@@ -199,7 +194,6 @@ async function cloneSnapshot(
 }
 
 export function useBranchClipboardActions({
-  t,
   selectedNode,
   nodeById,
   byParent,
@@ -217,7 +211,6 @@ export function useBranchClipboardActions({
   readBranchClipboardFromSystem,
   clearBranchClipboardFromSystem,
   pasteExternalFilesFromClipboard,
-  buildCopyNameWithSuffix,
   ensureStructureMutationAllowed,
   buildSpecialClipboard,
   pasteSpecialClipboard,
@@ -301,7 +294,7 @@ export function useBranchClipboardActions({
       root: roots[0],
       roots,
       copiedAt: Date.now(),
-      sourceApp: "odetool-rebuild"
+      sourceApp: APP_SOURCE_ID
     };
     setBranchClipboard(payload);
     await writeBranchClipboardToSystem(payload);
@@ -418,7 +411,7 @@ export function useBranchClipboardActions({
         root,
         parentId,
         nextAfterId,
-        buildCopyNameWithSuffix(root.name, root.type, t("node.copy_suffix"))
+        root.name
       );
       createdRootIds.push(createdId);
       nextAfterId = createdId;
@@ -466,7 +459,7 @@ export function useBranchClipboardActions({
         snapshot,
         parentId,
         afterId,
-        buildCopyNameWithSuffix(snapshot.name, snapshot.type, t("node.copy_suffix"))
+        snapshot.name
       );
       duplicatedIds.push(duplicateId);
       refreshParentIds.add(refreshParentKey);

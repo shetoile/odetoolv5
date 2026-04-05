@@ -50,8 +50,6 @@ interface WorkspaceSettingsModalProps {
   onDeleteProjectWorkspace: () => void;
   onSetDefaultWorkspace: () => void;
   onOpenWorkspaceFolderLocation: () => void;
-  workspaceRootNumberingEnabled: boolean;
-  onWorkspaceRootNumberingEnabledChange: (enabled: boolean) => void;
   aiRebuildStatus: AiRebuildStatus | null;
   aiRebuildStatusBusy: boolean;
   aiRebuildWorkflowBusy: boolean;
@@ -111,8 +109,6 @@ export function WorkspaceSettingsModal({
   onDeleteProjectWorkspace,
   onSetDefaultWorkspace,
   onOpenWorkspaceFolderLocation,
-  workspaceRootNumberingEnabled,
-  onWorkspaceRootNumberingEnabledChange,
   aiRebuildStatus,
   aiRebuildStatusBusy,
   aiRebuildWorkflowBusy,
@@ -159,7 +155,7 @@ export function WorkspaceSettingsModal({
 
   return (
     <div
-      className="ode-overlay-scrim fixed inset-0 z-[118] flex items-center justify-center overflow-y-auto p-4 backdrop-blur-sm"
+      className="ode-overlay-scrim fixed inset-0 z-[118] flex items-start justify-center overflow-y-auto p-2 sm:p-3 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target !== event.currentTarget) return;
         onClose();
@@ -168,7 +164,7 @@ export function WorkspaceSettingsModal({
       <div
         ref={surfaceRef}
         style={surfaceStyle}
-        className="ode-modal flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-[22px] border border-[var(--ode-border-strong)]"
+        className="ode-modal mt-1 flex max-h-[calc(100vh-0.75rem)] w-[min(96vw,96rem)] max-w-none flex-col overflow-hidden rounded-[24px] border border-[var(--ode-border-strong)] sm:mt-2"
       >
         <div
           className="ode-modal-drag-handle flex shrink-0 items-center justify-between border-b border-[var(--ode-border)] px-6 py-5"
@@ -181,7 +177,7 @@ export function WorkspaceSettingsModal({
             x
           </button>
         </div>
-        <div className="min-h-0 overflow-y-auto px-6 py-5">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
           <WorkspaceManageCard
             t={t}
             projects={projects}
@@ -211,8 +207,6 @@ export function WorkspaceSettingsModal({
             onDeleteProjectWorkspace={onDeleteProjectWorkspace}
             onSetDefaultWorkspace={onSetDefaultWorkspace}
             onOpenWorkspaceFolderLocation={onOpenWorkspaceFolderLocation}
-            workspaceRootNumberingEnabled={workspaceRootNumberingEnabled}
-            onWorkspaceRootNumberingEnabledChange={onWorkspaceRootNumberingEnabledChange}
           />
           {showAiRebuild ? (
             <AiRebuildCard

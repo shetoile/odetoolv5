@@ -1,0 +1,246 @@
+{
+  "version": 1,
+  "generatedFrom": "quality/release-log.json",
+  "items": [
+    {
+      "id": "catalog-001",
+      "title": "System editor now includes mentions, node links, relations, and AI proposals",
+      "category": "functionality",
+      "releaseLogKey": "release.log.1"
+    },
+    {
+      "id": "catalog-002",
+      "title": "System view now uses an editor-first layout",
+      "category": "functionality",
+      "releaseLogKey": "release.log.2"
+    },
+    {
+      "id": "catalog-003",
+      "title": "Favorite group tabs now use a trash icon for delete",
+      "category": "functionality",
+      "releaseLogKey": "release.log.3"
+    },
+    {
+      "id": "catalog-004",
+      "title": "AI Command Bar now includes inline Mistral key setup",
+      "category": "functionality",
+      "releaseLogKey": "release.log.4"
+    },
+    {
+      "id": "catalog-005",
+      "title": "AI Options now records document action telemetry with context",
+      "category": "functionality",
+      "releaseLogKey": "release.log.5"
+    },
+    {
+      "id": "catalog-006",
+      "title": "System view now supports structured sections, relations, and PDF or DOCX export",
+      "category": "feature",
+      "releaseLogKey": "release.log.6"
+    },
+    {
+      "id": "catalog-007",
+      "title": "QA checklist expanded and AI Tester now runs more active regression checks",
+      "category": "functionality",
+      "releaseLogKey": "release.log.7"
+    },
+    {
+      "id": "catalog-008",
+      "title": "Utility panel windows now support minimize and maximize",
+      "category": "functionality",
+      "releaseLogKey": "release.log.8"
+    },
+    {
+      "id": "catalog-009",
+      "title": "QA proof capture now targets the app and attachments open directly",
+      "category": "functionality",
+      "releaseLogKey": "release.log.9"
+    },
+    {
+      "id": "catalog-010",
+      "title": "QA evidence, exact filters, and single-instance desktop hardening",
+      "category": "functionality",
+      "releaseLogKey": "release.log.10"
+    },
+    {
+      "id": "catalog-011",
+      "title": "Inline spelling suggestions now use the ODE theme",
+      "category": "functionality",
+      "releaseLogKey": "release.log.11"
+    },
+    {
+      "id": "catalog-012",
+      "title": "Filtered views, workspace moves, and inline rename are now more reliable",
+      "category": "functionality",
+      "releaseLogKey": "release.log.12"
+    },
+    {
+      "id": "catalog-013",
+      "title": "Shared create routing now stays consistent across tree, desktop, and timeline",
+      "category": "functionality",
+      "releaseLogKey": "release.log.13"
+    },
+    {
+      "id": "catalog-014",
+      "title": "Right-click menus now behave like keyboard-driven action menus",
+      "category": "functionality",
+      "releaseLogKey": "release.log.14"
+    },
+    {
+      "id": "catalog-015",
+      "title": "Timeline child creation now follows the visible timeline branch",
+      "category": "functionality",
+      "releaseLogKey": "release.log.15"
+    },
+    {
+      "id": "catalog-016",
+      "title": "Workspace root branch shortcuts now stay inside the active workspace",
+      "category": "functionality",
+      "releaseLogKey": "release.log.16"
+    },
+    {
+      "id": "catalog-017",
+      "title": "Enter on workspace root now creates a visible top-level branch",
+      "category": "functionality",
+      "releaseLogKey": "release.log.17"
+    },
+    {
+      "id": "catalog-018",
+      "title": "Older ODE trees now backfill metadata on demand",
+      "category": "feature",
+      "releaseLogKey": "release.log.18"
+    },
+    {
+      "id": "catalog-019",
+      "title": "ODE-aware document WBS now auto-routes into chantier mode",
+      "category": "feature",
+      "releaseLogKey": "release.log.19"
+    },
+    {
+      "id": "catalog-020",
+      "title": "ODE chantier creation under mapped Level 4 NA",
+      "category": "feature",
+      "releaseLogKey": "release.log.20"
+    },
+    {
+      "id": "catalog-021",
+      "title": "ODE NA mapping and protected-level policy foundation",
+      "category": "feature",
+      "releaseLogKey": "release.log.21"
+    },
+    {
+      "id": "catalog-022",
+      "title": "Document AI advisor, section trees, and linked-workspace cleanup",
+      "category": "feature",
+      "releaseLogKey": "release.log.22"
+    },
+    {
+      "id": "catalog-023",
+      "title": "v1.029 release hardening and QA discipline sync",
+      "category": "general",
+      "releaseLogKey": "release.log.23"
+    },
+    {
+      "id": "catalog-024",
+      "title": "Help content localized for FR/DE/ES",
+      "category": "functionality",
+      "releaseLogKey": "release.log.24"
+    },
+    {
+      "id": "catalog-025",
+      "title": "Tree and details virtualization for large datasets",
+      "category": "functionality",
+      "releaseLogKey": "release.log.25"
+    },
+    {
+      "id": "catalog-026",
+      "title": "Performance pass for large trees and timelines",
+      "category": "functionality",
+      "releaseLogKey": "release.log.26"
+    },
+    {
+      "id": "catalog-027",
+      "title": "Package import/export feedback now uses themed notices",
+      "category": "general",
+      "releaseLogKey": "release.log.27"
+    },
+    {
+      "id": "catalog-028",
+      "title": "Workspace index legacy fallback hardening",
+      "category": "functionality",
+      "releaseLogKey": "release.log.28"
+    },
+    {
+      "id": "catalog-029",
+      "title": "Tauri desktop build pipeline and executable delivery",
+      "category": "functionality",
+      "releaseLogKey": "release.log.29"
+    },
+    {
+      "id": "catalog-030",
+      "title": "Workspace persistence and sync reliability hardening",
+      "category": "functionality",
+      "releaseLogKey": "release.log.30"
+    },
+    {
+      "id": "catalog-031",
+      "title": "Manual workspace Re-sync action (two-way)",
+      "category": "functionality",
+      "releaseLogKey": "release.log.31"
+    },
+    {
+      "id": "catalog-032",
+      "title": "Project sync uses recovered workspace list",
+      "category": "functionality",
+      "releaseLogKey": "release.log.32"
+    },
+    {
+      "id": "catalog-033",
+      "title": "Project sync fallback via workspace records",
+      "category": "functionality",
+      "releaseLogKey": "release.log.33"
+    },
+    {
+      "id": "catalog-034",
+      "title": "Project-folder sync from app to PC path",
+      "category": "functionality",
+      "releaseLogKey": "release.log.34"
+    },
+    {
+      "id": "catalog-035",
+      "title": "Desktop numbering normalization and bracket projection",
+      "category": "functionality",
+      "releaseLogKey": "release.log.35"
+    },
+    {
+      "id": "catalog-036",
+      "title": "Workspace keyboard node creation fix",
+      "category": "functionality",
+      "releaseLogKey": "release.log.36"
+    },
+    {
+      "id": "catalog-037",
+      "title": "Baseline quality workflow initialized",
+      "category": "general",
+      "releaseLogKey": "release.log.37"
+    },
+    {
+      "id": "catalog-038",
+      "title": "System view now surfaces status coverage and keeps section tools inline",
+      "category": "functionality",
+      "releaseLogKey": "release.log.38"
+    },
+    {
+      "id": "catalog-039",
+      "title": "Quick Access now behaves like a launcher with focused group actions",
+      "category": "functionality",
+      "releaseLogKey": "release.log.39"
+    },
+    {
+      "id": "catalog-040",
+      "title": "Search precision, timeline clarity, and System tabs",
+      "category": "functionality",
+      "releaseLogKey": "release.log.40"
+    }
+  ]
+}

@@ -73,6 +73,22 @@ function getDocumentIngestionStateLabel(t: TranslateFn, item: DocumentIngestionP
   return getDocumentIngestionStateLabelByState(t, item.ingestionState);
 }
 
+function getOverviewViewLabel(t: TranslateFn, view: WorkspaceOverviewOutput["activeViews"][number]): string {
+  if (view === "organisation") return t("tabs.desktop");
+  if (view === "database") return t("tabs.documentation");
+  if (view === "execution") return t("footer.mode_execution");
+  if (view === "timeline") return t("tabs.timeline");
+  return "Dashboard";
+}
+
+function getOverviewCapabilityLabel(capability: keyof WorkspaceOverviewOutput["capabilityCounts"]): string {
+  if (capability === "structure") return "Structure";
+  if (capability === "data") return "Data";
+  if (capability === "work") return "Work";
+  if (capability === "time") return "Time";
+  return "Insight";
+}
+
 export function AiRebuildCard({
   t,
   status,
@@ -245,8 +261,50 @@ export function AiRebuildCard({
                 <div className="mt-1 text-[1rem] text-[var(--ode-text)]">{overview.maxDepth}</div>
               </div>
             </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <div className="rounded-lg border border-[var(--ode-border)] bg-[rgba(7,33,52,0.56)] px-3 py-3">
+                <div className="text-[0.68rem] uppercase tracking-[0.1em] text-[var(--ode-text-dim)]">
+                  Active Views
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {overview.activeViews.length > 0 ? (
+                    overview.activeViews.map((view) => (
+                      <span
+                        key={view}
+                        className="rounded-full border border-[var(--ode-border)] bg-[rgba(5,29,46,0.72)] px-2.5 py-1 text-[0.74rem] text-[var(--ode-text)]"
+                      >
+                        {getOverviewViewLabel(t, view)}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="text-[0.78rem] text-[var(--ode-text-muted)]">No active views yet</span>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-lg border border-[var(--ode-border)] bg-[rgba(7,33,52,0.56)] px-3 py-3">
+                <div className="text-[0.68rem] uppercase tracking-[0.1em] text-[var(--ode-text-dim)]">
+                  Meta Capabilities
+                </div>
+                <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                  {Object.entries(overview.capabilityCounts).map(([capability, count]) => (
+                    <div
+                      key={capability}
+                      className="rounded-lg border border-[var(--ode-border)] bg-[rgba(5,29,46,0.72)] px-3 py-2"
+                    >
+                      <div className="text-[0.68rem] uppercase tracking-[0.1em] text-[var(--ode-text-dim)]">
+                        {getOverviewCapabilityLabel(capability as keyof WorkspaceOverviewOutput["capabilityCounts"])}
+                      </div>
+                      <div className="mt-1 text-[0.96rem] text-[var(--ode-text)]">{count}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
             <div className="mt-2 text-[0.78rem] text-[var(--ode-text-muted)]">
-              {t("ai_rebuild.active_scope")}: {overview.scopeName} | {t("ai_rebuild.tickets")}: {overview.ticketCount}
+              {t("ai_rebuild.active_scope")}: {overview.scopeName} | Meaningful nodes: {overview.meaningfulNodeCount} | {t("ai_rebuild.tickets")}: {overview.ticketCount}
+            </div>
+            <div className="mt-1 text-[0.78rem] text-[var(--ode-text-muted)]">
+              Tables: {overview.tableCount} | Fields: {overview.fieldCount} | Execution owners: {overview.executionOwnerCount} | Scheduled nodes: {overview.scheduledNodeCount} | Dashboards: {overview.dashboardCount + overview.dashboardWidgetCount}
             </div>
           </>
         ) : (

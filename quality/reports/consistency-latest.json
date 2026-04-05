@@ -1,0 +1,166 @@
+{
+  "version": 1,
+  "generatedAt": "2026-04-04T14:27:23.451Z",
+  "thresholds": {
+    "warningLines": 1500,
+    "criticalLines": 5000
+  },
+  "source": {
+    "fileCount": 190,
+    "totalLines": 110336,
+    "largestFiles": [
+      {
+        "path": "src/App.tsx",
+        "lines": 25089
+      },
+      {
+        "path": "src/components/views/ProcedureBuilderPanel.tsx",
+        "lines": 13706
+      },
+      {
+        "path": "src/components/views/ProcedureContentPanel.tsx",
+        "lines": 6391
+      },
+      {
+        "path": "src/lib/i18n.ts",
+        "lines": 5481
+      },
+      {
+        "path": "src/components/views/DesktopContentPanel.tsx",
+        "lines": 3475
+      },
+      {
+        "path": "src/styles/globals.css",
+        "lines": 3402
+      },
+      {
+        "path": "src/components/overlay/AiCommandBar.tsx",
+        "lines": 1927
+      },
+      {
+        "path": "src/components/views/TimelineContentPanel.tsx",
+        "lines": 1698
+      },
+      {
+        "path": "src/components/workspace/AiRebuildCard.tsx",
+        "lines": 1586
+      },
+      {
+        "path": "src/lib/procedureExport.ts",
+        "lines": 1516
+      }
+    ],
+    "warningFiles": [
+      {
+        "path": "src/App.tsx",
+        "lines": 25089
+      },
+      {
+        "path": "src/components/views/ProcedureBuilderPanel.tsx",
+        "lines": 13706
+      },
+      {
+        "path": "src/components/views/ProcedureContentPanel.tsx",
+        "lines": 6391
+      },
+      {
+        "path": "src/lib/i18n.ts",
+        "lines": 5481
+      },
+      {
+        "path": "src/components/views/DesktopContentPanel.tsx",
+        "lines": 3475
+      },
+      {
+        "path": "src/styles/globals.css",
+        "lines": 3402
+      },
+      {
+        "path": "src/components/overlay/AiCommandBar.tsx",
+        "lines": 1927
+      },
+      {
+        "path": "src/components/views/TimelineContentPanel.tsx",
+        "lines": 1698
+      },
+      {
+        "path": "src/components/workspace/AiRebuildCard.tsx",
+        "lines": 1586
+      },
+      {
+        "path": "src/lib/procedureExport.ts",
+        "lines": 1516
+      }
+    ],
+    "criticalFiles": [
+      {
+        "path": "src/App.tsx",
+        "lines": 25089
+      },
+      {
+        "path": "src/components/views/ProcedureBuilderPanel.tsx",
+        "lines": 13706
+      },
+      {
+        "path": "src/components/views/ProcedureContentPanel.tsx",
+        "lines": 6391
+      },
+      {
+        "path": "src/lib/i18n.ts",
+        "lines": 5481
+      }
+    ]
+  },
+  "appShell": {
+    "path": "src/App.tsx",
+    "lines": 25089,
+    "useStateCount": 58,
+    "useEffectCount": 117,
+    "useMemoCount": 125,
+    "useCallbackCount": 160
+  },
+  "frontendTests": {
+    "hasRunnerDependency": false,
+    "files": []
+  },
+  "trackedArtifacts": [
+    "vite.config.js",
+    "vite.config.d.ts"
+  ],
+  "findings": [
+    {
+      "id": "app-shell-monolith",
+      "severity": "critical",
+      "summary": "src/App.tsx is 25,089 lines with 58 useState calls and 117 useEffect calls. This mixes UI composition, persistence, orchestration, and domain workflows in one file.",
+      "file": "src/App.tsx"
+    },
+    {
+      "id": "procedure-builder-monolith",
+      "severity": "critical",
+      "summary": "Procedure builder lives in a 13,706 line component, which makes editor behavior, layout consistency, and change review unusually hard to reason about.",
+      "file": "src/components/views/ProcedureBuilderPanel.tsx"
+    },
+    {
+      "id": "procedure-content-panel-monolith",
+      "severity": "high",
+      "summary": "Procedure content rendering is concentrated in 6,391 lines, so presentational changes and behavior changes are tightly coupled.",
+      "file": "src/components/views/ProcedureContentPanel.tsx"
+    },
+    {
+      "id": "localization-catalog-monolith",
+      "severity": "high",
+      "summary": "The translation catalog is 5,481 lines in a single TypeScript file. This slows localization review and makes string consistency harder to audit by feature.",
+      "file": "src/lib/i18n.ts"
+    },
+    {
+      "id": "frontend-test-gap",
+      "severity": "high",
+      "summary": "No frontend test runner dependency and no src/*.test or src/*.spec files were detected. UI confidence currently depends on typecheck/build discipline rather than executable component or integration coverage."
+    },
+    {
+      "id": "tracked-generated-config-artifacts",
+      "severity": "medium",
+      "summary": "Tracked config artifacts were detected alongside the TypeScript source config: vite.config.js, vite.config.d.ts. These files add repository churn and can drift from vite.config.ts if the build pipeline changes."
+    }
+  ]
+}

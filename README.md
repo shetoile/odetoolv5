@@ -31,6 +31,15 @@ npm run tauri:dev
 npm run mock:test
 ```
 
+## Consistency Audit
+
+```bash
+npm run quality:consistency
+```
+
+- Writes a structural consistency snapshot to `quality/reports/consistency-latest.json`.
+- `npm run quality:run` refreshes this audit after the full quality gate.
+
 ## Auto Test System
 
 ```bash

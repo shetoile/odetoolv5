@@ -1,6 +1,6 @@
 export type NodeStateFilter = "empty" | "filled" | "task" | "execution" | "data";
 export type WorkspaceMode = "grid" | "timeline";
-export type DesktopViewMode = "grid" | "mindmap" | "details" | "procedure";
+export type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 export type SelectionSurface = "tree" | "grid" | "timeline";
 export type WorkspaceFocusMode = "structure" | "data" | "execution";
 

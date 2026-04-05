@@ -3,6 +3,7 @@ import type { ContextMenuState } from "@/features/workspace/contextMenu";
 type SelectionSurface = "tree" | "grid" | "timeline";
 
 export type ContextMenuAction =
+  | "create_chantier"
   | "new_topic"
   | "new_task_above"
   | "new_task_below"
@@ -15,6 +16,8 @@ export type ContextMenuAction =
   | "paste"
   | "move_to_workspace"
   | "distribute_to_na_workspace"
+  | "save_as_organisation_model"
+  | "save_as_database_template"
   | "duplicate"
   | "toggle_favorite"
   | "assign_favorite_group"
@@ -40,6 +43,7 @@ export type ContextMenuAction =
   | "import_package"
   | "lock_structure"
   | "unlock_structure"
+  | "edit_access_policy"
   | `toggle_favorite_group:${string}`;
 
 type UseContextMenuActionsParams = {
@@ -49,6 +53,9 @@ type UseContextMenuActionsParams = {
   setPrimarySelection: (nodeId: string | null, surface?: SelectionSurface) => void;
   openScheduleModal: (nodeId: string) => void;
   onCreateTopicFromContext: (targetNodeId: string | null, surface: SelectionSurface) => Promise<void>;
+  onCreateChantier: (
+    targetNodeId?: string | null
+  ) => Promise<void>;
   onCreateTimelineTaskRelative: (
     targetNodeId: string,
     options: { insertBefore: boolean }
@@ -59,6 +66,8 @@ type UseContextMenuActionsParams = {
   onPasteBranch: (targetNodeId?: string | null, surface?: SelectionSurface) => Promise<void>;
   onMoveToWorkspace: (sourceNodeId?: string | null) => void;
   onDistributeToNAWorkspace: (sourceNodeId?: string | null) => void;
+  onSaveAsOrganisationModel: (sourceNodeId?: string | null) => Promise<void>;
+  onSaveAsDatabaseTemplate: (sourceNodeId?: string | null) => Promise<void>;
   onImportPackage: (targetNodeId?: string | null, surface?: SelectionSurface) => Promise<void>;
   onExportPackage: (nodeId: string) => Promise<void>;
   onOpenFileNode: (nodeId: string) => Promise<void>;
@@ -83,6 +92,7 @@ type UseContextMenuActionsParams = {
   onDeleteFavoriteGroup: (groupId: string) => Promise<void>;
   onDeleteSelectedNodes: (sourceNodeId?: string | null, surface?: SelectionSurface) => Promise<void>;
   onSetNodeStructureLocked: (nodeId: string, locked: boolean) => Promise<void>;
+  onEditNodeAccessPolicy: (nodeId: string) => void;
 };
 
 export function useContextMenuActions({
@@ -92,6 +102,7 @@ export function useContextMenuActions({
   setPrimarySelection,
   openScheduleModal,
   onCreateTopicFromContext,
+  onCreateChantier,
   onCreateTimelineTaskRelative,
   onMoveTimelineTask,
   onMoveNodeIn,
@@ -99,6 +110,8 @@ export function useContextMenuActions({
   onPasteBranch,
   onMoveToWorkspace,
   onDistributeToNAWorkspace,
+  onSaveAsOrganisationModel,
+  onSaveAsDatabaseTemplate,
   onImportPackage,
   onExportPackage,
   onOpenFileNode,
@@ -122,7 +135,8 @@ export function useContextMenuActions({
   onSelectFavoriteGroup,
   onDeleteFavoriteGroup,
   onDeleteSelectedNodes,
-  onSetNodeStructureLocked
+  onSetNodeStructureLocked,
+  onEditNodeAccessPolicy
 }: UseContextMenuActionsParams) {
   const runContextMenuAction = async (action: ContextMenuAction) => {
     const currentContext = contextMenu;
@@ -162,9 +176,19 @@ export function useContextMenuActions({
       await onSetNodeStructureLocked(targetNodeId, action === "lock_structure");
       return;
     }
+    if (action === "edit_access_policy") {
+      const targetNodeId = contextNodeId ?? selectedNodeId;
+      if (!targetNodeId) return;
+      onEditNodeAccessPolicy(targetNodeId);
+      return;
+    }
 
     if (action === "new_topic") {
       await onCreateTopicFromContext(contextNodeId, contextSurface);
+      return;
+    }
+    if (action === "create_chantier") {
+      await onCreateChantier(contextNodeId);
       return;
     }
     if (action === "new_task_above") {
@@ -207,6 +231,14 @@ export function useContextMenuActions({
     }
     if (action === "distribute_to_na_workspace") {
       onDistributeToNAWorkspace(contextNodeId);
+      return;
+    }
+    if (action === "save_as_organisation_model") {
+      await onSaveAsOrganisationModel(contextNodeId);
+      return;
+    }
+    if (action === "save_as_database_template") {
+      await onSaveAsDatabaseTemplate(contextNodeId);
       return;
     }
     if (action === "add_deliverable") {

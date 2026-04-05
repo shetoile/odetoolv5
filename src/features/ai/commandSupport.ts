@@ -23,6 +23,22 @@ export function parseArgsNames(args: Record<string, unknown> | undefined): strin
   return [];
 }
 
+export function parseArgsList(args: Record<string, unknown> | undefined, key: string): string[] {
+  const value = args?.[key];
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter((item) => item.length > 0);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(/[,;\n|]/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  return [];
+}
+
 export function buildAiPlanPreview(
   actionId: AiCommandActionId | null,
   args: Record<string, unknown>,
@@ -60,6 +76,16 @@ export function buildAiPlanPreview(
       `Review the extracted tree from selected document context for "${goal}".`,
       "Read uploaded document text from selected file(s) or current scope.",
       "Show the proposed hierarchy before anything is added to the workspace."
+    ];
+  }
+  if (actionId === "database_create_section") {
+    const sectionName = parseArgsString(args, "section_name");
+    const fields = parseArgsList(args, "fields");
+    return [
+      sectionName
+        ? `Create database section "${sectionName}" in the selected context (${selectedLabel}).`
+        : `Add aligned database fields in the selected context (${selectedLabel}).`,
+      fields.length > 0 ? `Fields: ${fields.join(", ")}` : "Fields: infer or add from the request."
     ];
   }
   if (actionId === "tree_create_topic") {

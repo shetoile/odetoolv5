@@ -52,6 +52,7 @@ const items = Array.isArray(catalog.items) ? catalog.items : [];
 
 console.log("Running full quality gate...");
 run("npm run mock:test");
+run("npm run quality:consistency");
 
 const t = nowParts();
 const report = {
@@ -86,7 +87,8 @@ const latest = {
   reportPath: `quality/reports/${reportFileName}`,
   generatedAt: t.iso,
   gitHead: report.gitHead,
-  result: report.result
+  result: report.result,
+  consistencyReportPath: "quality/reports/consistency-latest.json"
 };
 fs.writeFileSync(LATEST_PATH, `${JSON.stringify(latest, null, 2)}\n`, "utf8");
 

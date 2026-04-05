@@ -13,6 +13,7 @@ import {
   type ScheduleStatus,
   isFileLikeNode
 } from "@/lib/types";
+import { getNodeDisplayName, shouldHideNodeFromGenericUi } from "@/lib/nodeDisplay";
 
 export function buildNodeSearchPathLabel(node: AppNode, nodeById: Map<string, AppNode>): string {
   const fullPathNames: string[] = [];
@@ -22,7 +23,9 @@ export function buildNodeSearchPathLabel(node: AppNode, nodeById: Map<string, Ap
   while (current) {
     if (visited.has(current.id)) break;
     visited.add(current.id);
-    fullPathNames.push(current.name);
+    if (!shouldHideNodeFromGenericUi(current)) {
+      fullPathNames.push(getNodeDisplayName(current));
+    }
     if (!current.parentId || current.parentId === ROOT_PARENT_ID) break;
     current = nodeById.get(current.parentId) ?? null;
   }
@@ -101,6 +104,7 @@ export function buildSidebarSearchResults(params: {
 
   const matchedResults = params.searchResults
     .filter((item) => params.nodeById.has(item.id))
+    .filter((item) => !shouldHideNodeFromGenericUi(item))
     .filter((item) => (params.projectScopedNodeIds ? params.projectScopedNodeIds.has(item.id) : true))
     .filter((item) => {
       if (!params.searchUsesNodeStateScope || params.searchFocusMode === "execution") return true;
@@ -113,7 +117,8 @@ export function buildSidebarSearchResults(params: {
     })
     .map((item) => {
       const pathLabel = buildNodeSearchPathLabel(item, params.nodeById);
-      const name = item.name.toLowerCase();
+      const displayName = getNodeDisplayName(item);
+      const name = displayName.toLowerCase();
       const path = pathLabel.toLowerCase();
       const nameMatch =
         name.includes(normalizedQuery) || queryTerms.every((term) => name.includes(term));
@@ -152,6 +157,7 @@ export function buildSidebarSearchResults(params: {
         id: item.id,
         node: item,
         pathLabel,
+        displayName,
         score,
         nameMatch
       };
@@ -163,6 +169,7 @@ export function buildSidebarSearchResults(params: {
         id: string;
         node: AppNode;
         pathLabel: string;
+        displayName: string;
         score: number;
         nameMatch: boolean;
       } => item !== null
@@ -178,10 +185,10 @@ export function buildSidebarSearchResults(params: {
         return right.node.updatedAt - left.node.updatedAt;
       }
       if (left.node.order !== right.node.order) return left.node.order - right.node.order;
-      return left.node.name.localeCompare(right.node.name);
+      return left.displayName.localeCompare(right.displayName);
     })
     .slice(0, params.limit ?? 24)
-    .map(({ score: _score, nameMatch: _nameMatch, ...item }) => item);
+    .map(({ score: _score, nameMatch: _nameMatch, displayName: _displayName, ...item }) => item);
 }
 
 export function buildTimelineSearchResults(params: {
@@ -219,6 +226,7 @@ export function buildTimelineSearchResults(params: {
 
   const matchedResults = params.nodes
     .filter((node) => params.nodeById.has(node.id))
+    .filter((node) => !shouldHideNodeFromGenericUi(node))
     .filter((node) => (params.projectScopedNodeIds ? params.projectScopedNodeIds.has(node.id) : true))
     .map((node) => {
       const isExecutionTaskNode = params.isExecutionTaskNode(node);
@@ -272,7 +280,8 @@ export function buildTimelineSearchResults(params: {
       }
 
       const pathLabel = buildNodeSearchPathLabel(node, params.nodeById);
-      const name = node.name.toLowerCase();
+      const displayName = getNodeDisplayName(node);
+      const name = displayName.toLowerCase();
       const path = pathLabel.toLowerCase();
       const nameMatch =
         name.includes(normalizedQuery) || queryTerms.every((term) => name.includes(term));
@@ -290,6 +299,7 @@ export function buildTimelineSearchResults(params: {
         id: node.id,
         node,
         pathLabel,
+        displayName,
         score,
         nameMatch
       };
@@ -301,6 +311,7 @@ export function buildTimelineSearchResults(params: {
         id: string;
         node: AppNode;
         pathLabel: string;
+        displayName: string;
         score: number;
         nameMatch: boolean;
       } => entry !== null && typeof entry.score === "number"
@@ -325,10 +336,10 @@ export function buildTimelineSearchResults(params: {
         return right.node.updatedAt - left.node.updatedAt;
       }
       if (left.node.order !== right.node.order) return left.node.order - right.node.order;
-      return left.node.name.localeCompare(right.node.name);
+      return left.displayName.localeCompare(right.displayName);
     })
     .slice(0, params.limit ?? 24)
-    .map(({ score: _score, nameMatch: _nameMatch, ...result }) => result);
+    .map(({ score: _score, nameMatch: _nameMatch, displayName: _displayName, ...result }) => result);
 }
 
 export function collectAncestorNodeIds(nodeId: string, nodeById: Map<string, AppNode>): string[] {

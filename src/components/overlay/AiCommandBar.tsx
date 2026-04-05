@@ -8,11 +8,12 @@ import {
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AI_SPEECH_LOCALES } from "@/ai/planning/outputLanguage";
-import { ExecutionTaskGlyph, FolderGlyph } from "@/components/Icons";
+import { DatabaseRootGlyph, FolderGlyph } from "@/components/Icons";
 import { WindowControls } from "@/components/layout/WindowControls";
 import { OdeAiMark } from "@/components/OdeAiMark";
 import { DocumentTreeProposalEditor } from "@/components/overlay/DocumentTreeProposalEditor";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import { AI_KEYS_STORAGE_KEY, buildAppStorageKey } from "@/lib/appIdentity";
 import {
   clearApprovedDocumentTreeMemories,
   readApprovedDocumentTreeMemories,
@@ -178,8 +179,7 @@ type SpeechRecognitionWindow = Window & {
   };
 };
 
-const AI_COMMAND_HISTORY_STORAGE_KEY = "odetool.ai.commandHistory.v1";
-const AI_KEYS_STORAGE_KEY = "odetool.ai.keys.v1";
+const AI_COMMAND_HISTORY_STORAGE_KEY = buildAppStorageKey("ai.commandHistory.v1");
 const MAX_RECENT_COMMANDS = 10;
 
 function readStoredMistralKeys(): string[] {
@@ -649,12 +649,12 @@ export function AiCommandBar({
   const surfaceTabs: Array<{ id: AssistantSurface; label: string; detail: string }> = [
     {
       id: "organization",
-      label: t("footer.mode_structure"),
+      label: t("desktop.mindmap_node_tree"),
       detail: t("command.ai_surface_hint_organization")
     },
     {
       id: "workarea",
-      label: t("footer.mode_execution"),
+      label: t("desktop.view_procedure"),
       detail: t("command.ai_surface_hint_workarea")
     }
   ];
@@ -955,24 +955,57 @@ export function AiCommandBar({
     }
   };
 
-  const runApplyNodePlan = async () => {
+  const runImplementNodeResponse = async () => {
     const clean = commandText.trim();
-    if (!clean || !nodeResponse || !onApplyNodePlan || isExecuting || isAnalyzing) return;
+    if (!clean || !nodeResponse || isExecuting || isAnalyzing) return;
+    const answerText = nodeResponseDraft.trim().length > 0 ? nodeResponseDraft : nodeResponse.answer;
+    if (!answerText.trim()) return;
     setError(null);
     setIsExecuting(true);
     setProgressLines((prev) => [...prev, t("command.ai_progress_plan")]);
     try {
-      const answerText = nodeResponseDraft.trim().length > 0 ? nodeResponseDraft : nodeResponse.answer;
-      await onApplyNodePlan(clean, answerText, {
+      if (activeSurface === "workarea" && onApplyNodePlan) {
+        await onApplyNodePlan(clean, answerText, {
+          selectedDocumentIds: normalizedSelectedDocumentIds,
+          actionHint: activeQuickAction?.actionHint ?? null
+        });
+        setProgressLines((prev) => [...prev, t("command.ai_progress_ready")]);
+        return;
+      }
+
+      const implementationPrompt = [
+        clean,
+        "",
+        "Implement the approved answer for the current node.",
+        "Approved answer:",
+        answerText
+      ].join("\n");
+      const nextPlan = await onAnalyze(implementationPrompt, {
         selectedDocumentIds: normalizedSelectedDocumentIds,
         actionHint: activeQuickAction?.actionHint ?? null
       });
-      setProgressLines((prev) => [...prev, "Node updated"]);
+      setPlan(nextPlan);
+      if (simpleMode && nextPlan.actionId) {
+        setProgressLines((prev) => [...prev, t("command.ai_progress_execute")]);
+        await onExecute(nextPlan);
+        setProgressLines((prev) => [...prev, t("command.ai_progress_done")]);
+      } else if (simpleMode && !nextPlan.actionId) {
+        setError(nextPlan.reason || t("command.ai_no_confirm"));
+      } else {
+        setProgressLines((prev) => [...prev, t("command.ai_progress_ready")]);
+      }
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
       setError(t("command.action_failed").replace("{reason}", reason));
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  const handleNodeResponseKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      void runImplementNodeResponse();
     }
   };
 
@@ -1266,7 +1299,7 @@ export function AiCommandBar({
                             {surface.id === "organization" ? (
                               <FolderGlyph state="filled" active={active} />
                             ) : (
-                              <ExecutionTaskGlyph active={active} />
+                              <DatabaseRootGlyph active={active} />
                             )}
                             <span>{surface.label}</span>
                           </button>
@@ -1413,6 +1446,7 @@ export function AiCommandBar({
                     onChange={(event) => {
                       setNodeResponseDraft(event.target.value);
                     }}
+                    onKeyDown={handleNodeResponseKeyDown}
                     disabled={isExecuting || isAnalyzing}
                   />
                   {nodeResponse.sourceLabels.length > 0 ? (
@@ -1431,31 +1465,29 @@ export function AiCommandBar({
                       <button
                         type="button"
                         className="ode-mini-btn h-10 px-4"
-                      onClick={() => {
-                        setNodeResponseDraft(nodeResponse.answer);
-                      }}
-                      disabled={isExecuting || isAnalyzing || nodeResponseDraft === nodeResponse.answer}
+                        onClick={() => {
+                          setNodeResponseDraft(nodeResponse.answer);
+                        }}
+                        disabled={isExecuting || isAnalyzing || nodeResponseDraft === nodeResponse.answer}
                       >
                         {t("command.ai_answer_reset")}
                       </button>
-                      {activeSurface === "workarea" ? (
-                        <button
-                          type="button"
-                          className="ode-primary-btn h-10 px-4"
-                          onClick={() => {
-                            void runApplyNodePlan();
-                          }}
-                          disabled={
-                            !onApplyNodePlan ||
-                            isExecuting ||
-                            isAnalyzing ||
-                            commandText.trim().length === 0 ||
-                            nodeResponseDraft.trim().length === 0
-                          }
-                        >
-                          {isExecuting ? t("command.ai_drafting_proposal") : t("command.ai_open_plan_proposal")}
-                        </button>
-                      ) : null}
+                      <button
+                        type="button"
+                        className="ode-primary-btn h-10 px-4"
+                        onClick={() => {
+                          void runImplementNodeResponse();
+                        }}
+                        disabled={
+                          (activeSurface === "workarea" && !onApplyNodePlan) ||
+                          isExecuting ||
+                          isAnalyzing ||
+                          commandText.trim().length === 0 ||
+                          nodeResponseDraft.trim().length === 0
+                        }
+                      >
+                        {isExecuting ? t("command.ai_implementing_answer") : t("command.ai_implement_answer")}
+                      </button>
                     </div>
                   </div>
                 ) : null}

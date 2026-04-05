@@ -20,6 +20,7 @@ interface NodeContextMenuProps {
   contextMenuNodeIsExecutionTask: boolean;
   contextMenuNodeStructureLocked: boolean;
   canToggleStructureLock: boolean;
+  canEditAccessPolicy: boolean;
   contextMenuNodeWorkareaKind: "deliverable" | "task" | "subtask" | null;
   contextMenuNodeIsDeclaredWorkareaOwner: boolean;
   contextMenuNodeCanOpenWorkarea: boolean;
@@ -30,6 +31,9 @@ interface NodeContextMenuProps {
   canMoveNodeOut: boolean;
   contextMenuGroupCanDelete: boolean;
   canDistributeToNAWorkspace: boolean;
+  canCreateChantier: boolean;
+  canSaveAsOrganisationModel: boolean;
+  canSaveAsDatabaseTemplate: boolean;
   restrictToFavoriteGroupsOnly: boolean;
   onRunAction: (action: ContextMenuAction) => void;
 }
@@ -42,13 +46,22 @@ function ContextMenuItem(props: {
   danger?: boolean;
   autoFocus?: boolean;
   shortcutLabel?: string | null;
+  runOnMouseDown?: boolean;
 }) {
   return (
     <button
       className={`ode-context-item${props.danger ? " ode-context-item-danger" : ""}`}
       autoFocus={props.autoFocus}
       disabled={props.disabled}
-      onClick={() => props.onRunAction(props.action)}
+      onMouseDown={(event) => {
+        if (!props.runOnMouseDown || props.disabled) return;
+        event.preventDefault();
+        props.onRunAction(props.action);
+      }}
+      onClick={() => {
+        if (props.runOnMouseDown) return;
+        props.onRunAction(props.action);
+      }}
     >
       <span className="ode-context-item-main">
         <span>{props.label}</span>
@@ -71,6 +84,7 @@ export function NodeContextMenu({
   contextMenuNodeIsExecutionTask,
   contextMenuNodeStructureLocked,
   canToggleStructureLock,
+  canEditAccessPolicy,
   contextMenuNodeWorkareaKind,
   contextMenuNodeCanOpenWorkarea,
   contextMenuNodeFilePath,
@@ -80,6 +94,9 @@ export function NodeContextMenu({
   canMoveNodeOut,
   contextMenuGroupCanDelete,
   canDistributeToNAWorkspace,
+  canCreateChantier,
+  canSaveAsOrganisationModel,
+  canSaveAsDatabaseTemplate,
   restrictToFavoriteGroupsOnly,
   onRunAction
 }: NodeContextMenuProps) {
@@ -116,6 +133,7 @@ export function NodeContextMenu({
     (contextMenuNodeWorkareaKind === "task" || contextMenuNodeWorkareaKind === "subtask");
   const showTimelineWorkareaRemove = isTimelineWorkareaMenu && contextMenuNodeWorkareaKind !== null;
   const showStructureLockAction = canToggleStructureLock;
+  const showAccessPolicyAction = canEditAccessPolicy;
   const structureLockLabel = contextMenuNodeStructureLocked
     ? t("context.unlock_structure")
     : t("context.lock_structure");
@@ -215,14 +233,15 @@ export function NodeContextMenu({
   const menuMaxHeight = `${menuPlacement?.maxHeight ?? 576}px`;
 
   return (
-    <div
-      ref={menuRef}
-      className="ode-context-menu"
-      style={{ left: `${menuLeft}px`, top: `${menuTop}px`, maxHeight: menuMaxHeight }}
-      role="menu"
-      aria-label="Node actions"
-      onKeyDown={handleMenuKeyDown}
-    >
+    <>
+      <div
+        ref={menuRef}
+        className="ode-context-menu"
+        style={{ left: `${menuLeft}px`, top: `${menuTop}px`, maxHeight: menuMaxHeight }}
+        role="menu"
+        aria-label="Node actions"
+        onKeyDown={handleMenuKeyDown}
+      >
       {contextMenu.kind === "quick_access_node" && contextMenu.nodeId ? (
         <>
           <ContextMenuItem
@@ -306,6 +325,14 @@ export function NodeContextMenu({
                   onRunAction={onRunAction}
                   disabled={!contextMenuNodeFilePath}
                 />
+                {showAccessPolicyAction ? <div className="ode-context-separator" /> : null}
+                {showAccessPolicyAction ? (
+                  <ContextMenuItem
+                    label={t("context.access_policy")}
+                    action="edit_access_policy"
+                    onRunAction={onRunAction}
+                  />
+                ) : null}
                 <div className="ode-context-separator" />
                 <ContextMenuItem
                   label={workareaRemoveLabel}
@@ -372,6 +399,13 @@ export function NodeContextMenu({
                       <ContextMenuItem
                         label={structureLockLabel}
                         action={contextMenuNodeStructureLocked ? "unlock_structure" : "lock_structure"}
+                        onRunAction={onRunAction}
+                      />
+                    ) : null}
+                    {showAccessPolicyAction ? (
+                      <ContextMenuItem
+                        label={t("context.access_policy")}
+                        action="edit_access_policy"
                         onRunAction={onRunAction}
                       />
                     ) : null}
@@ -478,13 +512,22 @@ export function NodeContextMenu({
                 <div className="ode-context-separator" />
               </>
             ) : null}
-            {showStructureLockAction ? (
+            {showStructureLockAction || canCreateChantier ? (
               <>
-                <ContextMenuItem
-                  label={structureLockLabel}
-                  action={contextMenuNodeStructureLocked ? "unlock_structure" : "lock_structure"}
-                  onRunAction={onRunAction}
-                />
+                {showStructureLockAction ? (
+                  <ContextMenuItem
+                    label={structureLockLabel}
+                    action={contextMenuNodeStructureLocked ? "unlock_structure" : "lock_structure"}
+                    onRunAction={onRunAction}
+                  />
+                ) : null}
+                {canCreateChantier ? (
+                  <ContextMenuItem
+                    label={t("context.create_chantier")}
+                    action="create_chantier"
+                    onRunAction={onRunAction}
+                  />
+                ) : null}
                 <div className="ode-context-separator" />
               </>
             ) : null}
@@ -571,6 +614,21 @@ export function NodeContextMenu({
               onRunAction={onRunAction}
               shortcutLabel="Ctrl+D"
             />
+            {canSaveAsOrganisationModel || canSaveAsDatabaseTemplate ? <div className="ode-context-separator" /> : null}
+            {canSaveAsOrganisationModel ? (
+              <ContextMenuItem
+                label={t("context.save_as_organisation_model")}
+                action="save_as_organisation_model"
+                onRunAction={onRunAction}
+              />
+            ) : null}
+            {canSaveAsDatabaseTemplate ? (
+              <ContextMenuItem
+                label={t("context.save_as_database_template")}
+                action="save_as_database_template"
+                onRunAction={onRunAction}
+              />
+            ) : null}
             <div className="ode-context-separator" />
             {contextMenu.surface !== "timeline" ? (
               <ContextMenuItem
@@ -641,6 +699,7 @@ export function NodeContextMenu({
           </>
         )
       )}
-    </div>
+      </div>
+    </>
   );
 }

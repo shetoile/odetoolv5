@@ -1,52 +1,74 @@
 import type { ChangeEvent, RefObject } from "react";
-import { UploadGlyphSmall } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import type { TranslationParams } from "@/lib/i18n";
-import type { AppNode } from "@/lib/types";
+import { isFileLikeNode, type AppNode } from "@/lib/types";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
 type WorkspaceMode = "grid" | "timeline";
-type DesktopViewMode = "grid" | "mindmap" | "details" | "procedure";
+type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 type WorkspaceFocusMode = "structure" | "data" | "execution";
 
 interface MainPaneHeaderProps {
   t: TranslateFn;
   breadcrumbNodes: AppNode[];
+  getBreadcrumbLabel?: (node: AppNode) => string;
   workspaceMode: WorkspaceMode;
   desktopViewMode: DesktopViewMode;
   workspaceFocusMode: WorkspaceFocusMode;
   documentationModeActive: boolean;
   workspaceStructureLocked: boolean;
+  currentFolderNode: AppNode | null;
   uploadInputRef: RefObject<HTMLInputElement | null>;
   onUploadInputChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  onTriggerDesktopUpload: () => void;
   onSelectBreadcrumbNode: (nodeId: string) => void;
-  onSetDesktopViewMode: (mode: DesktopViewMode) => void;
+  onOpenNodeHome: () => void | Promise<void>;
+  onOpenNodeExecution: () => void | Promise<void>;
+  onOpenNodeTimeline: () => void | Promise<void>;
 }
 
 export function MainPaneHeader({
   t,
   breadcrumbNodes,
+  getBreadcrumbLabel,
   workspaceMode,
   desktopViewMode,
   workspaceFocusMode,
   documentationModeActive,
   workspaceStructureLocked,
+  currentFolderNode,
   uploadInputRef,
   onUploadInputChange,
-  onTriggerDesktopUpload,
   onSelectBreadcrumbNode,
-  onSetDesktopViewMode
+  onOpenNodeHome,
+  onOpenNodeExecution,
+  onOpenNodeTimeline
 }: MainPaneHeaderProps) {
+  const isLibraryActive = workspaceMode === "grid" && desktopViewMode === "library";
+  const canShowNodeWorkspace =
+    !isLibraryActive &&
+    !documentationModeActive &&
+    currentFolderNode !== null &&
+    !isFileLikeNode(currentFolderNode) &&
+    currentFolderNode.properties?.odeDashboardWidget !== true;
+  const isHomeActive = workspaceMode === "grid" && desktopViewMode === "dashboard";
+  const isExecutionActive =
+    workspaceMode === "grid" &&
+    workspaceFocusMode === "execution" &&
+    desktopViewMode !== "dashboard";
+  const isTimelineActive = workspaceMode === "timeline";
+
   return (
     <>
       <div className="flex items-center justify-between gap-3 border-b border-[var(--ode-border)] px-4 py-2.5 text-[1.02rem] text-[var(--ode-text-dim)]">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            {breadcrumbNodes.length > 0 ? (
+            {isLibraryActive ? (
+              <div className="ode-wrap-text leading-6">{t("tabs.library")}</div>
+            ) : breadcrumbNodes.length > 0 ? (
               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                 {breadcrumbNodes.map((node, idx) => {
                   const isCurrent = idx === breadcrumbNodes.length - 1;
+                  const label = getBreadcrumbLabel ? getBreadcrumbLabel(node) : node.name;
                   return (
                     <div key={node.id} className="flex min-w-0 items-center gap-1.5">
                       {idx > 0 ? (
@@ -62,16 +84,14 @@ export function MainPaneHeader({
                         onClick={() => onSelectBreadcrumbNode(node.id)}
                         aria-label={node.name}
                       >
-                        {node.name}
+                        {label || "\u00A0"}
                       </button>
                     </div>
                   );
                 })}
               </div>
             ) : (
-              <div className="ode-wrap-text leading-6">
-                {documentationModeActive ? t("tabs.documentation") : t("main.desktop")}
-              </div>
+              documentationModeActive ? null : <div className="ode-wrap-text leading-6">{t("main.desktop")}</div>
             )}
             {workspaceStructureLocked ? (
               <span className="rounded-full border border-[rgba(223,198,119,0.42)] bg-[rgba(108,88,34,0.24)] px-2.5 py-0.5 text-[0.72rem] uppercase tracking-[0.08em] text-[#f3d98a]">
@@ -81,63 +101,38 @@ export function MainPaneHeader({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {workspaceMode === "grid" && !documentationModeActive ? (
+          {(workspaceMode === "grid" || workspaceMode === "timeline") && !documentationModeActive ? (
             <>
-              {workspaceFocusMode === "execution" ? (
-                <div className="flex items-center gap-1 rounded-lg border border-[rgba(81,182,214,0.26)] bg-[linear-gradient(180deg,rgba(8,42,63,0.88),rgba(5,25,40,0.9))] p-1 shadow-[0_0_0_1px_rgba(10,110,152,0.12)]">
-                  <button
-                    type="button"
-                    className={`ode-mini-btn h-8 px-3 ${desktopViewMode === "grid" ? "ode-mini-btn-active" : ""}`}
-                    onClick={() => onSetDesktopViewMode("grid")}
-                  >
-                    {t("desktop.view_grid")}
-                  </button>
-                  <button
-                    type="button"
-                    className={`ode-mini-btn h-8 px-3 ${desktopViewMode === "details" ? "ode-mini-btn-active" : ""}`}
-                    onClick={() => onSetDesktopViewMode("details")}
-                  >
-                    {t("desktop.view_details")}
-                  </button>
-                </div>
-              ) : (
+              {canShowNodeWorkspace ? (
                 <div className="flex items-center gap-1 rounded-lg border border-[var(--ode-border)] bg-[rgba(3,18,30,0.42)] p-1">
                   <button
                     type="button"
-                    className={`ode-mini-btn h-8 px-3 ${desktopViewMode === "grid" ? "ode-mini-btn-active" : ""}`}
-                    onClick={() => onSetDesktopViewMode("grid")}
+                    className={`ode-mini-btn h-8 px-3 ${isHomeActive ? "ode-mini-btn-active" : ""}`}
+                    onClick={() => {
+                      void onOpenNodeHome();
+                    }}
                   >
-                    {t("desktop.view_grid")}
+                    {t("desktop.view_home")}
                   </button>
-                  {workspaceFocusMode === "structure" ? (
-                    <button
-                      type="button"
-                      className={`ode-mini-btn h-8 px-3 ${desktopViewMode === "mindmap" ? "ode-mini-btn-active" : ""}`}
-                      onClick={() => onSetDesktopViewMode("mindmap")}
-                    >
-                      {t("desktop.view_mindmap")}
-                    </button>
-                  ) : null}
                   <button
                     type="button"
-                    className={`ode-mini-btn h-8 px-3 ${desktopViewMode === "details" ? "ode-mini-btn-active" : ""}`}
-                    onClick={() => onSetDesktopViewMode("details")}
+                    className={`ode-mini-btn h-8 px-3 ${isExecutionActive ? "ode-mini-btn-active" : ""}`}
+                    onClick={() => {
+                      void onOpenNodeExecution();
+                    }}
                   >
-                    {t("desktop.view_details")}
+                    {t("tabs.execution")}
+                  </button>
+                  <button
+                    type="button"
+                    className={`ode-mini-btn h-8 px-3 ${isTimelineActive ? "ode-mini-btn-active" : ""}`}
+                    onClick={() => {
+                      void onOpenNodeTimeline();
+                    }}
+                  >
+                    {t("tabs.timeline")}
                   </button>
                 </div>
-              )}
-              {workspaceFocusMode !== "execution" &&
-              (desktopViewMode === "grid" || desktopViewMode === "mindmap" || desktopViewMode === "details") ? (
-                <OdeTooltip label={t("desktop.upload")} side="bottom" align="end">
-                  <button
-                    className="ode-mini-btn h-8 w-8"
-                    onClick={onTriggerDesktopUpload}
-                    aria-label={t("desktop.upload")}
-                  >
-                    <UploadGlyphSmall />
-                  </button>
-                </OdeTooltip>
               ) : null}
             </>
           ) : null}

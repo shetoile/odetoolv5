@@ -1,6 +1,7 @@
 import type { AppNode } from "@/lib/types";
+import { buildAppStorageKey } from "@/lib/appIdentity";
 
-const AI_TELEMETRY_STORAGE_KEY = "odetool.ai.telemetry.v1";
+const AI_TELEMETRY_STORAGE_KEY = buildAppStorageKey("ai.telemetry.v1");
 
 export type AiTelemetryDocumentAdvisorContext = {
   nodeId: string;

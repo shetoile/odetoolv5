@@ -1,23 +1,23 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
   ChecklistGlyphSmall,
-  ExecutionTaskGlyph,
   FileGlyphSmall,
-  FolderGlyph,
   InfoGlyphSmall,
   QuestionMarkGlyphSmall
 } from "@/components/Icons";
 import { NodeQuickAppDock } from "@/components/layout/NodeQuickAppDock";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import { buildAppStorageKey } from "@/lib/appIdentity";
 import type { TranslationParams } from "@/lib/i18n";
 import type { MirrorStatus } from "@/lib/types";
 import type { NodeQuickAppItem } from "@/lib/nodeQuickApps";
+import { deriveUserProfileInitials } from "@/lib/userProfile";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
 
 type BranchClipboardLike = { mode: "copy" | "cut" };
 type WorkspaceMode = "grid" | "timeline";
-type DesktopViewMode = "grid" | "mindmap" | "details" | "procedure";
+type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 type WorkspaceFocusMode = "structure" | "data" | "execution";
 type QaChecklistHealth = "pending" | "passed" | "failed";
 type QaChecklistSummary = {
@@ -52,6 +52,13 @@ interface StatusBarProps {
   onOpenHelp: () => void;
   onOpenQaChecklist: () => void;
   onOpenAssistant?: () => void;
+  currentUserLabel?: string | null;
+  currentUserPhotoDataUrl?: string | null;
+  currentUserRole?: string | null;
+  currentUserIsAdmin?: boolean;
+  onOpenUserProfile?: () => void;
+  onOpenUserAccounts?: () => void;
+  onSignOut?: () => void;
 }
 
 type AiDockPosition = {
@@ -71,7 +78,7 @@ type ViewportMetrics = {
   footerHeight: number;
 };
 
-const AI_DOCK_STATE_STORAGE_KEY = "odetool.aiDockState.v2";
+const AI_DOCK_STATE_STORAGE_KEY = buildAppStorageKey("aiDockState.v2");
 const AI_DOCK_SIZE_PX = 56;
 const AI_DOCK_MARGIN_PX = 10;
 const AI_DOCK_DEFAULT_RIGHT_PX = 15;
@@ -170,17 +177,6 @@ function readStoredAiDockPosition(): AiDockPosition | null {
 export function StatusBar({
   version,
   t,
-  branchClipboard,
-  mirrorStatus,
-  workspaceMode,
-  desktopViewMode,
-  workspaceFocusMode,
-  documentationModeActive,
-  showExecutionMode = true,
-  workareaAvailable,
-  workspaceEmptyOnly,
-  onSelectWorkspaceFocusMode,
-  onToggleWorkspaceEmptyOnly,
   qaChecklistSummary,
   qaChecklistHealth,
   quickAppNodeLabel,
@@ -191,14 +187,22 @@ export function StatusBar({
   onOpenReleaseNotes,
   onOpenHelp,
   onOpenQaChecklist,
-  onOpenAssistant
+  onOpenAssistant,
+  currentUserLabel,
+  currentUserPhotoDataUrl,
+  currentUserRole,
+  currentUserIsAdmin = false,
+  onOpenUserProfile,
+  onOpenUserAccounts,
+  onSignOut
 }: StatusBarProps) {
-  const isTimelinePlanActive = workspaceMode === "timeline" && desktopViewMode === "procedure";
   const [infoMenuOpen, setInfoMenuOpen] = useState(false);
+  const [userProfileMenuOpen, setUserProfileMenuOpen] = useState(false);
   const [aiDockPosition, setAiDockPosition] = useState<AiDockPosition | null>(() => readStoredAiDockPosition());
   const [footerHeight, setFooterHeight] = useState(AI_DOCK_FOOTER_FALLBACK_HEIGHT_PX);
   const [isAiDockDragging, setIsAiDockDragging] = useState(false);
   const infoMenuRef = useRef<HTMLDivElement | null>(null);
+  const userProfileMenuRef = useRef<HTMLDivElement | null>(null);
   const footerRef = useRef<HTMLElement | null>(null);
   const aiDockButtonRef = useRef<HTMLButtonElement | null>(null);
   const viewportMetricsRef = useRef<ViewportMetrics>({
@@ -221,6 +225,20 @@ export function StatusBar({
       : qaChecklistHealth === "passed"
         ? "ode-qa-btn-passed"
         : "ode-qa-btn-pending";
+  const currentUserInitials = currentUserLabel ? deriveUserProfileInitials(currentUserLabel) : null;
+  const userProfileTooltipLabel = currentUserRole
+    ? `${currentUserLabel ?? "User"} (${currentUserRole})`
+    : currentUserLabel ?? "User profile";
+  const renderUserAvatar = (sizeClassName: string, textClassName: string) =>
+    currentUserPhotoDataUrl ? (
+      <img
+        src={currentUserPhotoDataUrl}
+        alt={currentUserLabel ?? "User profile"}
+        className={`${sizeClassName} rounded-full object-cover`}
+      />
+    ) : (
+      <span className={textClassName}>{currentUserInitials}</span>
+    );
 
   const infoMenu = (
     <div className="relative flex items-center gap-2" ref={infoMenuRef}>
@@ -228,7 +246,10 @@ export function StatusBar({
         <button
           type="button"
           className={`ode-statusbar-info-btn ${infoMenuOpen ? "ode-statusbar-info-btn-open" : ""}`}
-          onClick={() => setInfoMenuOpen((prev) => !prev)}
+          onClick={() => {
+            setUserProfileMenuOpen(false);
+            setInfoMenuOpen((prev) => !prev);
+          }}
           aria-label={t("footer.info")}
           aria-expanded={infoMenuOpen}
         >
@@ -294,18 +315,111 @@ export function StatusBar({
     </div>
   );
 
+  const userProfileMenu =
+    currentUserLabel && currentUserInitials ? (
+      <div className="relative inline-flex" ref={userProfileMenuRef}>
+        <OdeTooltip label="Open profile settings" side="top" align="start">
+          <button
+            type="button"
+            className={`flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-[var(--ode-border-strong)] bg-[rgba(12,63,96,0.55)] text-[0.82rem] font-semibold tracking-[0.08em] text-[var(--ode-text)] transition hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)] ${
+              userProfileMenuOpen ? "border-[var(--ode-border-accent)] shadow-[0_0_0_4px_rgba(9,52,79,0.36)]" : ""
+            }`}
+            onClick={() => {
+              setInfoMenuOpen(false);
+              setUserProfileMenuOpen((prev) => !prev);
+            }}
+            aria-label={userProfileTooltipLabel}
+            aria-expanded={userProfileMenuOpen}
+          >
+            {renderUserAvatar("h-full w-full", "text-[0.82rem] font-semibold tracking-[0.08em]")}
+          </button>
+        </OdeTooltip>
+        {userProfileMenuOpen ? (
+          <div className="absolute bottom-[calc(100%+0.45rem)] left-0 z-40 w-[min(300px,calc(100vw-1.5rem))] rounded-[22px] border border-[var(--ode-border-strong)] bg-[linear-gradient(180deg,rgba(7,34,54,0.98),rgba(4,18,30,0.98))] p-4 shadow-[0_28px_80px_rgba(0,0,0,0.38)] backdrop-blur-sm">
+            <div className="flex items-start gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-[var(--ode-border-strong)] bg-[rgba(12,63,96,0.55)] text-[0.84rem] font-semibold tracking-[0.08em] text-[var(--ode-text)]">
+                {renderUserAvatar("h-full w-full", "text-[0.84rem] font-semibold tracking-[0.08em]")}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[0.68rem] uppercase tracking-[0.18em] text-[var(--ode-text-muted)]">
+                  User Profile
+                </div>
+                <div className="mt-1 truncate text-[1rem] font-medium text-[var(--ode-text)]">{currentUserLabel}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {currentUserRole ? (
+                    <span className="rounded-full border border-[var(--ode-border)] px-2 py-0.5 text-[0.72rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)]">
+                      {currentUserRole}
+                    </span>
+                  ) : null}
+                  {currentUserIsAdmin ? (
+                    <span className="rounded-full border border-[rgba(148,203,183,0.32)] px-2 py-0.5 text-[0.68rem] uppercase tracking-[0.12em] text-[#bcefd8]">
+                      Admin
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            {onOpenUserProfile || currentUserIsAdmin || onSignOut ? (
+              <div className="mt-4 flex flex-wrap gap-2 border-t border-[rgba(110,211,255,0.12)] pt-4">
+                {onOpenUserProfile ? (
+                  <button
+                    type="button"
+                    className="rounded-[12px] border border-[var(--ode-border)] px-3 py-2 text-[0.72rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)] transition hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+                    onClick={() => {
+                      setUserProfileMenuOpen(false);
+                      onOpenUserProfile();
+                    }}
+                  >
+                    Profile
+                  </button>
+                ) : null}
+                {currentUserIsAdmin && onOpenUserAccounts ? (
+                  <button
+                    type="button"
+                    className="rounded-[12px] border border-[var(--ode-border)] px-3 py-2 text-[0.72rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)] transition hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+                    onClick={() => {
+                      setUserProfileMenuOpen(false);
+                      onOpenUserAccounts();
+                    }}
+                  >
+                    Users
+                  </button>
+                ) : null}
+                {onSignOut ? (
+                  <button
+                    type="button"
+                    className="rounded-[12px] border border-[var(--ode-border)] px-3 py-2 text-[0.72rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)] transition hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+                    onClick={() => {
+                      setUserProfileMenuOpen(false);
+                      onSignOut();
+                    }}
+                  >
+                    Sign Out
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
   useEffect(() => {
-    if (!infoMenuOpen) return;
+    if (!infoMenuOpen && !userProfileMenuOpen) return;
 
     const onPointerDown = (event: MouseEvent) => {
       if (!(event.target instanceof Node)) return;
       if (infoMenuRef.current?.contains(event.target)) return;
+      if (userProfileMenuRef.current?.contains(event.target)) return;
       setInfoMenuOpen(false);
+      setUserProfileMenuOpen(false);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setInfoMenuOpen(false);
+        setUserProfileMenuOpen(false);
       }
     };
 
@@ -315,7 +429,13 @@ export function StatusBar({
       window.removeEventListener("mousedown", onPointerDown);
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [infoMenuOpen]);
+  }, [infoMenuOpen, userProfileMenuOpen]);
+
+  useEffect(() => {
+    if (!currentUserLabel && userProfileMenuOpen) {
+      setUserProfileMenuOpen(false);
+    }
+  }, [currentUserLabel, userProfileMenuOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -492,108 +612,17 @@ export function StatusBar({
       ) : null}
 
       <footer ref={footerRef} className="ode-statusbar">
-      <div className="flex min-w-0 flex-1 items-center justify-start px-3">
-        <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto whitespace-nowrap pr-2">
-          <div className="flex shrink-0 items-center gap-1 rounded-lg border border-[var(--ode-border)] bg-[rgba(3,18,30,0.5)] p-1">
-            {documentationModeActive ? (
-              <div className="inline-flex items-center gap-1 rounded-md bg-[rgba(31,129,188,0.22)] px-2.5 py-[4px] text-[0.74rem] text-[var(--ode-text)]">
-                <FileGlyphSmall />
-                <span>{t("tabs.documentation")}</span>
-              </div>
-            ) : workspaceMode === "timeline" ? (
-              <>
-                <button
-                  type="button"
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-[4px] text-[0.74rem] transition ${
-                    !isTimelinePlanActive && workspaceFocusMode !== "execution"
-                      ? "bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
-                      : "text-[var(--ode-text-dim)] hover:bg-[rgba(9,62,98,0.3)] hover:text-[var(--ode-text)]"
-                  }`}
-                  onClick={() => onSelectWorkspaceFocusMode("structure")}
-                  aria-pressed={!isTimelinePlanActive && workspaceFocusMode !== "execution"}
-                >
-                  <FolderGlyph state="filled" active={!isTimelinePlanActive && workspaceFocusMode !== "execution"} />
-                  <span>{t("footer.mode_schedule")}</span>
-                </button>
-                {showExecutionMode && workareaAvailable ? (
-                  <button
-                    type="button"
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-[4px] text-[0.74rem] transition ${
-                      !isTimelinePlanActive && workspaceFocusMode === "execution"
-                        ? "bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
-                        : "text-[var(--ode-text-dim)] hover:bg-[rgba(9,62,98,0.3)] hover:text-[var(--ode-text)]"
-                    }`}
-                    onClick={() => onSelectWorkspaceFocusMode("execution")}
-                    aria-pressed={!isTimelinePlanActive && workspaceFocusMode === "execution"}
-                  >
-                    <ExecutionTaskGlyph active={!isTimelinePlanActive && workspaceFocusMode === "execution"} />
-                    <span>{t("footer.mode_execution")}</span>
-                  </button>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-[4px] text-[0.74rem] transition ${
-                    workspaceFocusMode === "structure"
-                      ? "bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
-                      : "text-[var(--ode-text-dim)] hover:bg-[rgba(9,62,98,0.3)] hover:text-[var(--ode-text)]"
-                  }`}
-                  onClick={() => onSelectWorkspaceFocusMode("structure")}
-                  aria-pressed={workspaceFocusMode === "structure"}
-                >
-                  <FolderGlyph state="filled" active={workspaceFocusMode === "structure"} />
-                  <span>{t("footer.mode_structure")}</span>
-                </button>
-                {showExecutionMode && workareaAvailable ? (
-                  <button
-                    type="button"
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-[4px] text-[0.74rem] transition ${
-                      workspaceFocusMode === "execution"
-                        ? "bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
-                        : "text-[var(--ode-text-dim)] hover:bg-[rgba(9,62,98,0.3)] hover:text-[var(--ode-text)]"
-                    }`}
-                    onClick={() => onSelectWorkspaceFocusMode("execution")}
-                    aria-pressed={workspaceFocusMode === "execution"}
-                  >
-                    <ExecutionTaskGlyph active={workspaceFocusMode === "execution"} />
-                    <span>{t("footer.mode_execution")}</span>
-                  </button>
-                ) : null}
-              </>
-            )}
-          </div>
+        <NodeQuickAppDock
+          t={t}
+          nodeLabel={quickAppNodeLabel}
+          quickApps={quickApps}
+          onLaunchQuickApp={onLaunchQuickApp}
+          onReorderQuickApps={onReorderQuickApps}
+          onManageQuickApps={onManageQuickApps}
+          leadingSlot={userProfileMenu}
+        />
 
-          {!documentationModeActive && workspaceMode === "grid" && workspaceFocusMode === "structure" ? (
-            <button
-              type="button"
-              className={`inline-flex shrink-0 items-center gap-1 rounded-md border px-2 py-[3px] text-[0.72rem] transition ${
-                workspaceEmptyOnly
-                  ? "border-[var(--ode-border-accent)] bg-[rgba(31,129,188,0.2)] text-[var(--ode-text)]"
-                  : "border-transparent text-[var(--ode-text-dim)] hover:text-[var(--ode-text)]"
-              }`}
-              onClick={onToggleWorkspaceEmptyOnly}
-              aria-pressed={workspaceEmptyOnly}
-            >
-              <FolderGlyph state="empty" active={workspaceEmptyOnly} />
-              <span>{t("footer.toggle_empty_only")}</span>
-            </button>
-          ) : null}
-
-        </div>
-      </div>
-
-      <NodeQuickAppDock
-        t={t}
-        nodeLabel={quickAppNodeLabel}
-        quickApps={quickApps}
-        onLaunchQuickApp={onLaunchQuickApp}
-        onReorderQuickApps={onReorderQuickApps}
-        onManageQuickApps={onManageQuickApps}
-      />
-
-      <div className="flex items-center gap-3 px-3">{infoMenu}</div>
+        <div className="flex items-center gap-3 px-3">{infoMenu}</div>
       </footer>
     </>
   );

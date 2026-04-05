@@ -1,5 +1,5 @@
 {
-  "name": "odetool-rebuild",
+  "name": "odetool-pro",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -12,6 +12,7 @@
     "icons:refresh": "python scripts/generate-brand-logo.py && python scripts/finalize-tauri-icons.py && python scripts/generate-installer-branding.py",
     "typecheck": "tsc -b --pretty false",
     "quality:catalog:check": "node scripts/check-test-catalog.mjs",
+    "quality:consistency": "node scripts/consistency-audit.mjs",
     "mock:test": "npm run quality:catalog:check && npm run typecheck && npm run build && cargo test --manifest-path src-tauri/Cargo.toml --lib",
     "quality:run": "node scripts/run-quality-gate.mjs",
     "release:record": "node scripts/record-release-note.mjs",

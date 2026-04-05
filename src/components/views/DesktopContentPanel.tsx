@@ -10,9 +10,12 @@ import {
 } from "react";
 import { NodeGlyph, UploadGlyphSmall } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import { DashboardPanel } from "@/components/views/DashboardPanel";
+import { ReusableLibraryPanel } from "@/components/views/ReusableLibraryPanel";
 import { getChantierLinkedNADisplay, isChantierNode, readChantierProfile } from "@/features/ode/chantierProfile";
 import { getLocaleForLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
 import { NA_CATALOG, NA_CATALOG_VERSION, getNAPathLabel } from "@/lib/naCatalog";
+import { getNodeDisplayName } from "@/lib/nodeDisplay";
 import {
   buildMindMapThemeStyle,
   buildMindMapThemeStyleFromTheme,
@@ -27,9 +30,10 @@ import type {
   ODEChantierStatus
 } from "@/lib/types";
 import { isFileLikeNode } from "@/lib/types";
+import type { ODELibraryKind, ReusableLibraryIndexItem } from "@/lib/reusableLibraries";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
-type DesktopViewMode = "grid" | "mindmap" | "details" | "procedure";
+type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 type MindMapOrientation = "horizontal" | "vertical";
 type MindMapContentMode = "quick_access" | "node_tree";
 type SelectionSurface = "tree" | "grid" | "timeline";
@@ -663,6 +667,9 @@ interface DesktopContentPanelProps {
   quickAccessMindMapGroups: QuickAccessMindMapGroup[];
   quickAccessMindMapDirectFavorites: AppNode[];
   activeFavoriteGroupId: string;
+  currentFolderNode: AppNode | null;
+  allNodes: AppNode[];
+  byParent: Map<string, AppNode[]>;
   gridNodes: AppNode[];
   chantierStatusCounts: Record<ODEChantierStatus, number>;
   chantierNodeCount: number;
@@ -723,6 +730,24 @@ interface DesktopContentPanelProps {
   onGetNodeSizeBytes: (node: AppNode) => number | null;
   onFormatNodeModified: (updatedAt: number, language: LanguageCode) => string;
   onCreateFirstNode: () => void;
+  onCreateDashboardWidget: (parentNodeId: string) => Promise<string | null>;
+  onRenameDashboardWidget: (nodeId: string, title: string) => Promise<void> | void;
+  onSaveDashboardWidgetProperties: (nodeId: string, properties: Record<string, unknown>) => Promise<void> | void;
+  onMoveDashboardWidget: (nodeId: string, direction: "up" | "down" | "left" | "right") => Promise<void> | void;
+  onDeleteDashboardWidget: (nodeId: string) => Promise<void> | void;
+  organisationModels: ReusableLibraryIndexItem[];
+  databaseTemplates: ReusableLibraryIndexItem[];
+  canCreateFromReusableLibraryIntoCurrentNode: boolean;
+  canSaveCurrentAsOrganisationModel: boolean;
+  canSaveCurrentAsDatabaseTemplate: boolean;
+  onSaveCurrentAsOrganisationModel: () => void;
+  onSaveCurrentAsDatabaseTemplate: () => void;
+  onCreateFromReusableLibraryItem: (itemId: string, kind: ODELibraryKind) => Promise<void> | void;
+  onExportReusableLibraryItem: (itemId: string, kind: ODELibraryKind) => Promise<void> | void;
+  onImportReusableLibraryJson: (kind: ODELibraryKind, file: File) => Promise<void> | void;
+  onSelectReusableLibraryItem: (itemId: string, options?: { range?: boolean; toggle?: boolean }) => void;
+  onOpenReusableLibraryItem: (itemId: string) => Promise<void> | void;
+  onOpenReusableLibraryItemContextMenu: (event: ReactMouseEvent<HTMLElement>, itemId: string) => void;
   onTriggerUpload: () => void;
   onSetEditingValue: (value: string) => void;
   onOpenInlineEditContextMenu: (event: ReactMouseEvent<HTMLInputElement>) => void;
@@ -746,6 +771,9 @@ export function DesktopContentPanel({
   quickAccessMindMapGroups,
   quickAccessMindMapDirectFavorites,
   activeFavoriteGroupId,
+  currentFolderNode,
+  allNodes,
+  byParent,
   gridNodes,
   chantierStatusCounts,
   chantierNodeCount,
@@ -806,6 +834,24 @@ export function DesktopContentPanel({
   onGetNodeSizeBytes,
   onFormatNodeModified,
   onCreateFirstNode,
+  onCreateDashboardWidget,
+  onRenameDashboardWidget,
+  onSaveDashboardWidgetProperties,
+  onMoveDashboardWidget,
+  onDeleteDashboardWidget,
+  organisationModels,
+  databaseTemplates,
+  canCreateFromReusableLibraryIntoCurrentNode,
+  canSaveCurrentAsOrganisationModel,
+  canSaveCurrentAsDatabaseTemplate,
+  onSaveCurrentAsOrganisationModel,
+  onSaveCurrentAsDatabaseTemplate,
+  onCreateFromReusableLibraryItem,
+  onExportReusableLibraryItem,
+  onImportReusableLibraryJson,
+  onSelectReusableLibraryItem,
+  onOpenReusableLibraryItem,
+  onOpenReusableLibraryItemContextMenu,
   onTriggerUpload,
   onSetEditingValue,
   onOpenInlineEditContextMenu,
@@ -815,6 +861,7 @@ export function DesktopContentPanel({
   const effectiveRootDropTargetId = currentFolderDropTargetId ?? scopedRootDropTargetId;
   const rootInteractiveSelector =
     ".ode-grid-card, .ode-details-row, .ode-quick-mind-favorite, .ode-quick-mind-group-card, .ode-quick-mind-group-branch, .ode-mind-root-button";
+  const dashboardRootChildren = currentFolderNode ? byParent.get(currentFolderNode.id) ?? [] : [];
   const chantierStatusCopy = useMemo(() => getChantierStatusCopy(language), [language]);
   const detailsScrollRef = useRef<HTMLDivElement | null>(null);
   const verticalBranchesRef = useRef<HTMLDivElement | null>(null);
@@ -1637,7 +1684,7 @@ export function DesktopContentPanel({
     if (editingNodeId === node.id) {
       return editingValue.length > 0 ? editingValue : "\u00A0";
     }
-    return isNodeProvisionalInlineCreate(node.id) ? "\u00A0" : node.name;
+    return isNodeProvisionalInlineCreate(node.id) ? "\u00A0" : getNodeDisplayName(node);
   };
 
   const getNodeDisplayText = (node: AppNode) => {
@@ -3049,6 +3096,74 @@ export function DesktopContentPanel({
       </button>
     );
   };
+  if (desktopViewMode === "library") {
+    return (
+      <div
+        className="flex-1 min-h-0 overflow-auto px-5 py-6"
+        data-ode-surface="grid"
+        onMouseDownCapture={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('[data-ode-dashboard-editor="true"]')) {
+            return;
+          }
+          onActivateGridSurface();
+        }}
+        onContextMenu={onOpenSurfaceContextMenu}
+      >
+        <ReusableLibraryPanel
+          t={t}
+          currentNode={currentFolderNode}
+          canCreateIntoCurrentNode={canCreateFromReusableLibraryIntoCurrentNode}
+          canSaveCurrentAsOrganisationModel={canSaveCurrentAsOrganisationModel}
+          canSaveCurrentAsDatabaseTemplate={canSaveCurrentAsDatabaseTemplate}
+          organisationModels={organisationModels}
+          databaseTemplates={databaseTemplates}
+          onSaveCurrentAsOrganisationModel={onSaveCurrentAsOrganisationModel}
+          onSaveCurrentAsDatabaseTemplate={onSaveCurrentAsDatabaseTemplate}
+          onCreateFromLibraryItem={onCreateFromReusableLibraryItem}
+          onExportLibraryItem={onExportReusableLibraryItem}
+          onImportLibraryJson={onImportReusableLibraryJson}
+          selectedItemId={selectedNodeId}
+          selectedItemIds={selectedNodeIds}
+          onSelectItem={onSelectReusableLibraryItem}
+          onOpenItem={onOpenReusableLibraryItem}
+          onOpenItemContextMenu={onOpenReusableLibraryItemContextMenu}
+        />
+      </div>
+    );
+  }
+  if (
+    currentFolderNode &&
+    !isFileLikeNode(currentFolderNode) &&
+    currentFolderNode.properties?.odeDashboardWidget !== true &&
+    desktopViewMode === "dashboard"
+  ) {
+    return (
+      <div
+        className="flex-1 min-h-0 overflow-auto px-5 py-6"
+        data-ode-surface="grid"
+        onMouseDownCapture={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest('[data-ode-dashboard-editor="true"]')) {
+            return;
+          }
+          onActivateGridSurface();
+        }}
+        onContextMenu={onOpenSurfaceContextMenu}
+      >
+        <DashboardPanel
+          rootNode={currentFolderNode}
+          childNodes={dashboardRootChildren}
+          allNodes={allNodes}
+          onCreateWidget={onCreateDashboardWidget}
+          onRenameWidget={onRenameDashboardWidget}
+          onSaveWidgetProperties={onSaveDashboardWidgetProperties}
+          onMoveWidget={onMoveDashboardWidget}
+          onDeleteWidget={onDeleteDashboardWidget}
+        />
+      </div>
+    );
+  }
   return (
     <div
       className={`flex-1 min-h-0 overflow-auto px-5 py-6 ${desktopViewMode === "mindmap" ? "ode-mind-scroll-shell" : ""}`.trim()}
@@ -3113,7 +3228,7 @@ export function DesktopContentPanel({
       {dropIndicator?.targetId === effectiveRootDropTargetId ? (
         <div className="ode-root-drop-hint">{t("tree.drop_to_root")}</div>
       ) : null}
-      {desktopViewMode === "grid" ? (
+      {desktopViewMode === "grid" || desktopViewMode === "dashboard" ? (
         <>
           {gridBranchNodes.length > 0 ? (
             <div

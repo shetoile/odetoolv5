@@ -6,6 +6,7 @@ export interface AiCommandExecutionHandlers {
   planMyDay: () => Promise<void> | void;
   wbsGenerate: (args?: Record<string, unknown>) => Promise<void> | void;
   wbsFromDocument: (args?: Record<string, unknown>) => Promise<void> | void;
+  databaseCreateSection: (args?: Record<string, unknown>) => Promise<void> | void;
   treeCreateTopic: () => Promise<void> | void;
   treeRenameSelected: (args?: Record<string, unknown>) => Promise<void> | void;
   treeMoveSelected: (args?: Record<string, unknown>) => Promise<void> | void;
@@ -46,6 +47,10 @@ export async function executeAiCommandActionWithHandlers(
   }
   if (actionId === "wbs_from_document") {
     await handlers.wbsFromDocument(args);
+    return;
+  }
+  if (actionId === "database_create_section") {
+    await handlers.databaseCreateSection(args);
     return;
   }
   if (actionId === "tree_create_topic") {

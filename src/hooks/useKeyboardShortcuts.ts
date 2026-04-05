@@ -50,12 +50,13 @@ type UseKeyboardShortcutsParams = {
   onPasteClipboardBranch: (targetNodeId?: string | null, surface?: SelectionSurface) => Promise<void>;
   onDuplicateSelectedBranch: (sourceNodeId?: string, surface?: SelectionSurface) => Promise<void>;
   onNavigateUpOneFolder: (surface?: SelectionSurface) => Promise<void>;
-  onOpenFolder: (id: string) => Promise<void>;
-  onOpenFileNode: (id: string) => Promise<void>;
+  onBrowseTreeNode: (id: string) => Promise<void> | void;
+  onOpenLibraryItem: (id: string) => Promise<void> | void;
   onBeginInlineEdit: (nodeId: string, initialText?: string, preferredSurface?: SelectionSurface) => void;
   onCreateNodeWithoutSelection: (initialText?: string) => Promise<void>;
   onCreateChildNode: (nodeId: string) => Promise<void>;
   onCreateProcedureSectionNode: (nodeId: string) => Promise<void>;
+  onCreateProcedureFieldNode: (nodeId: string | null) => Promise<void>;
   onCreateParentNode: (nodeId: string) => Promise<void>;
   onCreateSiblingNode: (nodeId: string, insertBefore: boolean) => Promise<void>;
   onMoveTimelineTaskUp: (nodeId: string) => Promise<void>;
@@ -105,12 +106,13 @@ export function useKeyboardShortcuts({
   onPasteClipboardBranch,
   onDuplicateSelectedBranch,
   onNavigateUpOneFolder,
-  onOpenFolder,
-  onOpenFileNode,
+  onBrowseTreeNode,
+  onOpenLibraryItem,
   onBeginInlineEdit,
   onCreateNodeWithoutSelection,
   onCreateChildNode,
   onCreateProcedureSectionNode,
+  onCreateProcedureFieldNode,
   onCreateParentNode,
   onCreateSiblingNode,
   onMoveTimelineTaskUp,
@@ -151,10 +153,13 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      const activeSelectionSurface = resolveSelectionSurfaceForKeyboardSurface(
-        keyboardSurface,
-        selectionSurface
-      );
+      const activeSelectionSurface: SelectionSurface =
+        desktopViewMode === "library"
+          ? "tree"
+          : resolveSelectionSurfaceForKeyboardSurface(
+              keyboardSurface,
+              selectionSurface
+            );
       const selectedId =
         (selectedNodeId && nodeById.has(selectedNodeId) ? selectedNodeId : null) ??
         Array.from(selectedNodeIds).find((id) => nodeById.has(id)) ??
@@ -201,6 +206,20 @@ export function useKeyboardShortcuts({
         onSetSelectedNodeId(nodeId);
         onSetSelectionSurface(surface);
       };
+      const resolveInlineRenameSurface = (): SelectionSurface => {
+        if (!selectedId) return activeSelectionSurface;
+        if (selectionSurface === "tree" && displayedTreeIndexById.has(selectedId)) return "tree";
+        if (selectionSurface === "timeline" && displayedTimelineIndexById.has(selectedId)) return "timeline";
+        if (selectionSurface === "grid" && displayedGridIndexById.has(selectedId)) return "grid";
+        if (displayedTreeIndexById.has(selectedId)) return "tree";
+        if (workspaceMode === "timeline" && displayedTimelineIndexById.has(selectedId)) return "timeline";
+        if (displayedGridIndexById.has(selectedId)) return "grid";
+        return activeSelectionSurface;
+      };
+      const syncTreeBrowseSelection = (nodeId: string) => {
+        if (linearSurface !== "tree" || workspaceMode === "timeline") return;
+        void onBrowseTreeNode(nodeId);
+      };
 
       const moveLinearSelectionBy = (
         delta: number,
@@ -237,6 +256,7 @@ export function useKeyboardShortcuts({
         }
 
         onSetPrimarySelection(nextId, linearSurface);
+        syncTreeBrowseSelection(nextId);
       };
 
       if (hasModifier) {
@@ -501,6 +521,7 @@ export function useKeyboardShortcuts({
             onSetSelectionSurface(linearSurface);
           } else {
             onSetPrimarySelection(nextId, linearSurface);
+            syncTreeBrowseSelection(nextId);
           }
         }
         return;
@@ -529,6 +550,7 @@ export function useKeyboardShortcuts({
             onSetSelectionSurface(linearSurface);
           } else {
             onSetPrimarySelection(nextId, linearSurface);
+            syncTreeBrowseSelection(nextId);
           }
         }
         return;
@@ -570,7 +592,10 @@ export function useKeyboardShortcuts({
             linearSurface === "timeline"
               ? children.find((child) => displayedTimelineIndexById.has(child.id))
               : children[0];
-          if (nextChild) onSetPrimarySelection(nextChild.id, linearSurface);
+          if (nextChild) {
+            onSetPrimarySelection(nextChild.id, linearSurface);
+            syncTreeBrowseSelection(nextChild.id);
+          }
         }
         return;
       }
@@ -591,7 +616,14 @@ export function useKeyboardShortcuts({
 
         if (selected.parentId !== ROOT_PARENT_ID) {
           onSetPrimarySelection(selected.parentId, linearSurface);
+          syncTreeBrowseSelection(selected.parentId);
         }
+        return;
+      }
+
+      if (event.key === "F1" && desktopViewMode === "procedure") {
+        event.preventDefault();
+        void onCreateProcedureFieldNode(selectedId);
         return;
       }
 
@@ -610,6 +642,18 @@ export function useKeyboardShortcuts({
       if (favoriteGroupFilteringActive && (event.key === "Tab" || event.key === "Enter" || isPrintable)) {
         event.preventDefault();
         return;
+      }
+
+      if (desktopViewMode === "library" && activeSelectionSurface === "tree") {
+        if (event.key === "Enter" && selectedId) {
+          event.preventDefault();
+          void onOpenLibraryItem(selectedId);
+          return;
+        }
+        if (event.key === "Tab") {
+          event.preventDefault();
+          return;
+        }
       }
 
       if (event.key === "Tab") {
@@ -638,7 +682,7 @@ export function useKeyboardShortcuts({
 
       if (event.key === "F2") {
         event.preventDefault();
-        onBeginInlineEdit(selectedId, undefined, activeSelectionSurface);
+        onBeginInlineEdit(selectedId, undefined, resolveInlineRenameSurface());
         return;
       }
 
@@ -650,7 +694,7 @@ export function useKeyboardShortcuts({
 
       if (isPrintable) {
         event.preventDefault();
-        onBeginInlineEdit(selectedId, event.key, activeSelectionSurface);
+        onBeginInlineEdit(selectedId, event.key, resolveInlineRenameSurface());
       }
     };
 
@@ -674,8 +718,8 @@ export function useKeyboardShortcuts({
     expandedIds,
     gridNodes,
     nodeById,
-    onOpenFileNode,
-    onOpenFolder,
+    onBrowseTreeNode,
+    onOpenLibraryItem,
     onRemoveSelectedNodes,
     selectedNodeIds,
     selectionAnchorId,
@@ -684,6 +728,7 @@ export function useKeyboardShortcuts({
     desktopViewMode,
     mindMapOrientation,
     workspaceMode,
+    favoriteGroups,
     favoriteGroupFilteringActive,
     onSetBranchClipboardEmpty,
     onSetSelectedNodeId,
@@ -699,12 +744,17 @@ export function useKeyboardShortcuts({
     onBeginInlineEdit,
     onCreateNodeWithoutSelection,
     onCreateChildNode,
+    onCreateProcedureSectionNode,
+    onCreateProcedureFieldNode,
     onCreateParentNode,
     onCreateSiblingNode,
     onMoveTimelineTaskUp,
     onMoveTimelineTaskDown,
     onMoveNodeIn,
     onMoveNodeOut,
-    onMoveToWorkspace
+    onMoveToWorkspace,
+    onToggleFavoriteNode,
+    onOpenFavoriteGroupAssign,
+    onToggleFavoriteGroup
   ]);
 }

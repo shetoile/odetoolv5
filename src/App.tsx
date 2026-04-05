@@ -9,6 +9,7 @@ import {
   useRef,
   useState
 } from "react";
+import { flushSync } from "react-dom";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getAllWindows, getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
@@ -20,7 +21,7 @@ import {
   runAiPromptAnalysis
 } from "@/ai/core/aiOrchestrator";
 import { callNative } from "@/lib/tauriApi";
-import { I18N, translate, getLocaleForLanguage, isRtlLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
+import { translate, getLocaleForLanguage, isRtlLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
 import { REGRESSION_CHECKLIST_ITEMS, type RegressionChecklistItem } from "@/lib/regressionChecklist";
 import { getLocalizedRegressionChecklistItem } from "@/lib/regressionChecklistLocalization";
 import {
@@ -70,8 +71,13 @@ import {
   type WorkspaceOverviewOutput
 } from "@/ai/rebuild";
 import { buildODEImportPreview } from "@/lib/odeAgentService";
-import { NA_CATALOG, getNAByCode, getNAPathLabel, matchNAOutlineNode } from "@/lib/naCatalog";
-import { buildODENodeProperties, getODENodeMetadata, resolveODECreationTarget } from "@/lib/odePolicy";
+import { NA_CATALOG, NA_LEVEL4_CATALOG, getNAByCode, getNAPathLabel, matchNAOutlineNode } from "@/lib/naCatalog";
+import {
+  buildODENodeProperties,
+  getODENodeMetadata,
+  resolveODECreationTarget,
+  type ODECreationResolution
+} from "@/lib/odePolicy";
 import {
   applyChantierProfileToProperties,
   isChantierNode,
@@ -125,6 +131,7 @@ import {
 import { normalizeDocumentAdvisorTreeForCatalog } from "@/features/ai/documentAdvisorCatalog";
 import {
   buildAiPlanPreview,
+  parseArgsList,
   parseArgsNames,
   parseArgsString
 } from "@/features/ai/commandSupport";
@@ -240,6 +247,18 @@ import {
   resolveSearchResultSelectionSurface
 } from "@/features/workspace/search";
 import {
+  ACCESS_ROLE_VALUES,
+  applyNodeAccessPolicy,
+  canRoleManageNode,
+  canRoleReadNode,
+  canRoleWriteNode,
+  readExplicitNodeAccessPolicy,
+  resolveNodeAccessPolicy,
+  type ExplicitNodeAccessPolicy,
+  type NodeAccessPermission,
+  type NodeAccessRole
+} from "@/features/workspace/accessControl";
+import {
   applyNodeStructureLock,
   findStructureLockOwner,
   isNodeStructureLockOwner
@@ -267,10 +286,14 @@ import {
 import {
   buildStructuredDeliverablesFromWorkareaNodes,
   collectWorkareaOwnerNodeIds,
+  getWorkareaContainerNodeId,
+  getVisibleWorkareaChildNodes,
   getWorkareaItemKind,
   getWorkareaOwnerNodeId,
+  getWorkareaRootOwnerNodeId,
   isDeclaredWorkareaOwnerNode,
   isWorkareaItemNode,
+  isWorkareaRootNode,
   resolveWorkareaItemKindForParent,
   type WorkareaItemKind
 } from "@/features/workspace/workarea";
@@ -317,6 +340,51 @@ import {
   collectDocumentTreeProposalNodeKeys,
   filterDocumentTreeProposalNodes
 } from "@/lib/documentTreeProposal";
+import {
+  AI_KEYS_STORAGE_KEY,
+  APP_DISPLAY_NAME,
+  APP_MIRROR_FOLDER_NAME,
+  APP_SOURCE_ID,
+  buildAppStorageKey
+} from "@/lib/appIdentity";
+import {
+  PROCEDURE_RECORDS_PROPERTY_KEY,
+  buildProcedureDatabaseModel,
+  buildProcedureExecutionAutomationPlans,
+  computeProcedureFormulaUpdates,
+  inferProcedureFieldTypeFromLabel,
+  isProcedureFieldNode,
+  type ProcedureExecutionAutomationPlan
+} from "@/lib/procedureDatabase";
+import { isDashboardWidgetNode } from "@/lib/dashboard";
+import { getNodeDisplayName } from "@/lib/nodeDisplay";
+import {
+  buildCopiedFromLibraryRootProperties,
+  buildReusableLibraryExportPayload,
+  buildReusableLibraryIndexItems,
+  buildReusableLibrarySnapshot,
+  buildReusableLibrarySummary,
+  buildSavedLibraryRootProperties,
+  findReusableLibraryRoot,
+  getLibraryRootName,
+  getNodeLibraryKind,
+  getNodeLibraryItemType,
+  inferDatabaseTemplateItemType,
+  inferOrganisationModelItemType,
+  isLibraryRootNode,
+  isNodeInsideLibrary,
+  isReusableLibraryItemNode,
+  parseReusableLibraryImportPayload,
+  type ODELibraryKind,
+  type ODELibraryItemType,
+  type ReusableLibraryExportPayload,
+  type ReusableLibrarySnapshot
+} from "@/lib/reusableLibraries";
+import {
+  mergeNodeMetaCapabilities,
+  readExplicitMetaCapabilities,
+  type MetaCapability
+} from "@/lib/metaEngine";
 import { detectDocumentLanguage, type DocumentLanguageCode } from "@/lib/documentLanguage";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TopBar } from "@/components/layout/TopBar";
@@ -333,6 +401,12 @@ import type {
 import { ModalStack } from "@/components/modals/ModalStack";
 import { AiWorkspaceModal } from "@/components/modals/AiWorkspaceModal";
 import { AiSettingsModal } from "@/components/modals/AiSettingsModal";
+import {
+  AuthGateModal,
+  type AuthGateMode,
+  type RememberPasswordDurationUnit,
+  type RememberPasswordPreference
+} from "@/components/modals/AuthGateModal";
 import { DeleteConfirmModal } from "@/components/modals/DeleteConfirmModal";
 import type { DocumentActionModalItem } from "@/components/modals/DocumentActionModal";
 import { HelpModal } from "@/components/modals/HelpModal";
@@ -343,7 +417,12 @@ import { ODEImportPreviewModal } from "@/components/modals/ODEImportPreviewModal
 import { QaChecklistModal } from "@/components/modals/QaChecklistModal";
 import { ReleaseNotesModal } from "@/components/modals/ReleaseNotesModal";
 import { TaskScheduleModal } from "@/components/modals/TaskScheduleModal";
+import { UserAccountsModal } from "@/components/modals/UserAccountsModal";
 import { WorkspaceSettingsModal } from "@/components/modals/WorkspaceSettingsModal";
+import {
+  CreateChantierModal,
+  type ChantierLibraryModelOption
+} from "@/components/modals/CreateChantierModal";
 import { DesktopView } from "@/components/views/DesktopView";
 import { TimelineView } from "@/components/views/TimelineView";
 import { MainPaneHeader } from "@/components/views/MainPaneHeader";
@@ -412,6 +491,7 @@ import {
   resolveQuickAppLaunchTarget,
   type NodeQuickAppItem
 } from "@/lib/nodeQuickApps";
+import { createNodeNumberingLevelState, resolveNodeTreeNumbering } from "@/lib/nodeNumbering";
 import {
   ODE_WORKSTREAM_WORKSPACE_PROPERTY,
   buildExecutionTasksFromProposal,
@@ -434,11 +514,8 @@ import {
 } from "@/lib/treeSpreadsheet";
 import {
   buildProcedureSectionTree,
+  decodeNodeLinkId,
 } from "@/lib/procedureDocument";
-import {
-  buildProcedureDocxBytes,
-  buildProcedurePdfBytes
-} from "@/lib/procedureExport";
 import {
   ROOT_PARENT_ID,
   type AppNode,
@@ -462,6 +539,19 @@ import {
   isFileLikeNode
 } from "@/lib/types";
 import { useExplorerStore } from "@/lib/useExplorerStore";
+import {
+  bootstrapUserAccount,
+  createUserAccount,
+  deleteUserAccount,
+  getUserAccountState,
+  resumeUserAccountSession,
+  revokeUserAccountSession,
+  signInUserAccount,
+  updateUserAccount,
+  type UserAccountLicensePlan,
+  type UserAccountState,
+  type UserAccountSummary
+} from "@/lib/userAccounts";
 import { usePaneLayout } from "@/hooks/usePaneLayout";
 import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
 import { useDesktopMirrorSync } from "@/hooks/useDesktopMirrorSync";
@@ -504,7 +594,7 @@ import releaseLogData from "../quality/release-log.json";
 import qaFeedbackData from "../quality/qa-feedback.json";
 
 type WorkspaceMode = "grid" | "timeline";
-type DesktopViewMode = "grid" | "mindmap" | "details" | "procedure";
+type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 type MindMapOrientation = "horizontal" | "vertical";
 type MindMapContentMode = "quick_access" | "node_tree";
 type NodeStateFilter = "empty" | "filled" | "task" | "execution" | "data";
@@ -602,10 +692,33 @@ type SidebarSearchResult = {
 
 type DropPosition = "before" | "inside" | "after";
 
+type FavoriteObjectiveKey = "organization" | "database" | "execution" | "chronology";
+
 type FavoriteGroup = {
   id: string;
   name: string;
+  objective: FavoriteObjectiveKey;
 };
+
+const FAVORITE_OBJECTIVE_KEYS = ["organization", "database", "execution", "chronology"] as const;
+
+function isFavoriteObjectiveKey(value: unknown): value is FavoriteObjectiveKey {
+  return (
+    value === "organization" ||
+    value === "database" ||
+    value === "execution" ||
+    value === "chronology"
+  );
+}
+
+function createFavoriteObjectiveStateRecord<T>(createValue: (key: FavoriteObjectiveKey) => T): Record<FavoriteObjectiveKey, T> {
+  return {
+    organization: createValue("organization"),
+    database: createValue("database"),
+    execution: createValue("execution"),
+    chronology: createValue("chronology")
+  };
+}
 
 type QuickAccessMindMapGroup = {
   id: string;
@@ -774,6 +887,16 @@ type ODEImportPreviewDialogState = {
   targetNodeName: string | null;
   targetPathLabel: string | null;
 };
+type OdeAwareGenerationTarget = {
+  parentNode: AppNode | null;
+  odeCreation: ODECreationResolution;
+  naLabel: string | null;
+  naPathLabel: string | null;
+};
+type CreateChantierDialogState = {
+  targetNodeId: string;
+  targetNodeName: string;
+};
 type MindMapTextPreviewState = {
   nodeId: string | null;
   status: "idle" | "loading" | "ready" | "error";
@@ -786,6 +909,14 @@ type MindMapPowerPointPreviewState = {
   slidePaths: string[];
   error: string | null;
 };
+type NodeAccessPolicyDraft = {
+  readMode: "inherit" | "custom";
+  readRoles: NodeAccessRole[];
+  writeMode: "inherit" | "custom";
+  writeRoles: NodeAccessRole[];
+  manageMode: "inherit" | "custom";
+  manageRoles: NodeAccessRole[];
+};
 
 const BRANCH_CLIPBOARD_PREFIX = "ODETOOL_BRANCH_V1::";
 const POWERPOINT_PREVIEW_EXTENSIONS = new Set(["ppt", "pptx", "pptm", "pps", "ppsx", "ppsm"]);
@@ -793,8 +924,8 @@ const SIDEBAR_DEFAULT_WIDTH = 410;
 const SIDEBAR_COLLAPSED_WIDTH = 64;
 const SIDEBAR_MIN_WIDTH = 180;
 const MAIN_MIN_WIDTH = 260;
-const LEGACY_MIRROR_FOLDER_NAMES = ["ODETool Box", "ODETool Business Management"] as const;
-const MIRROR_FOLDER_NAME = "ODETool_Mirror";
+const LEGACY_MIRROR_FOLDER_NAMES = [] as const;
+const MIRROR_FOLDER_NAME = APP_MIRROR_FOLDER_NAME;
 const TIMELINE_NODE_PANEL_DEFAULT_WIDTH = 320;
 const TIMELINE_NODE_PANEL_MIN_WIDTH = 210;
 const TIMELINE_GRID_MIN_WIDTH = 280;
@@ -881,6 +1012,14 @@ function detectSystemLanguageCode(): LanguageCode {
   return "EN";
 }
 
+function readWindowSearchParam(name: string): string | null {
+  if (typeof window === "undefined") return null;
+  const value = new URLSearchParams(window.location.search).get(name);
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 type WindowsLanguageSnapshot = {
   inputLocale?: string | null;
   uiLocale?: string | null;
@@ -911,21 +1050,391 @@ async function detectPreferredAppLanguage(): Promise<LanguageCode> {
 }
 
 const INTERNAL_NODE_DRAG_MIME = "application/x-odetool-node-id";
-const ACTIVE_PROJECT_STORAGE_KEY = "odetool.activeProjectId.v1";
-const DEFAULT_PROJECT_STORAGE_KEY = "odetool.defaultProjectId.v1";
-const SIDEBAR_COLLAPSED_STORAGE_KEY = "odetool.sidebarCollapsed.v1";
-const FAVORITE_GROUPS_STORAGE_KEY = "odetool.favoriteGroups.v1";
-const ACTIVE_FAVORITE_GROUP_STORAGE_KEY = "odetool.favoriteGroup.active.v1";
-const FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY = "odetool.favoriteGroup.treeFilter.v1";
-const SELECTED_FAVORITE_GROUPS_STORAGE_KEY = "odetool.favoriteGroup.selected.v1";
-const WORKSPACE_ROOT_NUMBERING_STORAGE_KEY = "odetool.workspaceRootNumbering.v1";
-const NODE_TOOLTIP_VISIBILITY_STORAGE_KEY = "odetool.nodeTooltips.visible.v1";
-const WORKSPACE_NODE_TABS_STORAGE_KEY = "odetool.workspaceNodeTabs.v1";
-const NODE_STATE_FILTER_PARENTS_STORAGE_KEY = "odetool.nodeStateFilter.parents.v1";
-const TIMELINE_FILTER_PARENTS_STORAGE_KEY = "odetool.timelineFilter.parents.v1";
+const ACTIVE_PROJECT_STORAGE_KEY = buildAppStorageKey("activeProjectId.v1");
+const DEFAULT_PROJECT_STORAGE_KEY = buildAppStorageKey("defaultProjectId.v1");
+const SIDEBAR_COLLAPSED_STORAGE_KEY = buildAppStorageKey("sidebarCollapsed.v1");
+const FAVORITE_GROUPS_STORAGE_KEY = buildAppStorageKey("favoriteGroups.v1");
+const ACTIVE_FAVORITE_GROUP_STORAGE_KEY = buildAppStorageKey("favoriteGroup.active.v1");
+const FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY = buildAppStorageKey("favoriteGroup.treeFilter.v1");
+const SELECTED_FAVORITE_GROUPS_STORAGE_KEY = buildAppStorageKey("favoriteGroup.selected.v1");
+const FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroupsByObjective.v2");
+const ACTIVE_FAVORITE_GROUP_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroup.activeByObjective.v2");
+const SELECTED_FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroup.selectedByObjective.v2");
+const FAVORITE_GROUP_TREE_FILTER_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroup.treeFilterByObjective.v2");
+const WORKSPACE_ROOT_NUMBERING_STORAGE_KEY = buildAppStorageKey("workspaceRootNumbering.v1");
+const NODE_TOOLTIP_VISIBILITY_STORAGE_KEY = buildAppStorageKey("nodeTooltips.visible.v1");
+const WORKSPACE_NODE_TABS_STORAGE_KEY = buildAppStorageKey("workspaceNodeTabs.v1");
+const NODE_STATE_FILTER_PARENTS_STORAGE_KEY = buildAppStorageKey("nodeStateFilter.parents.v1");
+const TIMELINE_FILTER_PARENTS_STORAGE_KEY = buildAppStorageKey("timelineFilter.parents.v1");
+const ACTIVE_ACCESS_ROLE_STORAGE_KEY = buildAppStorageKey("accessRole.active.v1");
+const REMEMBERED_AUTH_USER_ID_STORAGE_KEY = buildAppStorageKey("auth.rememberedUserId.v1");
+const REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY = buildAppStorageKey("auth.rememberedSessionToken.v1");
+const REMEMBERED_AUTH_SESSION_PREFERENCE_STORAGE_KEY = buildAppStorageKey("auth.rememberPreference.v1");
+const LINKED_NODE_WINDOW_NODE_QUERY_PARAM = "linkedNodeId";
+const LINKED_NODE_WINDOW_PROJECT_QUERY_PARAM = "linkedProjectId";
+const FIELD_ORDER_WINDOW_NODE_QUERY_PARAM = "fieldOrderNodeId";
+const FIELD_ORDER_WINDOW_PROJECT_QUERY_PARAM = "fieldOrderProjectId";
 const FAVORITE_ALL_GROUP_ID = "__all__";
+const WORKSPACE_SCOPE_KIND_PROPERTY = "odeWorkspaceScopeKind";
+const DOCUMENTATION_SCOPE_KIND = "documentation_root";
+const DOCUMENTATION_SCOPE_DEFAULT_NAME = "Database";
+const PROCEDURE_INLINE_ASSET_PROPERTY = "odeProcedureInlineAsset";
+const LEGACY_DOCUMENTATION_SCOPE_NAMES = new Set(["database", "documentation"]);
 const IMAGE_PREVIEW_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "avif"]);
 const VIDEO_PREVIEW_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "avi", "mkv"]);
+const REMEMBER_PASSWORD_DURATION_UNITS: RememberPasswordDurationUnit[] = ["hour", "day", "week", "month", "year"];
+const DEFAULT_REMEMBER_PASSWORD_PREFERENCE: RememberPasswordPreference = {
+  enabled: false,
+  durationValue: 1,
+  durationUnit: "day"
+};
+
+function readStoredActiveAccessRole(): NodeAccessRole {
+  if (typeof window === "undefined") return "R4";
+  try {
+    const stored = localStorage.getItem(ACTIVE_ACCESS_ROLE_STORAGE_KEY);
+    return ACCESS_ROLE_VALUES.includes(stored as NodeAccessRole) ? (stored as NodeAccessRole) : "R4";
+  } catch {
+    return "R4";
+  }
+}
+
+function readRememberedAuthUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY);
+    return typeof stored === "string" && stored.trim().length > 0 ? stored.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function readRememberedAuthSessionToken(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const stored = localStorage.getItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY);
+    return typeof stored === "string" && stored.trim().length > 0 ? stored.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function isRememberPasswordDurationUnit(value: unknown): value is RememberPasswordDurationUnit {
+  return REMEMBER_PASSWORD_DURATION_UNITS.includes(value as RememberPasswordDurationUnit);
+}
+
+function normalizeRememberPasswordPreference(value: Partial<RememberPasswordPreference> | null | undefined): RememberPasswordPreference {
+  const durationValueRaw =
+    typeof value?.durationValue === "number"
+      ? value.durationValue
+      : Number.parseInt(String(value?.durationValue ?? DEFAULT_REMEMBER_PASSWORD_PREFERENCE.durationValue), 10);
+  return {
+    enabled: value?.enabled === true,
+    durationValue:
+      Number.isFinite(durationValueRaw) && durationValueRaw >= 1 ? Math.floor(durationValueRaw) : DEFAULT_REMEMBER_PASSWORD_PREFERENCE.durationValue,
+    durationUnit: isRememberPasswordDurationUnit(value?.durationUnit)
+      ? value.durationUnit
+      : DEFAULT_REMEMBER_PASSWORD_PREFERENCE.durationUnit
+  };
+}
+
+function readRememberPasswordPreference(): RememberPasswordPreference {
+  if (typeof window === "undefined") return DEFAULT_REMEMBER_PASSWORD_PREFERENCE;
+  try {
+    const raw = localStorage.getItem(REMEMBERED_AUTH_SESSION_PREFERENCE_STORAGE_KEY);
+    if (!raw) return DEFAULT_REMEMBER_PASSWORD_PREFERENCE;
+    const parsed = JSON.parse(raw) as Partial<RememberPasswordPreference>;
+    return normalizeRememberPasswordPreference(parsed);
+  } catch {
+    return DEFAULT_REMEMBER_PASSWORD_PREFERENCE;
+  }
+}
+
+function resolveRememberPasswordDurationMs(preference: Pick<RememberPasswordPreference, "durationValue" | "durationUnit">): number {
+  const durationValue = Math.max(1, Math.floor(preference.durationValue));
+  switch (preference.durationUnit) {
+    case "hour":
+      return durationValue * 60 * 60 * 1000;
+    case "day":
+      return durationValue * 24 * 60 * 60 * 1000;
+    case "week":
+      return durationValue * 7 * 24 * 60 * 60 * 1000;
+    case "month":
+      return durationValue * 30 * 24 * 60 * 60 * 1000;
+    case "year":
+      return durationValue * 365 * 24 * 60 * 60 * 1000;
+    default:
+      return DEFAULT_REMEMBER_PASSWORD_PREFERENCE.durationValue * 24 * 60 * 60 * 1000;
+  }
+}
+
+function getDedicatedNodeWindowLabel(nodeId: string): string {
+  const normalized = nodeId.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 96);
+  return `odetool-node-${normalized || "target"}`;
+}
+
+function getFieldOrderWindowLabel(nodeId: string): string {
+  const normalized = nodeId.trim().replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 96);
+  return `odetool-panel-field-order-${normalized || "target"}`;
+}
+
+function readFavoriteGroupsByObjectiveState(): Record<FavoriteObjectiveKey, FavoriteGroup[]> {
+  const fallback = createFavoriteObjectiveStateRecord(() => [] as FavoriteGroup[]);
+  try {
+    const raw = localStorage.getItem(FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<Record<FavoriteObjectiveKey, Array<Partial<FavoriteGroup>>>>;
+      const next = createFavoriteObjectiveStateRecord(() => [] as FavoriteGroup[]);
+      for (const objectiveKey of FAVORITE_OBJECTIVE_KEYS) {
+        const items = Array.isArray(parsed?.[objectiveKey]) ? parsed[objectiveKey] : [];
+        const dedupe = new Set<string>();
+        next[objectiveKey] = items.flatMap((item) => {
+          const id = typeof item?.id === "string" ? item.id.trim() : "";
+          const name = typeof item?.name === "string" ? item.name.trim() : "";
+          if (!id || !name || dedupe.has(id)) return [];
+          dedupe.add(id);
+          return [{ id, name, objective: objectiveKey }];
+        });
+      }
+      return next;
+    }
+  } catch {
+    // Fall back to legacy storage below.
+  }
+
+  try {
+    const raw = localStorage.getItem(FAVORITE_GROUPS_STORAGE_KEY);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw) as Array<Partial<FavoriteGroup>>;
+    if (!Array.isArray(parsed)) return fallback;
+    const dedupe = new Set<string>();
+    const next = createFavoriteObjectiveStateRecord(() => [] as FavoriteGroup[]);
+    for (const item of parsed) {
+      const id = typeof item?.id === "string" ? item.id.trim() : "";
+      const name = typeof item?.name === "string" ? item.name.trim() : "";
+      const objective = isFavoriteObjectiveKey(item?.objective) ? item.objective : "organization";
+      if (!id || !name || dedupe.has(id)) continue;
+      dedupe.add(id);
+      next[objective].push({ id, name, objective });
+    }
+    return next;
+  } catch {
+    return fallback;
+  }
+}
+
+function readActiveFavoriteGroupIdByObjectiveState(): Record<FavoriteObjectiveKey, string> {
+  const fallback = createFavoriteObjectiveStateRecord(() => FAVORITE_ALL_GROUP_ID);
+  try {
+    const raw = localStorage.getItem(ACTIVE_FAVORITE_GROUP_BY_OBJECTIVE_STORAGE_KEY);
+    if (!raw) throw new Error("missing");
+    const parsed = JSON.parse(raw) as Partial<Record<FavoriteObjectiveKey, unknown>>;
+    const next = createFavoriteObjectiveStateRecord(() => FAVORITE_ALL_GROUP_ID);
+    for (const objectiveKey of FAVORITE_OBJECTIVE_KEYS) {
+      next[objectiveKey] =
+        typeof parsed?.[objectiveKey] === "string" && String(parsed[objectiveKey]).trim().length > 0
+          ? String(parsed[objectiveKey]).trim()
+          : FAVORITE_ALL_GROUP_ID;
+    }
+    return next;
+  } catch {
+    const legacy = localStorage.getItem(ACTIVE_FAVORITE_GROUP_STORAGE_KEY) ?? FAVORITE_ALL_GROUP_ID;
+    return {
+      ...fallback,
+      organization: legacy
+    };
+  }
+}
+
+function readSelectedFavoriteGroupIdsByObjectiveState(): Record<FavoriteObjectiveKey, string[]> {
+  const fallback = createFavoriteObjectiveStateRecord(() => [] as string[]);
+  try {
+    const raw = localStorage.getItem(SELECTED_FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY);
+    if (!raw) throw new Error("missing");
+    const parsed = JSON.parse(raw) as Partial<Record<FavoriteObjectiveKey, unknown>>;
+    const next = createFavoriteObjectiveStateRecord(() => [] as string[]);
+    for (const objectiveKey of FAVORITE_OBJECTIVE_KEYS) {
+      next[objectiveKey] = normalizeFavoriteGroupIds(parsed?.[objectiveKey]);
+    }
+    return next;
+  } catch {
+    try {
+      const raw = localStorage.getItem(SELECTED_FAVORITE_GROUPS_STORAGE_KEY);
+      if (raw) {
+        return {
+          ...fallback,
+          organization: normalizeFavoriteGroupIds(JSON.parse(raw) as unknown)
+        };
+      }
+    } catch {
+      // Fall through to the legacy tree-filter fallback.
+    }
+
+    const rawTreeFilter = localStorage.getItem(FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY);
+    const favoriteTreeFilterEnabled =
+      rawTreeFilter === "1" || rawTreeFilter?.toLowerCase() === "true";
+    const activeGroupId =
+      localStorage.getItem(ACTIVE_FAVORITE_GROUP_STORAGE_KEY) ?? FAVORITE_ALL_GROUP_ID;
+    return {
+      ...fallback,
+      organization: favoriteTreeFilterEnabled && activeGroupId !== FAVORITE_ALL_GROUP_ID ? [activeGroupId] : []
+    };
+  }
+}
+
+function readFavoriteGroupTreeFilterByObjectiveState(): Record<FavoriteObjectiveKey, boolean> {
+  const fallback = createFavoriteObjectiveStateRecord(() => false);
+  try {
+    const raw = localStorage.getItem(FAVORITE_GROUP_TREE_FILTER_BY_OBJECTIVE_STORAGE_KEY);
+    if (!raw) throw new Error("missing");
+    const parsed = JSON.parse(raw) as Partial<Record<FavoriteObjectiveKey, unknown>>;
+    const next = createFavoriteObjectiveStateRecord(() => false);
+    for (const objectiveKey of FAVORITE_OBJECTIVE_KEYS) {
+      const value = parsed?.[objectiveKey];
+      next[objectiveKey] = value === true || value === "1" || value === "true";
+    }
+    return next;
+  } catch {
+    const raw = localStorage.getItem(FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY);
+    const legacyEnabled = raw === "1" || raw?.toLowerCase() === "true";
+    return {
+      ...fallback,
+      organization: legacyEnabled
+    };
+  }
+}
+
+function readWorkspaceScopeKind(node: AppNode | null | undefined): string | null {
+  const rawValue = node?.properties?.[WORKSPACE_SCOPE_KIND_PROPERTY];
+  if (typeof rawValue !== "string") return null;
+  const normalizedValue = rawValue.trim();
+  return normalizedValue.length > 0 ? normalizedValue : null;
+}
+
+function isDocumentationWorkspaceRootNode(node: AppNode | null | undefined): boolean {
+  return readWorkspaceScopeKind(node) === DOCUMENTATION_SCOPE_KIND;
+}
+
+function isLegacyDocumentationWorkspaceRootNode(node: AppNode | null | undefined): boolean {
+  if (!node) return false;
+  return LEGACY_DOCUMENTATION_SCOPE_NAMES.has(node.name.trim().toLowerCase());
+}
+
+function findDocumentationWorkspaceRootNode(nodes: AppNode[]): AppNode | null {
+  return (
+    nodes.find((node) => isDocumentationWorkspaceRootNode(node)) ??
+    nodes.find((node) => isLegacyDocumentationWorkspaceRootNode(node)) ??
+    null
+  );
+}
+
+function findDocumentationWorkspaceAncestor(
+  node: AppNode | null | undefined,
+  nodeById: Map<string, AppNode>
+): AppNode | null {
+  const visited = new Set<string>();
+  let current = node ?? null;
+  while (current) {
+    if (isDocumentationWorkspaceRootNode(current) || isLegacyDocumentationWorkspaceRootNode(current)) {
+      return current;
+    }
+    if (visited.has(current.id)) break;
+    visited.add(current.id);
+    if (!current.parentId || current.parentId === ROOT_PARENT_ID) break;
+    current = nodeById.get(current.parentId) ?? null;
+  }
+  return null;
+}
+
+function buildAiDatabaseFieldProperties(title: string, existingNode?: AppNode | null): Record<string, unknown> {
+  const existingFieldType =
+    typeof existingNode?.properties?.odeProcedureFieldType === "string" &&
+    existingNode.properties.odeProcedureFieldType.trim().length > 0
+      ? existingNode.properties.odeProcedureFieldType.trim()
+      : inferProcedureFieldTypeFromLabel(title);
+  const existingShowInMasterList = existingNode?.properties?.odeProcedureShowInMasterList;
+  return {
+    odeProcedureItemType: "field",
+    odeProcedureFieldType: existingFieldType,
+    odeProcedureShowInMasterList:
+      typeof existingShowInMasterList === "boolean" ? existingShowInMasterList : true
+  };
+}
+
+function buildAiGeneratedDocumentationNodeProperties({
+  title,
+  hasChildren,
+  parentNode,
+  existingNode,
+  nodeById,
+  byParent
+}: {
+  title: string;
+  hasChildren: boolean;
+  parentNode: AppNode | null;
+  existingNode?: AppNode | null;
+  nodeById: Map<string, AppNode>;
+  byParent: Map<string, AppNode[]>;
+}): Record<string, unknown> | null {
+  if (!parentNode || !findDocumentationWorkspaceAncestor(parentNode, nodeById)) {
+    return null;
+  }
+
+  const explicitItemType = existingNode?.properties?.odeProcedureItemType;
+  const explicitFieldType =
+    typeof existingNode?.properties?.odeProcedureFieldType === "string" &&
+    existingNode.properties.odeProcedureFieldType.trim().length > 0
+      ? existingNode.properties.odeProcedureFieldType.trim()
+      : "";
+
+  if (explicitItemType === "section") {
+    return {
+      odeProcedureItemType: "section"
+    };
+  }
+
+  if (explicitItemType === "field" || explicitFieldType.length > 0) {
+    return buildAiDatabaseFieldProperties(title, existingNode);
+  }
+
+  const parentIsDocumentationRoot =
+    isDocumentationWorkspaceRootNode(parentNode) || isLegacyDocumentationWorkspaceRootNode(parentNode);
+  const parentItemType = inferDatabaseTemplateItemType(parentNode, byParent);
+
+  if (hasChildren || parentIsDocumentationRoot || parentItemType !== "section") {
+    return {
+      odeProcedureItemType: "section"
+    };
+  }
+
+  return buildAiDatabaseFieldProperties(title, existingNode);
+}
+
+function isProcedureInlineAssetNode(node: AppNode | null | undefined): boolean {
+  return node?.properties?.[PROCEDURE_INLINE_ASSET_PROPERTY] === true;
+}
+
+function isProcedureDisplayNode(node: AppNode | null | undefined): boolean {
+  return Boolean(node) && !isFileLikeNode(node) && !isProcedureInlineAssetNode(node);
+}
+
+function resolveNearestProcedureDisplayNode(
+  node: AppNode | null,
+  nodeById: Map<string, AppNode>,
+  stopNodeId?: string | null
+): AppNode | null {
+  const visited = new Set<string>();
+  let current = node;
+  while (current) {
+    if (isProcedureDisplayNode(current)) return current;
+    if (visited.has(current.id)) break;
+    visited.add(current.id);
+    if (stopNodeId && current.id === stopNodeId) break;
+    if (!current.parentId || current.parentId === ROOT_PARENT_ID) break;
+    current = nodeById.get(current.parentId) ?? null;
+  }
+  return null;
+}
 
 type WorkspaceNodeTabEntry = {
   nodeId: string;
@@ -1016,7 +1525,7 @@ function parseBranchClipboard(text: string): BranchClipboard | null {
         sourceNodeIds,
         items,
         copiedAt: typeof parsed.copiedAt === "number" ? parsed.copiedAt : Date.now(),
-        sourceApp: "odetool-rebuild"
+        sourceApp: APP_SOURCE_ID
       };
     }
     const treeClipboard = parsed as Partial<BranchClipboard> & {
@@ -1042,7 +1551,7 @@ function parseBranchClipboard(text: string): BranchClipboard | null {
       root: roots[0],
       roots,
       copiedAt: typeof parsed.copiedAt === "number" ? parsed.copiedAt : Date.now(),
-      sourceApp: "odetool-rebuild"
+      sourceApp: APP_SOURCE_ID
     };
   } catch {
     return null;
@@ -1239,23 +1748,27 @@ function buildTreeMaps(
   const consumesTreeNumbering = (node: AppNode): boolean =>
     !isFileLikeNode(node) && !isHiddenExecutionTaskNode(node);
 
-  const walk = (parentId: string, prefix: string) => {
+  const walk = (parentId: string, prefix: string, inheritedSeparator?: "." | "-") => {
     const children = byParent.get(parentId) ?? [];
-    let numberedIndex = 0;
+    let siblingState = createNodeNumberingLevelState(
+      inheritedSeparator ? { separator: inheritedSeparator } : undefined
+    );
     children.forEach((child) => {
       if (child.parentId === ROOT_PARENT_ID && !includeWorkspaceRootNumbering) {
         // Keep workspace roots unnumbered while still numbering descendants.
-        walk(child.id, "");
+        walk(child.id, "", siblingState.separator);
       } else {
-        const nextPrefix = consumesTreeNumbering(child)
-          ? (() => {
-              numberedIndex += 1;
-              const label = prefix ? `${prefix}.${numberedIndex}` : `${numberedIndex}`;
-              numbering.set(child.id, label);
-              return label;
-            })()
-          : prefix;
-        walk(child.id, nextPrefix);
+        if (consumesTreeNumbering(child)) {
+          const resolved = resolveNodeTreeNumbering(child, {
+            parentLabel: prefix,
+            siblingState
+          });
+          siblingState = resolved.nextLevelState;
+          numbering.set(child.id, resolved.label);
+          walk(child.id, resolved.descendantPrefix, resolved.childSeparator);
+        } else {
+          walk(child.id, prefix, siblingState.separator);
+        }
       }
     });
   };
@@ -1396,14 +1909,24 @@ function resolveInlineEditSpellTarget(
 
 export default function App() {
   const utilityPanelFromQuery = useMemo<UtilityPanelView | null>(() => {
-    if (typeof window === "undefined") return null;
-    return parseUtilityPanelView(new URLSearchParams(window.location.search).get("utility"));
+    return parseUtilityPanelView(readWindowSearchParam("utility"));
   }, []);
   const languageFromQuery = useMemo<LanguageCode | null>(() => {
-    if (typeof window === "undefined") return null;
-    return parseLanguageCodeFromQuery(new URLSearchParams(window.location.search).get("lang"));
+    return parseLanguageCodeFromQuery(readWindowSearchParam("lang"));
   }, []);
+  const linkedNodeIdFromQuery = useMemo(() => readWindowSearchParam(LINKED_NODE_WINDOW_NODE_QUERY_PARAM), []);
+  const linkedNodeProjectIdFromQuery = useMemo(
+    () => readWindowSearchParam(LINKED_NODE_WINDOW_PROJECT_QUERY_PARAM),
+    []
+  );
+  const fieldOrderNodeIdFromQuery = useMemo(() => readWindowSearchParam(FIELD_ORDER_WINDOW_NODE_QUERY_PARAM), []);
+  const fieldOrderProjectIdFromQuery = useMemo(
+    () => readWindowSearchParam(FIELD_ORDER_WINDOW_PROJECT_QUERY_PARAM),
+    []
+  );
   const isUtilityPanelWindow = utilityPanelFromQuery !== null;
+  const isDedicatedLinkedNodeWindow = linkedNodeIdFromQuery !== null;
+  const isDedicatedFieldOrderWindow = fieldOrderNodeIdFromQuery !== null;
   const store = useExplorerStore();
   const [appWindow, setAppWindow] = useState<TauriWindow | null>(null);
   const [isDesktopRuntime, setIsDesktopRuntime] = useState(false);
@@ -1412,10 +1935,12 @@ export default function App() {
   const [desktopViewMode, setDesktopViewMode] = useState<DesktopViewMode>("grid");
   const [documentationModeActive, setDocumentationModeActive] = useState(false);
   const [activeChantierStatusFilter, setActiveChantierStatusFilter] = useState<"all" | ODEChantierStatus>("all");
+  const [treeSelectionRevealRequestKey, setTreeSelectionRevealRequestKey] = useState(0);
   const [mindMapOrientation, setMindMapOrientation] = useState<MindMapOrientation>("horizontal");
   const [mindMapContentMode, setMindMapContentMode] = useState<MindMapContentMode>("quick_access");
   const [executionQuickOpenRequestKey, setExecutionQuickOpenRequestKey] = useState(0);
   const [executionQuickOpenDeliverableId, setExecutionQuickOpenDeliverableId] = useState<string | null>(null);
+  const [executionBrowseNodeId, setExecutionBrowseNodeId] = useState<string | null>(null);
   const [activeNodeStateFilters, setActiveNodeStateFilters] = useState<Set<NodeStateFilter>>(() => createAllNodeStateFilters());
   const [includeNodeStateFilterParents, setIncludeNodeStateFilterParents] = useState<boolean>(() => {
     const raw = localStorage.getItem(NODE_STATE_FILTER_PARENTS_STORAGE_KEY);
@@ -1468,6 +1993,26 @@ export default function App() {
   const [deleteConfirmMessage, setDeleteConfirmMessage] = useState("");
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleModalNodeId, setScheduleModalNodeId] = useState<string | null>(null);
+  const [activeAccessRole, setActiveAccessRole] = useState<NodeAccessRole>(() => readStoredActiveAccessRole());
+  const [userAccountState, setUserAccountState] = useState<UserAccountState | null>(null);
+  const [currentUserAccount, setCurrentUserAccount] = useState<UserAccountSummary | null>(null);
+  const [rememberedAuthUserId, setRememberedAuthUserId] = useState<string | null>(() => readRememberedAuthUserId());
+  const [rememberedAuthSessionToken, setRememberedAuthSessionToken] = useState<string | null>(() =>
+    readRememberedAuthSessionToken()
+  );
+  const [rememberPasswordPreference, setRememberPasswordPreference] = useState<RememberPasswordPreference>(() =>
+    readRememberPasswordPreference()
+  );
+  const [authSessionRestorePending, setAuthSessionRestorePending] = useState(true);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [userAccountsModalOpen, setUserAccountsModalOpen] = useState(false);
+  const [userAccountsModalMode, setUserAccountsModalMode] = useState<"directory" | "profile">("directory");
+  const [userAccountsBusy, setUserAccountsBusy] = useState(false);
+  const [userAccountsError, setUserAccountsError] = useState<string | null>(null);
+  const [accessPolicyEditorNodeId, setAccessPolicyEditorNodeId] = useState<string | null>(null);
+  const [accessPolicyDraft, setAccessPolicyDraft] = useState<NodeAccessPolicyDraft | null>(null);
+  const [accessPolicySaving, setAccessPolicySaving] = useState(false);
   const [organizationExpandedIds, setOrganizationExpandedIds] = useState<Set<string>>(new Set());
   const [workareaExpandedIds, setWorkareaExpandedIds] = useState<Set<string>>(new Set());
   const [timelineExpandedIds, setTimelineExpandedIds] = useState<Set<string>>(new Set());
@@ -1531,52 +2076,95 @@ export default function App() {
   const [workspaceNodeTabSessions, setWorkspaceNodeTabSessions] = useState<WorkspaceNodeTabSessions>(() =>
     readWorkspaceNodeTabSessions()
   );
-  const [favoriteGroups, setFavoriteGroups] = useState<FavoriteGroup[]>(() => {
-    try {
-      const raw = localStorage.getItem(FAVORITE_GROUPS_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw) as Array<Partial<FavoriteGroup>>;
-      if (!Array.isArray(parsed)) return [];
-      const dedupe = new Set<string>();
-      const groups: FavoriteGroup[] = [];
-      for (const item of parsed) {
-        const id = typeof item?.id === "string" ? item.id.trim() : "";
-        const name = typeof item?.name === "string" ? item.name.trim() : "";
-        if (!id || !name || dedupe.has(id)) continue;
-        dedupe.add(id);
-        groups.push({ id, name });
-      }
-      return groups;
-    } catch {
-      return [];
-    }
-  });
-  const [activeFavoriteGroupId, setActiveFavoriteGroupId] = useState<string>(
-    () => localStorage.getItem(ACTIVE_FAVORITE_GROUP_STORAGE_KEY) ?? FAVORITE_ALL_GROUP_ID
+  const [favoriteGroupsByObjectiveState, setFavoriteGroupsByObjectiveState] = useState<
+    Record<FavoriteObjectiveKey, FavoriteGroup[]>
+  >(() => readFavoriteGroupsByObjectiveState());
+  const [activeFavoriteGroupIdByObjectiveState, setActiveFavoriteGroupIdByObjectiveState] = useState<
+    Record<FavoriteObjectiveKey, string>
+  >(() => readActiveFavoriteGroupIdByObjectiveState());
+  const [selectedFavoriteGroupIdsByObjectiveState, setSelectedFavoriteGroupIdsByObjectiveState] = useState<
+    Record<FavoriteObjectiveKey, string[]>
+  >(() => readSelectedFavoriteGroupIdsByObjectiveState());
+  const [favoriteGroupTreeFilterEnabledByObjectiveState, setFavoriteGroupTreeFilterEnabledByObjectiveState] = useState<
+    Record<FavoriteObjectiveKey, boolean>
+  >(() => readFavoriteGroupTreeFilterByObjectiveState());
+  const favoriteObjectiveKey: FavoriteObjectiveKey =
+    workspaceMode === "timeline"
+      ? "chronology"
+      : documentationModeActive || deriveWorkspaceFocusMode(activeNodeStateFilters) === "data"
+        ? "database"
+        : deriveWorkspaceFocusMode(activeNodeStateFilters) === "execution"
+          ? "execution"
+          : "organization";
+  const favoriteGroups = favoriteGroupsByObjectiveState[favoriteObjectiveKey] ?? [];
+  const setFavoriteGroups = useCallback(
+    (action: SetStateAction<FavoriteGroup[]>) => {
+      setFavoriteGroupsByObjectiveState((current) => {
+        const currentGroups = current[favoriteObjectiveKey] ?? [];
+        const nextGroups =
+          typeof action === "function"
+            ? (action as (previous: FavoriteGroup[]) => FavoriteGroup[])(currentGroups)
+            : action;
+        return {
+          ...current,
+          [favoriteObjectiveKey]: nextGroups
+        };
+      });
+    },
+    [favoriteObjectiveKey]
   );
-  const [selectedFavoriteGroupIds, setSelectedFavoriteGroupIds] = useState<string[]>(() => {
-    try {
-      const raw = localStorage.getItem(SELECTED_FAVORITE_GROUPS_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as unknown;
-        return normalizeFavoriteGroupIds(parsed);
-      }
-    } catch {
-      // Fall back to the legacy single-group filter state.
-    }
-
-    const rawTreeFilter = localStorage.getItem(FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY);
-    const favoriteTreeFilterEnabled =
-      rawTreeFilter === "1" || rawTreeFilter?.toLowerCase() === "true";
-    const activeGroupId =
-      localStorage.getItem(ACTIVE_FAVORITE_GROUP_STORAGE_KEY) ?? FAVORITE_ALL_GROUP_ID;
-    return favoriteTreeFilterEnabled && activeGroupId !== FAVORITE_ALL_GROUP_ID ? [activeGroupId] : [];
-  });
-  const [favoriteGroupTreeFilterEnabled, setFavoriteGroupTreeFilterEnabled] = useState<boolean>(() => {
-    const raw = localStorage.getItem(FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY);
-    if (raw === null) return false;
-    return raw === "1" || raw.toLowerCase() === "true";
-  });
+  const activeFavoriteGroupId = activeFavoriteGroupIdByObjectiveState[favoriteObjectiveKey] ?? FAVORITE_ALL_GROUP_ID;
+  const setActiveFavoriteGroupId = useCallback(
+    (action: SetStateAction<string>) => {
+      setActiveFavoriteGroupIdByObjectiveState((current) => {
+        const currentValue = current[favoriteObjectiveKey] ?? FAVORITE_ALL_GROUP_ID;
+        const nextValue =
+          typeof action === "function"
+            ? (action as (previous: string) => string)(currentValue)
+            : action;
+        return {
+          ...current,
+          [favoriteObjectiveKey]: nextValue
+        };
+      });
+    },
+    [favoriteObjectiveKey]
+  );
+  const selectedFavoriteGroupIds = selectedFavoriteGroupIdsByObjectiveState[favoriteObjectiveKey] ?? [];
+  const setSelectedFavoriteGroupIds = useCallback(
+    (action: SetStateAction<string[]>) => {
+      setSelectedFavoriteGroupIdsByObjectiveState((current) => {
+        const currentValue = current[favoriteObjectiveKey] ?? [];
+        const nextValue =
+          typeof action === "function"
+            ? (action as (previous: string[]) => string[])(currentValue)
+            : action;
+        return {
+          ...current,
+          [favoriteObjectiveKey]: nextValue
+        };
+      });
+    },
+    [favoriteObjectiveKey]
+  );
+  const favoriteGroupTreeFilterEnabled =
+    favoriteGroupTreeFilterEnabledByObjectiveState[favoriteObjectiveKey] ?? false;
+  const setFavoriteGroupTreeFilterEnabled = useCallback(
+    (action: SetStateAction<boolean>) => {
+      setFavoriteGroupTreeFilterEnabledByObjectiveState((current) => {
+        const currentValue = current[favoriteObjectiveKey] ?? false;
+        const nextValue =
+          typeof action === "function"
+            ? (action as (previous: boolean) => boolean)(currentValue)
+            : action;
+        return {
+          ...current,
+          [favoriteObjectiveKey]: nextValue
+        };
+      });
+    },
+    [favoriteObjectiveKey]
+  );
   const [favoriteGroupModalOpen, setFavoriteGroupModalOpen] = useState(false);
   const [favoriteGroupSettingsModalOpen, setFavoriteGroupSettingsModalOpen] = useState(false);
   const [favoriteGroupNameInput, setFavoriteGroupNameInput] = useState("");
@@ -1645,6 +2233,132 @@ export default function App() {
     settingsOpen,
     documentAdvisorOpen
   ]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_ACCESS_ROLE_STORAGE_KEY, activeAccessRole);
+    } catch {
+      // Access role persistence is best-effort only.
+    }
+  }, [activeAccessRole]);
+  useEffect(() => {
+    try {
+      if (rememberedAuthUserId) {
+        localStorage.setItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY, rememberedAuthUserId);
+      } else {
+        localStorage.removeItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY);
+      }
+    } catch {
+      // Remembered auth state persistence is best-effort only.
+    }
+  }, [rememberedAuthUserId]);
+  useEffect(() => {
+    try {
+      if (rememberedAuthSessionToken) {
+        localStorage.setItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY, rememberedAuthSessionToken);
+      } else {
+        localStorage.removeItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY);
+      }
+    } catch {
+      // Remembered session persistence is best-effort only.
+    }
+  }, [rememberedAuthSessionToken]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        REMEMBERED_AUTH_SESSION_PREFERENCE_STORAGE_KEY,
+        JSON.stringify(normalizeRememberPasswordPreference(rememberPasswordPreference))
+      );
+    } catch {
+      // Remembered sign-in preference persistence is best-effort only.
+    }
+  }, [rememberPasswordPreference]);
+  const refreshUserAccountState = useCallback(
+    async (options?: { currentUserId?: string | null }) => {
+      const state = await getUserAccountState();
+      setUserAccountState(state);
+      setCurrentUserAccount((current) => {
+        const targetUserId =
+          options && Object.prototype.hasOwnProperty.call(options, "currentUserId")
+            ? options.currentUserId ?? null
+            : current?.userId ?? null;
+        if (!targetUserId) return null;
+        return state.users.find((user) => user.userId === targetUserId && !user.disabled) ?? null;
+      });
+      return state;
+    },
+    []
+  );
+  useEffect(() => {
+    void refreshUserAccountState().catch((error) => {
+      setAuthError(error instanceof Error ? error.message : String(error));
+      setUserAccountState({
+        hasUsers: false,
+        users: []
+      });
+      setAuthSessionRestorePending(false);
+    });
+  }, [refreshUserAccountState]);
+  useEffect(() => {
+    let cancelled = false;
+    if (userAccountState === null) return;
+    if (currentUserAccount) {
+      setAuthSessionRestorePending(false);
+      return;
+    }
+    if (!rememberedAuthSessionToken) {
+      setAuthSessionRestorePending(false);
+      return;
+    }
+
+    setAuthBusy(true);
+    setAuthSessionRestorePending(true);
+    void resumeUserAccountSession(rememberedAuthSessionToken)
+      .then(async (result) => {
+        if (cancelled) return;
+        setAuthError(null);
+        setRememberedAuthUserId(result.user.userId);
+        setRememberedAuthSessionToken(result.rememberedSessionToken ?? rememberedAuthSessionToken);
+        setCurrentUserAccount(result.user);
+        await refreshUserAccountState({ currentUserId: result.user.userId });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : String(error);
+        setRememberedAuthSessionToken(null);
+        if (/remembered sign-in/i.test(message)) {
+          setAuthError(null);
+        } else {
+          setAuthError(message);
+        }
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAuthBusy(false);
+        setAuthSessionRestorePending(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUserAccount, rememberedAuthSessionToken, refreshUserAccountState, userAccountState]);
+  useEffect(() => {
+    if (!currentUserAccount) return;
+    if (!ACCESS_ROLE_VALUES.includes(currentUserAccount.role)) return;
+    setActiveAccessRole(currentUserAccount.role);
+  }, [currentUserAccount]);
+  useEffect(() => {
+    if (!rememberedAuthUserId || !userAccountState) return;
+    if (userAccountState.users.some((user) => user.userId === rememberedAuthUserId && !user.disabled)) return;
+    setRememberedAuthUserId(null);
+    setRememberedAuthSessionToken(null);
+  }, [rememberedAuthUserId, userAccountState]);
+  const rememberedAuthUser = useMemo(() => {
+    if (!userAccountState) return null;
+    const enabledUsers = userAccountState.users.filter((user) => !user.disabled);
+    if (enabledUsers.length === 1) return enabledUsers[0] ?? null;
+    if (!rememberedAuthUserId) return null;
+    return enabledUsers.find((user) => user.userId === rememberedAuthUserId) ?? null;
+  }, [rememberedAuthUserId, userAccountState]);
   const [isWorkspaceCreating, setIsWorkspaceCreating] = useState(false);
   const [isProjectImporting, setIsProjectImporting] = useState(false);
   const [isProjectResyncing, setIsProjectResyncing] = useState(false);
@@ -1654,6 +2368,8 @@ export default function App() {
   const [isWorkspaceExternalChangeChecking, setIsWorkspaceExternalChangeChecking] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
   const [projectNotice, setProjectNotice] = useState<string | null>(null);
+  const [createChantierDialogState, setCreateChantierDialogState] = useState<CreateChantierDialogState | null>(null);
+  const [createChantierBusy, setCreateChantierBusy] = useState(false);
   const [procedureBranchExportState, setProcedureBranchExportState] = useState<"idle" | "pdf" | "word">("idle");
   const [workspaceManageError, setWorkspaceManageError] = useState<string | null>(null);
   const [workspaceManageNotice, setWorkspaceManageNotice] = useState<string | null>(null);
@@ -1692,15 +2408,22 @@ export default function App() {
   const [searchDropdownOpen, setSearchDropdownOpen] = useState(false);
   const [searchActiveIndex, setSearchActiveIndex] = useState(0);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [librarySelectedNodeId, setLibrarySelectedNodeId] = useState<string | null>(null);
+  const [librarySelectedNodeIds, setLibrarySelectedNodeIds] = useState<Set<string>>(new Set());
   const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(null);
+  const [librarySelectionAnchorId, setLibrarySelectionAnchorId] = useState<string | null>(null);
   const [selectionSurface, setSelectionSurface] = useState<SelectionSurface>("grid");
   const [keyboardSurface, setKeyboardSurface] = useState<KeyboardSurface>("grid");
   const [procedureFieldEditorTargetNodeId, setProcedureFieldEditorTargetNodeId] = useState<string | null>(null);
+  const [procedureFieldOrderTargetNodeId, setProcedureFieldOrderTargetNodeId] = useState<string | null>(null);
+  const [procedureBlankFieldEditorTargetNodeId, setProcedureBlankFieldEditorTargetNodeId] = useState<string | null>(null);
+  const [procedureBlankSectionEditorTargetNodeId, setProcedureBlankSectionEditorTargetNodeId] = useState<string | null>(null);
   const editActionInFlightRef = useRef(false);
   const appWindowRef = useRef<TauriWindow | null>(null);
   const desktopWindowRestoreBoundsRef = useRef<DesktopWindowRestoreBounds | null>(null);
   const desktopWindowHeaderDragRef = useRef<DesktopWindowHeaderDragSession | null>(null);
   const desktopWindowHeaderDragFrameRef = useRef<number | null>(null);
+  const desktopWindowStateSyncTimeoutIdsRef = useRef<number[]>([]);
   const systemLanguageSyncTimeoutIdsRef = useRef<number[]>([]);
   const openNodeInWorkareaRef = useRef<
     ((targetNodeId?: string | null, options?: { deliverableId?: string | null; openExecution?: boolean }) => Promise<void>) | null
@@ -1720,6 +2443,8 @@ export default function App() {
   const autoScheduleSyncInFlightRef = useRef(false);
   const workstreamProjectionRepairInFlightRef = useRef(false);
   const workstreamProjectionRepairSignatureRef = useRef<string | null>(null);
+  const procedureEngineSyncInFlightRef = useRef(false);
+  const procedureEngineSyncPendingRef = useRef(false);
   const deleteConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
   const activeExternalImportKeysRef = useRef<Set<string>>(new Set());
   const recentExternalImportRef = useRef<{ key: string; handledAt: number } | null>(null);
@@ -1735,8 +2460,11 @@ export default function App() {
   const favoriteGroupAssignmentConsumedSignatureRef = useRef<string | null>(null);
   const workspaceModeRef = useRef<WorkspaceMode>(workspaceMode);
   const desktopViewModeRef = useRef<DesktopViewMode>(desktopViewMode);
-  const desktopBrowseViewModeRef = useRef<DesktopViewMode>(desktopViewMode === "procedure" ? "grid" : desktopViewMode);
+  const desktopBrowseViewModeRef = useRef<DesktopViewMode>(
+    desktopViewMode === "procedure" || desktopViewMode === "library" ? "grid" : desktopViewMode
+  );
   const documentationPreviousNodeStateFiltersRef = useRef<Set<NodeStateFilter> | null>(null);
+  const documentationRootProvisioningRef = useRef<Set<string>>(new Set());
   const restoredWorkspaceNodeTabsRef = useRef<string | null>(null);
   const selectionSurfaceRef = useRef<SelectionSurface>(selectionSurface);
   const keyboardSurfaceRef = useRef<KeyboardSurface>(keyboardSurface);
@@ -1784,7 +2512,17 @@ export default function App() {
     timelineGridMinWidth: TIMELINE_GRID_MIN_WIDTH
   });
   const t = (key: string, params?: TranslationParams) => translate(language, key, params);
+  const authGateMode: AuthGateMode | null =
+    userAccountState === null || authSessionRestorePending
+      ? "loading"
+      : userAccountState.hasUsers
+        ? currentUserAccount
+          ? null
+          : "sign_in"
+        : "bootstrap";
+  const authGateOpen = authGateMode !== null;
   const hasBlockingOverlayOpen =
+    authGateOpen ||
     settingsOpen ||
     workspaceSettingsOpen ||
     deleteConfirmOpen ||
@@ -1794,6 +2532,7 @@ export default function App() {
     scheduleModalOpen ||
     favoriteGroupModalOpen ||
     favoriteAssignModalOpen ||
+    userAccountsModalOpen ||
     Boolean(quickAppsModalNodeId) ||
     documentAdvisorOpen ||
     naWorkspaceModalOpen ||
@@ -1816,6 +2555,176 @@ export default function App() {
   }, [qaChecklistStateById]);
   const qaChecklistHealth: "pending" | "passed" | "failed" =
     qaChecklistSummary.failed > 0 ? "failed" : qaChecklistSummary.pending > 0 ? "pending" : "passed";
+  const handleBootstrapUserAccount = useCallback(
+    async (payload: {
+      username: string;
+      displayName: string;
+      password: string;
+      rememberPassword: RememberPasswordPreference;
+    }) => {
+      setAuthBusy(true);
+      setAuthError(null);
+      try {
+        const rememberPassword = normalizeRememberPasswordPreference(payload.rememberPassword);
+        const createdUser = await bootstrapUserAccount({
+          username: payload.username,
+          displayName: payload.displayName,
+          password: payload.password,
+          rememberSession: rememberPassword.enabled
+            ? { durationMs: resolveRememberPasswordDurationMs(rememberPassword) }
+            : null
+        });
+        setRememberPasswordPreference(rememberPassword);
+        setRememberedAuthUserId(createdUser.user.userId);
+        setRememberedAuthSessionToken(createdUser.rememberedSessionToken);
+        setCurrentUserAccount(createdUser.user);
+        await refreshUserAccountState({ currentUserId: createdUser.user.userId });
+      } catch (error) {
+        setAuthError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [refreshUserAccountState]
+  );
+  const handleSignInUserAccount = useCallback(
+    async (payload: { username: string; password: string; rememberPassword: RememberPasswordPreference }) => {
+      setAuthBusy(true);
+      setAuthError(null);
+      try {
+        const rememberPassword = normalizeRememberPasswordPreference(payload.rememberPassword);
+        const signedInUser = await signInUserAccount({
+          username: payload.username,
+          password: payload.password,
+          rememberSession: rememberPassword.enabled
+            ? { durationMs: resolveRememberPasswordDurationMs(rememberPassword) }
+            : null
+        });
+        setRememberPasswordPreference(rememberPassword);
+        setRememberedAuthUserId(signedInUser.user.userId);
+        setRememberedAuthSessionToken(signedInUser.rememberedSessionToken);
+        setCurrentUserAccount(signedInUser.user);
+        await refreshUserAccountState({ currentUserId: signedInUser.user.userId });
+      } catch (error) {
+        setAuthError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setAuthBusy(false);
+      }
+    },
+    [refreshUserAccountState]
+  );
+  const handleSignOutUserAccount = useCallback(() => {
+    const activeSessionToken = rememberedAuthSessionToken;
+    setCurrentUserAccount(null);
+    setUserAccountsModalOpen(false);
+    setUserAccountsError(null);
+    setAuthError(null);
+    setCommandBarOpen(false);
+    setDocumentAdvisorOpen(false);
+    setRememberedAuthSessionToken(null);
+    if (activeSessionToken) {
+      void revokeUserAccountSession(activeSessionToken).catch(() => undefined);
+    }
+  }, [rememberedAuthSessionToken]);
+  const openUserAccountsManager = useCallback(async () => {
+    if (!currentUserAccount?.isAdmin) return;
+    setUserAccountsError(null);
+    try {
+      await refreshUserAccountState();
+      setUserAccountsModalMode("directory");
+      setUserAccountsModalOpen(true);
+    } catch (error) {
+      setUserAccountsError(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentUserAccount, refreshUserAccountState]);
+  const openCurrentUserProfile = useCallback(async () => {
+    if (!currentUserAccount) return;
+    setUserAccountsError(null);
+    try {
+      await refreshUserAccountState({ currentUserId: currentUserAccount.userId });
+      setUserAccountsModalMode("profile");
+      setUserAccountsModalOpen(true);
+    } catch (error) {
+      setUserAccountsError(error instanceof Error ? error.message : String(error));
+    }
+  }, [currentUserAccount, refreshUserAccountState]);
+  const closeUserAccountsManager = useCallback(() => {
+    if (userAccountsBusy) return;
+    setUserAccountsModalOpen(false);
+    setUserAccountsModalMode("directory");
+    setUserAccountsError(null);
+  }, [userAccountsBusy]);
+  const handleCreateUserAccount = useCallback(
+    async (payload: {
+      username: string;
+      displayName: string;
+      password: string;
+      role: NodeAccessRole;
+      isAdmin: boolean;
+      profilePhotoDataUrl?: string | null;
+      licensePlan: UserAccountLicensePlan;
+    }) => {
+      setUserAccountsBusy(true);
+      setUserAccountsError(null);
+      try {
+        await createUserAccount(payload);
+        await refreshUserAccountState({ currentUserId: currentUserAccount?.userId ?? null });
+      } catch (error) {
+        setUserAccountsError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setUserAccountsBusy(false);
+      }
+    },
+    [currentUserAccount?.userId, refreshUserAccountState]
+  );
+  const handleUpdateUserAccount = useCallback(
+    async (payload: {
+      userId: string;
+      username: string;
+      displayName: string;
+      role: NodeAccessRole;
+      isAdmin: boolean;
+      disabled: boolean;
+      profilePhotoDataUrl?: string | null;
+      nextPassword?: string | null;
+      licensePlan: UserAccountLicensePlan;
+      restartLicenseFromNow?: boolean;
+    }) => {
+      setUserAccountsBusy(true);
+      setUserAccountsError(null);
+      try {
+        await updateUserAccount(payload);
+        await refreshUserAccountState({ currentUserId: currentUserAccount?.userId ?? null });
+      } catch (error) {
+        setUserAccountsError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setUserAccountsBusy(false);
+      }
+    },
+    [currentUserAccount?.userId, refreshUserAccountState]
+  );
+  const handleDeleteUserAccount = useCallback(
+    async (userId: string) => {
+      setUserAccountsBusy(true);
+      setUserAccountsError(null);
+      try {
+        await deleteUserAccount(userId);
+        await refreshUserAccountState({ currentUserId: currentUserAccount?.userId ?? null });
+      } catch (error) {
+        setUserAccountsError(error instanceof Error ? error.message : String(error));
+      } finally {
+        setUserAccountsBusy(false);
+      }
+    },
+    [currentUserAccount?.userId, refreshUserAccountState]
+  );
+  useEffect(() => {
+    if (!userAccountsModalOpen) return;
+    if (userAccountsModalMode === "profile" && currentUserAccount) return;
+    if (currentUserAccount?.isAdmin) return;
+    setUserAccountsModalOpen(false);
+    setUserAccountsError(null);
+  }, [currentUserAccount, userAccountsModalMode, userAccountsModalOpen]);
   const qaReleaseEntries = useMemo(() => releaseLogData.entries ?? [], []);
   const qaFeedbackEntries = useMemo(() => normalizeQaFeedbackEntries(qaFeedbackData.entries), []);
   const qaPlannerStateById = useMemo(() => {
@@ -2199,7 +3108,7 @@ export default function App() {
     targetUrl.searchParams.set("lang", language);
     const panelTitle = view === "release" ? t("release.open") : view === "help" ? t("help.open") : t("qa.open");
     const panelWindow = new WebviewWindow(label, {
-      title: `ODETool - ${panelTitle}`,
+      title: `${APP_DISPLAY_NAME} - ${panelTitle}`,
       url: targetUrl.toString(),
       center: true,
       width: 1280,
@@ -4564,12 +5473,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow) return;
     if (activeProjectId) {
       localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, activeProjectId);
     } else {
       localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
     }
-  }, [activeProjectId]);
+  }, [activeProjectId, isDedicatedFieldOrderWindow, isDedicatedLinkedNodeWindow]);
 
   useEffect(() => {
     if (defaultProjectId) {
@@ -4580,8 +5490,11 @@ export default function App() {
   }, [defaultProjectId]);
 
   useEffect(() => {
-    localStorage.setItem(FAVORITE_GROUPS_STORAGE_KEY, JSON.stringify(favoriteGroups));
-  }, [favoriteGroups]);
+    localStorage.setItem(
+      FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY,
+      JSON.stringify(favoriteGroupsByObjectiveState)
+    );
+  }, [favoriteGroupsByObjectiveState]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -4641,8 +5554,6 @@ export default function App() {
         setActiveFavoriteGroupId(FAVORITE_ALL_GROUP_ID);
         return;
       }
-      localStorage.setItem(ACTIVE_FAVORITE_GROUP_STORAGE_KEY, FAVORITE_ALL_GROUP_ID);
-      localStorage.setItem(SELECTED_FAVORITE_GROUPS_STORAGE_KEY, JSON.stringify([]));
       return;
     }
 
@@ -4680,12 +5591,8 @@ export default function App() {
       return;
     }
 
-    localStorage.setItem(ACTIVE_FAVORITE_GROUP_STORAGE_KEY, activeFavoriteGroupId);
-    localStorage.setItem(
-      SELECTED_FAVORITE_GROUPS_STORAGE_KEY,
-      JSON.stringify(normalizedSelectedGroupIds)
-    );
   }, [
+    favoriteObjectiveKey,
     favoriteGroupTreeFilterEnabled,
     favoriteGroups,
     activeFavoriteGroupId,
@@ -4694,10 +5601,24 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem(
-      FAVORITE_GROUP_TREE_FILTER_STORAGE_KEY,
-      favoriteGroupTreeFilterEnabled ? "1" : "0"
+      ACTIVE_FAVORITE_GROUP_BY_OBJECTIVE_STORAGE_KEY,
+      JSON.stringify(activeFavoriteGroupIdByObjectiveState)
     );
-  }, [favoriteGroupTreeFilterEnabled]);
+  }, [activeFavoriteGroupIdByObjectiveState]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      SELECTED_FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY,
+      JSON.stringify(selectedFavoriteGroupIdsByObjectiveState)
+    );
+  }, [selectedFavoriteGroupIdsByObjectiveState]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      FAVORITE_GROUP_TREE_FILTER_BY_OBJECTIVE_STORAGE_KEY,
+      JSON.stringify(favoriteGroupTreeFilterEnabledByObjectiveState)
+    );
+  }, [favoriteGroupTreeFilterEnabledByObjectiveState]);
 
   useEffect(() => {
     activeProjectIdRef.current = activeProjectId;
@@ -5185,10 +6106,138 @@ export default function App() {
     setIsWorkspaceExternalChangeChecking(false);
   }, [activeProjectHasLinkedFolder]);
   const workspaceRootIdSet = useMemo(() => new Set(projects.map((project) => project.rootNodeId)), [projects]);
-  const projectScopedNodeIds = useMemo(
+  const activeProjectRootExists = useMemo(
+    () => Boolean(activeProjectRootId && store.allNodes.some((node) => node.id === activeProjectRootId)),
+    [activeProjectRootId, store.allNodes]
+  );
+  const fullProjectScopedNodeIds = useMemo(
     () => collectProjectScopedNodeIds(activeProjectRootId, byParent),
     [activeProjectRootId, byParent]
   );
+  const documentationWorkspaceRootNode = useMemo(() => {
+    if (!activeProjectRootId) return null;
+    const children = byParent.get(activeProjectRootId) ?? [];
+    return findDocumentationWorkspaceRootNode(children);
+  }, [activeProjectRootId, byParent]);
+  const documentationWorkspaceRootNeedsMigration = useMemo(
+    () => Boolean(documentationWorkspaceRootNode && !isDocumentationWorkspaceRootNode(documentationWorkspaceRootNode)),
+    [documentationWorkspaceRootNode]
+  );
+  const documentationWorkspaceRootId = documentationWorkspaceRootNode?.id ?? null;
+  const documentationScopedNodeIds = useMemo(
+    () => collectProjectScopedNodeIds(documentationWorkspaceRootId, byParent),
+    [documentationWorkspaceRootId, byParent]
+  );
+  const projectScopedNodeIds = useMemo(() => {
+    if (!fullProjectScopedNodeIds) return null;
+    if (!documentationWorkspaceRootId || !documentationScopedNodeIds) {
+      return fullProjectScopedNodeIds;
+    }
+    if (documentationModeActive) {
+      return documentationScopedNodeIds;
+    }
+    const visibleIds = new Set(fullProjectScopedNodeIds);
+    documentationScopedNodeIds.forEach((nodeId) => {
+      visibleIds.delete(nodeId);
+    });
+    return visibleIds;
+  }, [
+    documentationModeActive,
+    documentationScopedNodeIds,
+    documentationWorkspaceRootId,
+    fullProjectScopedNodeIds
+  ]);
+  const activeWorkspaceRootId = documentationModeActive
+    ? documentationWorkspaceRootId ?? activeProjectRootId
+    : activeProjectRootId;
+  const resolveScopedCreationSurface = useCallback(
+    (surface: SelectionSurface): SelectionSurface => {
+      if (documentationModeActive) {
+        return "tree";
+      }
+      return resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
+    },
+    [documentationModeActive, workspaceMode]
+  );
+  const resolveScopedStructureParentId = useCallback(
+    (requestedParentId: string | null): string | null => {
+      if (!documentationModeActive) {
+        return requestedParentId;
+      }
+      const documentationRootId = documentationWorkspaceRootId ?? activeWorkspaceRootId ?? null;
+      if (!documentationRootId) {
+        return requestedParentId;
+      }
+      if (requestedParentId && projectScopedNodeIds?.has(requestedParentId)) {
+        return requestedParentId;
+      }
+      return documentationRootId;
+    },
+    [activeWorkspaceRootId, documentationModeActive, documentationWorkspaceRootId, projectScopedNodeIds]
+  );
+  const activeWorkspaceDefaultSelectionId = useMemo(() => {
+    if (!activeWorkspaceRootId) return null;
+    if (documentationWorkspaceRootId && activeWorkspaceRootId === documentationWorkspaceRootId) {
+      const firstVisibleChild = (byParent.get(activeWorkspaceRootId) ?? []).find((child) => !isFileLikeNode(child)) ?? null;
+      return firstVisibleChild?.id ?? activeWorkspaceRootId;
+    }
+    return activeWorkspaceRootId;
+  }, [activeWorkspaceRootId, byParent, documentationWorkspaceRootId]);
+  useEffect(() => {
+    if (!activeProjectRootId || !activeProjectRootExists) return;
+    if (documentationWorkspaceRootNode && !documentationWorkspaceRootNeedsMigration) {
+      documentationRootProvisioningRef.current.delete(activeProjectRootId);
+      return;
+    }
+    if (documentationRootProvisioningRef.current.has(activeProjectRootId)) return;
+
+    documentationRootProvisioningRef.current.add(activeProjectRootId);
+    let cancelled = false;
+    let keepProvisioningLock = false;
+
+    void (async () => {
+      try {
+        const targetRoot =
+          documentationWorkspaceRootNode ??
+          (await createNode(activeProjectRootId, DOCUMENTATION_SCOPE_DEFAULT_NAME, "folder"));
+        const nextProperties: Record<string, unknown> = {
+          ...(targetRoot.properties ?? {}),
+          [WORKSPACE_SCOPE_KIND_PROPERTY]: DOCUMENTATION_SCOPE_KIND
+        };
+        await updateNodeProperties(targetRoot.id, nextProperties);
+        if (cancelled) return;
+        await store.refreshTree();
+        setExpandedIds((prev) => {
+          if (prev.has(activeProjectRootId)) return prev;
+          const next = new Set(prev);
+          next.add(activeProjectRootId);
+          return next;
+        });
+        keepProvisioningLock = true;
+      } catch (error) {
+        if (!cancelled) {
+          setProjectNotice(null);
+          setProjectError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (cancelled || !keepProvisioningLock) {
+          documentationRootProvisioningRef.current.delete(activeProjectRootId);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeProjectRootExists,
+    activeProjectRootId,
+    createNode,
+    documentationWorkspaceRootNeedsMigration,
+    documentationWorkspaceRootNode,
+    store.refreshTree,
+    updateNodeProperties
+  ]);
   const currentIso = useMemo(() => getIsoWeekInfo(new Date()), []);
   const currentUtcYear = useMemo(() => new Date().getUTCFullYear(), []);
   const currentTimelineWeekKey =
@@ -5229,7 +6278,7 @@ export default function App() {
   }, [timelineDayRanges]);
 
   useEffect(() => {
-    if (!isDesktopRuntime || isUtilityPanelWindow || !activeProjectRootId) return;
+    if (!isDesktopRuntime || isUtilityPanelWindow || isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || !activeProjectRootId) return;
 
     const releaseIds = qaAiPlan.releaseEntries.map((entry) => entry.id);
     const feedbackIds = qaFeedbackEntries.map((entry) => entry.id);
@@ -5257,6 +6306,8 @@ export default function App() {
     };
   }, [
     activeProjectRootId,
+    isDedicatedFieldOrderWindow,
+    isDedicatedLinkedNodeWindow,
     isDesktopRuntime,
     isUtilityPanelWindow,
     qaAiPlan.releaseEntries,
@@ -5277,11 +6328,11 @@ export default function App() {
   }, [workspaceRootSignature]);
 
   useEffect(() => {
-    if (activeProjectRootId) {
+    if (activeWorkspaceRootId) {
       setExpandedIds((prev) => {
-        if (prev.has(activeProjectRootId)) return prev;
+        if (prev.has(activeWorkspaceRootId)) return prev;
         const next = new Set(prev);
-        next.add(activeProjectRootId);
+        next.add(activeWorkspaceRootId);
         return next;
       });
       return;
@@ -5292,10 +6343,11 @@ export default function App() {
       if (prev.size > 0) return prev;
       return new Set(rootChildren.map((node) => node.id));
     });
-  }, [byParent, activeProjectRootId]);
+  }, [activeWorkspaceRootId, byParent]);
 
   useEffect(() => {
     if (!isTauri()) {
+      clearScheduledDesktopWindowStateSync();
       appWindowRef.current = null;
       setIsDesktopRuntime(false);
       return;
@@ -5309,49 +6361,43 @@ export default function App() {
     let mounted = true;
     let unlistenResized: (() => void) | null = null;
     let unlistenMoved: (() => void) | null = null;
+    let unlistenFocusChanged: (() => void) | null = null;
 
     const syncWindowState = async () => {
-      try {
-        const maximized = await isDesktopWindowEffectivelyMaximized(currentWindow);
-        if (!maximized) {
-          desktopWindowRestoreBoundsRef.current = await captureDesktopWindowRestoreBounds(currentWindow);
-        }
-        if (mounted) {
-          setIsWindowMaximized(maximized);
-        }
-      } catch {
-        // Ignore window state read errors.
-      }
+      if (!mounted) return;
+      await syncDesktopWindowChromeState(currentWindow);
     };
 
     void (async () => {
       await syncWindowState();
 
-      if (!isUtilityPanelWindow) {
-        const fullscreenApplied = await setDesktopWindowFullscreen(currentWindow, true);
-        if (!fullscreenApplied) {
-          await fitDesktopWindowToWorkArea({
-            fillWorkArea: true,
-            coverTaskbar: true,
-            margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
-          });
-        }
+      if (!isUtilityPanelWindow && !isDedicatedLinkedNodeWindow && !isDedicatedFieldOrderWindow) {
+        await fitDesktopWindowToWorkArea({
+          preferCenter: true,
+          margin: DESKTOP_WINDOW_WORKAREA_MARGIN_PX
+        });
         await syncWindowState();
       }
 
       unlistenResized = await currentWindow.onResized(syncWindowState);
       unlistenMoved = await currentWindow.onMoved(syncWindowState);
+      unlistenFocusChanged = await currentWindow.onFocusChanged(({ payload: focused }) => {
+        if (!focused) return;
+        scheduleDesktopWindowChromeStateSync(currentWindow);
+      });
     })();
 
     return () => {
       mounted = false;
+      clearScheduledDesktopWindowStateSync();
       if (appWindowRef.current === currentWindow) {
         appWindowRef.current = null;
       }
       unlistenResized?.();
       unlistenMoved?.();
+      unlistenFocusChanged?.();
     };
-  }, [isUtilityPanelWindow]);
+  }, [isDedicatedFieldOrderWindow, isDedicatedLinkedNodeWindow, isUtilityPanelWindow]);
 
   useEffect(() => {
     void (async () => {
@@ -5398,44 +6444,74 @@ export default function App() {
     () => store.allNodes.find((node) => node.id === store.selectedNodeId) ?? null,
     [store.allNodes, store.selectedNodeId]
   );
+  const selectedReusableLibraryNode = useMemo(
+    () =>
+      librarySelectedNodeId
+        ? store.allNodes.find((node) => node.id === librarySelectedNodeId) ?? null
+        : null,
+    [librarySelectedNodeId, store.allNodes]
+  );
   const selectedFavoriteGroupFilterIds = useMemo(() => {
     if (!favoriteGroupTreeFilterEnabled) return [] as string[];
     const knownGroupIdSet = new Set(favoriteGroups.map((group) => group.id));
     return selectedFavoriteGroupIds.filter((groupId) => knownGroupIdSet.has(groupId));
   }, [favoriteGroupTreeFilterEnabled, favoriteGroups, selectedFavoriteGroupIds]);
+  const quickAccessScopeLabel =
+    favoriteObjectiveKey === "chronology"
+      ? t("tabs.timeline")
+      : favoriteObjectiveKey === "database"
+        ? t("tabs.documentation")
+        : favoriteObjectiveKey === "execution"
+          ? t("footer.mode_execution")
+          : t("tabs.desktop");
   const hasActiveFavoriteGroupTreeFiltering = selectedFavoriteGroupFilterIds.length > 0;
   const desktopMirrorRootId = hasActiveFavoriteGroupTreeFiltering
-    ? activeProjectRootId
-    : store.currentFolderId;
+    ? activeWorkspaceRootId
+    : workspaceMode === "grid" && documentationModeActive
+      ? activeWorkspaceRootId
+    : workspaceMode === "grid" && deriveWorkspaceFocusMode(activeNodeStateFilters) === "execution"
+      ? executionBrowseNodeId ?? store.currentFolderId
+      : store.currentFolderId;
   const desktopMirrorParentId =
-    desktopMirrorRootId ?? (hasActiveFavoriteGroupTreeFiltering ? activeProjectRootId ?? ROOT_PARENT_ID : ROOT_PARENT_ID);
+    desktopMirrorRootId ?? (hasActiveFavoriteGroupTreeFiltering ? activeWorkspaceRootId ?? ROOT_PARENT_ID : ROOT_PARENT_ID);
   const desktopMirrorChildren = useMemo(
     () => byParent.get(desktopMirrorParentId) ?? [],
     [byParent, desktopMirrorParentId]
   );
   const procedureBaseRootNode = useMemo(() => {
-    const rootId = desktopMirrorRootId ?? activeProjectRootId ?? null;
-    if (!rootId) return null;
-    return store.allNodes.find((node) => node.id === rootId) ?? null;
-  }, [activeProjectRootId, desktopMirrorRootId, store.allNodes]);
+    const nodeByIdLocal = new Map(store.allNodes.map((node) => [node.id, node]));
+    const requestedRootNode =
+      desktopMirrorRootId ? (nodeByIdLocal.get(desktopMirrorRootId) ?? null) : null;
+    const workspaceRootNode =
+      activeWorkspaceRootId ? (nodeByIdLocal.get(activeWorkspaceRootId) ?? null) : null;
+    return (
+      resolveNearestProcedureDisplayNode(
+        requestedRootNode,
+        nodeByIdLocal,
+        activeWorkspaceRootId ?? null
+      ) ??
+      resolveNearestProcedureDisplayNode(workspaceRootNode, nodeByIdLocal)
+    );
+  }, [activeWorkspaceRootId, desktopMirrorRootId, store.allNodes]);
   const procedureRootNode = useMemo(() => {
     if (!procedureBaseRootNode) return null;
     const isProjectRootProcedure =
-      desktopMirrorRootId !== null && activeProjectRootId !== null && desktopMirrorRootId === activeProjectRootId;
+      desktopMirrorRootId !== null && activeWorkspaceRootId !== null && desktopMirrorRootId === activeWorkspaceRootId;
     if (!isProjectRootProcedure || !selectedNode) {
       return procedureBaseRootNode;
     }
     if (projectScopedNodeIds && !projectScopedNodeIds.has(selectedNode.id)) {
       return procedureBaseRootNode;
     }
-    if (selectedNode.id === procedureBaseRootNode.id) {
+    const nodeByIdLocal = new Map(store.allNodes.map((node) => [node.id, node]));
+    const selectedProcedureNode =
+      resolveNearestProcedureDisplayNode(selectedNode, nodeByIdLocal, procedureBaseRootNode.id) ?? procedureBaseRootNode;
+    if (selectedProcedureNode.id === procedureBaseRootNode.id) {
       return procedureBaseRootNode;
     }
-
-    const nodeByIdLocal = new Map(store.allNodes.map((node) => [node.id, node]));
     const path: AppNode[] = [];
     const visited = new Set<string>();
-    let current: AppNode | null = selectedNode;
+    let current: AppNode | null = selectedProcedureNode;
 
     while (current) {
       if (visited.has(current.id)) break;
@@ -5447,22 +6523,25 @@ export default function App() {
     }
 
     if (path.length > 1 && path[0]?.id === procedureBaseRootNode.id) {
-      return path[1] ?? procedureBaseRootNode;
+      const visibleRoot = path.slice(1).find((node) => isProcedureDisplayNode(node));
+      return visibleRoot ?? procedureBaseRootNode;
     }
     return procedureBaseRootNode;
-  }, [activeProjectRootId, desktopMirrorRootId, procedureBaseRootNode, projectScopedNodeIds, selectedNode, store.allNodes]);
+  }, [activeWorkspaceRootId, desktopMirrorRootId, procedureBaseRootNode, projectScopedNodeIds, selectedNode, store.allNodes]);
   const procedureSelectedNode = useMemo(() => {
     if (!procedureRootNode) return null;
     if (!selectedNode) return procedureRootNode;
     if (projectScopedNodeIds && !projectScopedNodeIds.has(selectedNode.id)) return procedureRootNode;
-    if (selectedNode.id === procedureRootNode.id) return selectedNode;
 
     const nodeByIdLocal = new Map(store.allNodes.map((node) => [node.id, node]));
+    const selectedProcedureNode =
+      resolveNearestProcedureDisplayNode(selectedNode, nodeByIdLocal, procedureRootNode.id) ?? procedureRootNode;
+    if (selectedProcedureNode.id === procedureRootNode.id) return selectedProcedureNode;
     const visited = new Set<string>();
-    let current: AppNode | null = selectedNode;
+    let current: AppNode | null = selectedProcedureNode;
 
     while (current) {
-      if (current.id === procedureRootNode.id) return selectedNode;
+      if (current.id === procedureRootNode.id) return selectedProcedureNode;
       if (visited.has(current.id)) break;
       visited.add(current.id);
       if (!current.parentId || current.parentId === ROOT_PARENT_ID) break;
@@ -5505,10 +6584,45 @@ export default function App() {
     }
   }, [desktopViewMode, documentationModeActive, keyboardSurface, selectionSurface, workspaceMode]);
   useEffect(() => {
-    if (desktopViewMode !== "procedure") {
+    if (desktopViewMode !== "procedure" && desktopViewMode !== "library") {
       desktopBrowseViewModeRef.current = desktopViewMode;
     }
   }, [desktopViewMode]);
+  useEffect(() => {
+    if (desktopViewMode !== "dashboard") return;
+    if (workspaceMode !== "grid") {
+      setDesktopViewMode("grid");
+      return;
+    }
+    const currentFolderNode = store.currentNode;
+    if (
+      !currentFolderNode ||
+      isFileLikeNode(currentFolderNode) ||
+      currentFolderNode.properties?.odeDashboardWidget === true
+    ) {
+      setDesktopViewMode("grid");
+    }
+  }, [desktopViewMode, store.currentNode, workspaceMode]);
+  useEffect(() => {
+    const nextWorkspaceFocusMode = deriveWorkspaceFocusMode(activeNodeStateFilters);
+    if (
+      documentationModeActive ||
+      workspaceMode !== "grid" ||
+      nextWorkspaceFocusMode === "execution"
+    ) {
+      return;
+    }
+    if (desktopViewMode === "dashboard" || desktopViewMode === "library" || desktopViewMode === "procedure") return;
+    const currentFolderNode = store.currentNode;
+    if (
+      !currentFolderNode ||
+      isFileLikeNode(currentFolderNode) ||
+      currentFolderNode.properties?.odeDashboardWidget === true
+    ) {
+      return;
+    }
+    setDesktopViewMode("dashboard");
+  }, [activeNodeStateFilters, desktopViewMode, documentationModeActive, store.currentNode, workspaceMode]);
   useEffect(() => {
     procedureRootNodeIdRef.current = procedureRootNode?.id ?? null;
   }, [procedureRootNode?.id]);
@@ -5615,7 +6729,7 @@ export default function App() {
 
   const getSavedMistralApiKey = (): string | null => {
     try {
-      const raw = localStorage.getItem("odetool.ai.keys.v1");
+      const raw = localStorage.getItem(AI_KEYS_STORAGE_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw) as { mistralKeys?: string[] };
       if (!parsed.mistralKeys || parsed.mistralKeys.length === 0) return null;
@@ -5633,6 +6747,229 @@ export default function App() {
     }
     return map;
   }, [store.allNodes]);
+  const shouldHideDocumentationNodeInOrganizationView = useCallback(
+    (node: AppNode | null | undefined) =>
+      Boolean(
+        node &&
+          ((!documentationModeActive && documentationScopedNodeIds?.has(node.id)) ||
+            (desktopViewMode !== "library" && isNodeInsideLibrary(node, nodeById)))
+      ),
+    [desktopViewMode, documentationModeActive, documentationScopedNodeIds, nodeById]
+  );
+  const organisationModelLibraryRoot = useMemo(
+    () => findReusableLibraryRoot("organisation_model", activeProjectRootId, byParent),
+    [activeProjectRootId, byParent]
+  );
+  const databaseTemplateLibraryRoot = useMemo(
+    () => findReusableLibraryRoot("database_template", activeProjectRootId, byParent),
+    [activeProjectRootId, byParent]
+  );
+  const organisationModelLibraryItems = useMemo(
+    () =>
+      buildReusableLibraryIndexItems({
+        kind: "organisation_model",
+        rootNodeId: organisationModelLibraryRoot?.id ?? null,
+        nodeById,
+        byParent
+      }),
+    [byParent, nodeById, organisationModelLibraryRoot?.id]
+  );
+  const chantierModelLibraryItems = useMemo(
+    () => organisationModelLibraryItems.filter((item) => isChantierNode(item.node)),
+    [organisationModelLibraryItems]
+  );
+  const databaseTemplateLibraryItems = useMemo(
+    () =>
+      buildReusableLibraryIndexItems({
+        kind: "database_template",
+        rootNodeId: databaseTemplateLibraryRoot?.id ?? null,
+        nodeById,
+        byParent
+      }),
+    [byParent, databaseTemplateLibraryRoot?.id, nodeById]
+  );
+  const chantierLibraryModelOptions = useMemo<ChantierLibraryModelOption[]>(
+    () => [
+      ...chantierModelLibraryItems.map((item) => ({
+        id: item.node.id,
+        name: item.node.name,
+        summary: item.summary,
+        naCode: getODENodeMetadata(item.node).naCode,
+        sourceKind: "organisation_model" as const
+      })),
+      ...databaseTemplateLibraryItems.map((item) => ({
+        id: item.node.id,
+        name: item.node.name,
+        summary: item.summary,
+        naCode: null,
+        sourceKind: "database_template" as const
+      }))
+    ],
+    [chantierModelLibraryItems, databaseTemplateLibraryItems]
+  );
+  const chantierTemplateLibraryOptions = useMemo<ChantierLibraryModelOption[]>(
+    () =>
+      databaseTemplateLibraryItems.map((item) => ({
+        id: item.node.id,
+        name: item.node.name,
+        summary: item.summary,
+        naCode: null,
+        sourceKind: "database_template" as const
+      })),
+    [databaseTemplateLibraryItems]
+  );
+  const libraryTreeRows = useMemo(() => {
+    const roots = [organisationModelLibraryRoot, databaseTemplateLibraryRoot].filter(
+      (node): node is AppNode => node !== null
+    );
+    if (roots.length === 0) {
+      return [] as Array<{
+        id: string;
+        node: AppNode;
+        level: number;
+        indexLabel: string;
+        hasChildren: boolean;
+      }>;
+    }
+
+    const rows: Array<{
+      id: string;
+      node: AppNode;
+      level: number;
+      indexLabel: string;
+      hasChildren: boolean;
+    }> = [];
+    const visited = new Set<string>();
+
+    const visitNode = (node: AppNode, level: number) => {
+      if (visited.has(node.id) || isFileLikeNode(node)) return;
+      visited.add(node.id);
+      const children = (byParent.get(node.id) ?? []).filter((child) => !isFileLikeNode(child));
+      rows.push({
+        id: node.id,
+        node,
+        level,
+        indexLabel: "",
+        hasChildren: children.length > 0
+      });
+      if (!expandedIds.has(node.id)) return;
+      for (const child of children) {
+        visitNode(child, level + 1);
+      }
+    };
+
+    for (const root of roots) {
+      visitNode(root, 0);
+    }
+
+    return rows;
+  }, [byParent, databaseTemplateLibraryRoot, expandedIds, organisationModelLibraryRoot]);
+  const libraryVisibleTreeRowIds = useMemo(
+    () => new Set(libraryTreeRows.map((row) => row.id)),
+    [libraryTreeRows]
+  );
+  const firstReusableLibraryItemId = useMemo(
+    () =>
+      organisationModelLibraryItems[0]?.node.id ??
+      databaseTemplateLibraryItems[0]?.node.id ??
+      libraryTreeRows[0]?.id ??
+      null,
+    [databaseTemplateLibraryItems, libraryTreeRows, organisationModelLibraryItems]
+  );
+  const selectReusableLibraryItem = useCallback(
+    (nodeId: string | null, options?: { surface?: SelectionSurface }) => {
+      const surface = options?.surface ?? "tree";
+      if (!nodeId || !libraryVisibleTreeRowIds.has(nodeId)) {
+        setLibrarySelectedNodeId(null);
+        setLibrarySelectedNodeIds(new Set());
+        setLibrarySelectionAnchorId(null);
+        setSelectionSurface(surface);
+        return;
+      }
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        for (const ancestorId of collectAncestorNodeIds(nodeId, nodeById)) {
+          if (libraryVisibleTreeRowIds.has(ancestorId)) {
+            next.add(ancestorId);
+          }
+        }
+        return next;
+      });
+      setLibrarySelectedNodeId(nodeId);
+      setLibrarySelectedNodeIds(new Set([nodeId]));
+      setLibrarySelectionAnchorId(nodeId);
+      setSelectionSurface(surface);
+    },
+    [libraryVisibleTreeRowIds, nodeById]
+  );
+  useEffect(() => {
+    if (desktopViewMode !== "library") return;
+    if (librarySelectedNodeId && libraryVisibleTreeRowIds.has(librarySelectedNodeId)) return;
+    selectReusableLibraryItem(firstReusableLibraryItemId, { surface: "tree" });
+  }, [
+    desktopViewMode,
+    firstReusableLibraryItemId,
+    librarySelectedNodeId,
+    libraryVisibleTreeRowIds,
+    selectReusableLibraryItem
+  ]);
+  const effectiveTreeSelectedNodeId =
+    desktopViewMode === "library" ? librarySelectedNodeId : store.selectedNodeId;
+  const effectiveTreeSelectedNodeIds =
+    desktopViewMode === "library" ? librarySelectedNodeIds : selectedNodeIds;
+  const effectiveTreeSelectionAnchorId =
+    desktopViewMode === "library" ? librarySelectionAnchorId : selectionAnchorId;
+  const librarySidebarSearchResults = useMemo<SidebarSearchResult[]>(() => {
+    const query = store.searchQuery.trim().toLowerCase();
+    if (query.length === 0) return [];
+    return libraryTreeRows
+      .filter((row) => getNodeDisplayName(row.node).toLowerCase().includes(query))
+      .slice(0, 40)
+      .map((row) => {
+        const pathLabel = collectAncestorNodeIds(row.id, nodeById)
+          .reverse()
+          .map((ancestorId) => nodeById.get(ancestorId)?.name ?? "")
+          .filter((label) => label.trim().length > 0)
+          .join(" / ");
+        return {
+          id: row.id,
+          node: row.node,
+          pathLabel
+        };
+      });
+  }, [libraryTreeRows, nodeById, store.searchQuery]);
+  const dashboardLibraryTargetNode = store.currentNode ?? null;
+  const canCreateFromReusableLibraryIntoCurrentNode = useMemo(
+    () =>
+      Boolean(
+        dashboardLibraryTargetNode &&
+          !isFileLikeNode(dashboardLibraryTargetNode) &&
+          !isLibraryRootNode(dashboardLibraryTargetNode) &&
+          !isNodeInsideLibrary(dashboardLibraryTargetNode, nodeById)
+      ),
+    [dashboardLibraryTargetNode, nodeById]
+  );
+  const canSaveCurrentDashboardNodeAsDatabaseTemplate = useMemo(
+    () =>
+      Boolean(
+        dashboardLibraryTargetNode &&
+          !isLibraryRootNode(dashboardLibraryTargetNode) &&
+          !isNodeInsideLibrary(dashboardLibraryTargetNode, nodeById) &&
+          inferDatabaseTemplateItemType(dashboardLibraryTargetNode, byParent)
+      ),
+    [byParent, dashboardLibraryTargetNode, nodeById]
+  );
+  const canSaveCurrentDashboardNodeAsOrganisationModel = useMemo(
+    () =>
+      Boolean(
+        dashboardLibraryTargetNode &&
+          !isLibraryRootNode(dashboardLibraryTargetNode) &&
+          !isNodeInsideLibrary(dashboardLibraryTargetNode, nodeById) &&
+          !inferDatabaseTemplateItemType(dashboardLibraryTargetNode, byParent) &&
+          inferOrganisationModelItemType(dashboardLibraryTargetNode, byParent)
+      ),
+    [byParent, dashboardLibraryTargetNode, nodeById]
+  );
   const footerQuickAppTargetNode = useMemo(() => {
     const currentFolderNode =
       store.currentFolderId && store.currentFolderId !== ROOT_PARENT_ID
@@ -5647,10 +6984,84 @@ export default function App() {
     () => getNodeQuickApps(footerQuickAppTargetNode),
     [footerQuickAppTargetNode]
   );
+  const resolveNodeForAccess = useCallback(
+    (nodeId: string | null | undefined) =>
+      nodeId
+        ? nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null
+        : null,
+    [nodeById, store.allNodes]
+  );
+  const canReadNodeForActiveRole = useCallback(
+    (nodeId: string | null | undefined) => canRoleReadNode(activeAccessRole, nodeId, nodeById),
+    [activeAccessRole, nodeById]
+  );
+  const canWriteNodeForActiveRole = useCallback(
+    (nodeId: string | null | undefined) => canRoleWriteNode(activeAccessRole, nodeId, nodeById),
+    [activeAccessRole, nodeById]
+  );
+  const canManageNodeForActiveRole = useCallback(
+    (nodeId: string | null | undefined) => canRoleManageNode(activeAccessRole, nodeId, nodeById),
+    [activeAccessRole, nodeById]
+  );
+  const currentUserCanEditAccessPolicy = currentUserAccount?.isAdmin === true;
+  const canOpenAccessPolicyForCurrentUser = useCallback(
+    (nodeId: string | null | undefined) => {
+      if (!nodeId) return false;
+      return currentUserCanEditAccessPolicy || canReadNodeForActiveRole(nodeId);
+    },
+    [canReadNodeForActiveRole, currentUserCanEditAccessPolicy]
+  );
+  const ensureNodeAccessAllowed = useCallback(
+    (
+      nodeIds: Array<string | null | undefined>,
+      permission: NodeAccessPermission = "write"
+    ) => {
+      const accessCheck =
+        permission === "read"
+          ? canReadNodeForActiveRole
+          : permission === "manage"
+            ? canManageNodeForActiveRole
+            : canWriteNodeForActiveRole;
+      const errorKey =
+        permission === "read"
+          ? "access_control.blocked_read_notice"
+          : permission === "manage"
+            ? "access_control.blocked_manage_notice"
+            : "access_control.blocked_write_notice";
+
+      for (const nodeId of nodeIds) {
+        if (accessCheck(nodeId)) continue;
+        const node = resolveNodeForAccess(nodeId);
+        setProjectNotice(null);
+        setProjectError(
+          t(errorKey, {
+            role: activeAccessRole,
+            name: node?.name ?? "this item"
+          })
+        );
+        return false;
+      }
+      return true;
+    },
+    [
+      activeAccessRole,
+      canManageNodeForActiveRole,
+      canReadNodeForActiveRole,
+      canWriteNodeForActiveRole,
+      resolveNodeForAccess,
+      t
+    ]
+  );
+  useEffect(() => {
+    if (!mindMapReviewNodeId) return;
+    if (canReadNodeForActiveRole(mindMapReviewNodeId)) return;
+    setMindMapReviewNodeId(null);
+  }, [canReadNodeForActiveRole, mindMapReviewNodeId]);
   const reorderFooterQuickApps = useCallback(
     async (nextQuickApps: NodeQuickAppItem[]) => {
       const node = footerQuickAppTargetNode;
       if (!node) return;
+      if (!ensureNodeAccessAllowed([node.id], "write")) return;
 
       const normalizedQuickApps = normalizeNodeQuickApps(nextQuickApps);
       const currentQuickApps = getNodeQuickApps(node);
@@ -5692,16 +7103,19 @@ export default function App() {
   const ensureStructureMutationAllowed = useCallback(
     (
       nodeIds: Array<string | null | undefined>,
-      options?: { scope?: WorkspaceStructureMutationScope }
+      options?: { scope?: WorkspaceStructureMutationScope; requiredPermission?: NodeAccessPermission }
     ) => {
+      if (!ensureNodeAccessAllowed(nodeIds, options?.requiredPermission ?? "write")) {
+        return false;
+      }
       const resolveNodeMutationScope = (nodeId: string | null | undefined): WorkspaceStructureMutationScope => {
-        const node =
-          nodeId
-            ? nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null
-            : null;
+        const node = resolveNodeForAccess(nodeId);
         if (getExecutionTaskMeta(node)) return "workarea";
         if (isWorkareaItemNode(node)) return "workarea";
         if (isFileLikeNode(node)) return "content";
+        if (node && (isDocumentationWorkspaceRootNode(node) || documentationScopedNodeIds?.has(node.id))) {
+          return "content";
+        }
         return options?.scope ?? "organization";
       };
 
@@ -5719,7 +7133,14 @@ export default function App() {
       }
       return true;
     },
-    [activeProjectRootId, getStructureLockOwner, nodeById, store.allNodes, t]
+    [
+      activeProjectRootId,
+      documentationScopedNodeIds,
+      ensureNodeAccessAllowed,
+      getStructureLockOwner,
+      resolveNodeForAccess,
+      t
+    ]
   );
   const setNodeStructureLocked = useCallback(
     async (nodeId: string, locked: boolean) => {
@@ -5731,6 +7152,7 @@ export default function App() {
         locked && activeProjectRootId
           ? nodeById.get(activeProjectRootId) ?? node
           : node;
+      if (!ensureNodeAccessAllowed([targetNode.id], "manage")) return;
       const nextProperties = applyNodeStructureLock(
         targetNode.properties as Record<string, unknown> | undefined,
         locked
@@ -5747,8 +7169,84 @@ export default function App() {
           : t("structure_lock.unlocked_notice", { name: targetNode.name })
       );
     },
-    [activeProjectRootId, nodeById, store, t]
+    [activeProjectRootId, ensureNodeAccessAllowed, nodeById, store, t]
   );
+  const openNodeAccessPolicyEditor = useCallback(
+    (nodeId: string) => {
+      const node = resolveNodeForAccess(nodeId);
+      if (!node) return;
+      if (!canOpenAccessPolicyForCurrentUser(node.id)) return;
+      const explicitPolicy = readExplicitNodeAccessPolicy(node);
+      const resolvedPolicy = resolveNodeAccessPolicy(node.id, nodeById);
+      setAccessPolicyDraft({
+        readMode: explicitPolicy?.readRoles !== undefined ? "custom" : "inherit",
+        readRoles: explicitPolicy?.readRoles ?? resolvedPolicy.readRoles,
+        writeMode: explicitPolicy?.writeRoles !== undefined ? "custom" : "inherit",
+        writeRoles: explicitPolicy?.writeRoles ?? resolvedPolicy.writeRoles,
+        manageMode: explicitPolicy?.manageRoles !== undefined ? "custom" : "inherit",
+        manageRoles: explicitPolicy?.manageRoles ?? resolvedPolicy.manageRoles
+      });
+      setAccessPolicyEditorNodeId(node.id);
+      setProjectError(null);
+    },
+    [canOpenAccessPolicyForCurrentUser, nodeById, resolveNodeForAccess]
+  );
+  const closeNodeAccessPolicyEditor = useCallback(() => {
+    if (accessPolicySaving) return;
+    setAccessPolicyEditorNodeId(null);
+    setAccessPolicyDraft(null);
+  }, [accessPolicySaving]);
+  const saveNodeAccessPolicy = useCallback(async () => {
+    if (!accessPolicyEditorNodeId || !accessPolicyDraft) return;
+    const node = resolveNodeForAccess(accessPolicyEditorNodeId);
+    if (!node) return;
+    if (!currentUserCanEditAccessPolicy) {
+      setProjectNotice(null);
+      setProjectError("Only Administrator accounts can edit access policy.");
+      return;
+    }
+    if (accessPolicyDraft.manageMode === "custom" && accessPolicyDraft.manageRoles.length === 0) {
+      setProjectNotice(null);
+      setProjectError("Choose at least one manage role or inherit from the parent policy.");
+      return;
+    }
+
+    const nextPolicy: ExplicitNodeAccessPolicy = {};
+    if (accessPolicyDraft.readMode === "custom") {
+      nextPolicy.readRoles = accessPolicyDraft.readRoles;
+    }
+    if (accessPolicyDraft.writeMode === "custom") {
+      nextPolicy.writeRoles = accessPolicyDraft.writeRoles;
+    }
+    if (accessPolicyDraft.manageMode === "custom") {
+      nextPolicy.manageRoles = accessPolicyDraft.manageRoles;
+    }
+
+    setAccessPolicySaving(true);
+    try {
+      const nextProperties = applyNodeAccessPolicy(
+        node.properties as Record<string, unknown> | undefined,
+        nextPolicy
+      );
+      await updateNodeProperties(node.id, nextProperties);
+      store.patchNode(node.id, {
+        properties: Object.keys(nextProperties).length > 0 ? nextProperties : undefined,
+        updatedAt: Date.now()
+      });
+      setAccessPolicyEditorNodeId(null);
+      setAccessPolicyDraft(null);
+      setProjectError(null);
+      setProjectNotice(`Access policy saved for "${node.name}".`);
+    } finally {
+      setAccessPolicySaving(false);
+    }
+  }, [
+    accessPolicyDraft,
+    accessPolicyEditorNodeId,
+    currentUserCanEditAccessPolicy,
+    resolveNodeForAccess,
+    store
+  ]);
   const getNodeTypeDisplayLabel = useCallback(
     (node: AppNode): string => {
       if (isWorkareaItemNode(node)) {
@@ -5928,15 +7426,27 @@ export default function App() {
   const scopedNumbering = useMemo(
     () =>
       buildScopedNumbering({
-        activeProjectRootId,
+        activeProjectRootId: activeWorkspaceRootId,
         numbering,
         nodeById,
         byParent,
         workspaceRootNumberingEnabled,
+        numberingMode: documentationModeActive ? "tree_headings" : "legacy",
         consumesTreeNumbering: (node) =>
-          !isFileLikeNode(node) && !isHiddenExecutionTaskNode(node)
+          !isFileLikeNode(node) &&
+          !isHiddenExecutionTaskNode(node) &&
+          !isDocumentationWorkspaceRootNode(node) &&
+          !shouldHideDocumentationNodeInOrganizationView(node)
       }),
-    [activeProjectRootId, numbering, nodeById, byParent, workspaceRootNumberingEnabled]
+    [
+      activeWorkspaceRootId,
+      byParent,
+      documentationModeActive,
+      nodeById,
+      numbering,
+      shouldHideDocumentationNodeInOrganizationView,
+      workspaceRootNumberingEnabled
+    ]
   );
   const tooltipEditorNode = useMemo(
     () => (tooltipEditorNodeId ? nodeById.get(tooltipEditorNodeId) ?? null : null),
@@ -5961,10 +7471,21 @@ export default function App() {
     () => (quickAppsModalNodeId ? nodeById.get(quickAppsModalNodeId) ?? null : null),
     [nodeById, quickAppsModalNodeId]
   );
+  const accessPolicyEditorNode = useMemo(
+    () => (accessPolicyEditorNodeId ? nodeById.get(accessPolicyEditorNodeId) ?? null : null),
+    [accessPolicyEditorNodeId, nodeById]
+  );
+  const accessPolicyEditorResolvedPolicy = useMemo(
+    () =>
+      accessPolicyEditorNode ? resolveNodeAccessPolicy(accessPolicyEditorNode.id, nodeById) : null,
+    [accessPolicyEditorNode, nodeById]
+  );
+  const accessPolicyEditorCanEdit = currentUserCanEditAccessPolicy;
   const openNodeQuickAppsModal = useCallback(
     (nodeId: string) => {
       const node = nodeById.get(nodeId) ?? null;
       if (!node) return;
+      if (!ensureNodeAccessAllowed([node.id], "write")) return;
       const nextQuickApps = getNodeQuickApps(node);
       setQuickAppsModalNodeId(node.id);
       setQuickAppsDraftItems(
@@ -5975,7 +7496,7 @@ export default function App() {
           : [createNodeQuickAppItem()]
       );
     },
-    [nodeById]
+    [ensureNodeAccessAllowed, nodeById]
   );
   const closeNodeQuickAppsModal = useCallback(() => {
     if (quickAppsSaving) return;
@@ -5994,6 +7515,23 @@ export default function App() {
     setQuickAppsModalNodeId(null);
     setQuickAppsDraftItems([]);
   }, [quickAppsModalNode, quickAppsModalNodeId, quickAppsSaving]);
+  useEffect(() => {
+    if (!quickAppsModalNodeId || !quickAppsModalNode) return;
+    if (canWriteNodeForActiveRole(quickAppsModalNode.id)) return;
+    setQuickAppsModalNodeId(null);
+    setQuickAppsDraftItems([]);
+  }, [canWriteNodeForActiveRole, quickAppsModalNode, quickAppsModalNodeId]);
+  useEffect(() => {
+    if (!accessPolicyEditorNodeId || accessPolicyEditorNode || accessPolicySaving) return;
+    setAccessPolicyEditorNodeId(null);
+    setAccessPolicyDraft(null);
+  }, [accessPolicyEditorNode, accessPolicyEditorNodeId, accessPolicySaving]);
+  useEffect(() => {
+    if (!accessPolicyEditorNodeId || !accessPolicyEditorNode) return;
+    if (canOpenAccessPolicyForCurrentUser(accessPolicyEditorNode.id)) return;
+    setAccessPolicyEditorNodeId(null);
+    setAccessPolicyDraft(null);
+  }, [accessPolicyEditorNode, accessPolicyEditorNodeId, canOpenAccessPolicyForCurrentUser]);
 
   const tooltipQuickEditTargetNode = useMemo(() => {
     const resolveEditableNode = (node: AppNode | null): AppNode | null => {
@@ -6001,7 +7539,7 @@ export default function App() {
 
       if (isFileLikeNode(node)) {
         const parentId =
-          node.parentId && node.parentId !== ROOT_PARENT_ID ? node.parentId : activeProjectRootId ?? null;
+          node.parentId && node.parentId !== ROOT_PARENT_ID ? node.parentId : activeWorkspaceRootId ?? null;
         if (!parentId) return null;
         if (projectScopedNodeIds && !projectScopedNodeIds.has(parentId)) return null;
         const parentNode = nodeById.get(parentId) ?? null;
@@ -6015,14 +7553,14 @@ export default function App() {
     const currentFolderNode =
       store.currentFolderId ? nodeById.get(store.currentFolderId) ?? null : null;
     const activeProjectRootNode =
-      activeProjectRootId ? nodeById.get(activeProjectRootId) ?? null : null;
+      activeWorkspaceRootId ? nodeById.get(activeWorkspaceRootId) ?? null : null;
 
     return (
       resolveEditableNode(selectedNode) ??
       resolveEditableNode(currentFolderNode) ??
       resolveEditableNode(activeProjectRootNode)
     );
-  }, [activeProjectRootId, nodeById, projectScopedNodeIds, selectedNode, store.currentFolderId]);
+  }, [activeWorkspaceRootId, nodeById, projectScopedNodeIds, selectedNode, store.currentFolderId]);
 
   const openQuickEditNodeDescription = useCallback(() => {
     if (!tooltipQuickEditTargetNode) return;
@@ -6037,15 +7575,34 @@ export default function App() {
     [nodeById, store.allNodes]
   );
 
+  const resolveProjectForNodeId = useCallback(
+    (nodeId: string, preferredProjectId?: string | null): ProjectSummary | null => {
+      const node = resolveCachedNodeById(nodeId);
+      if (!node) return null;
+
+      const ancestryIds = new Set<string>([node.id, ...collectAncestorNodeIds(node.id, nodeById)]);
+      const normalizedPreferredProjectId = preferredProjectId?.trim() || null;
+      if (normalizedPreferredProjectId) {
+        const preferredProject = projects.find((project) => project.id === normalizedPreferredProjectId) ?? null;
+        if (preferredProject && ancestryIds.has(preferredProject.rootNodeId)) {
+          return preferredProject;
+        }
+      }
+
+      return projects.find((project) => ancestryIds.has(project.rootNodeId)) ?? null;
+    },
+    [nodeById, projects, resolveCachedNodeById]
+  );
+
   const resolveNavigableFolderIdFromNode = useCallback(
     (node: AppNode | null): string | null => {
       if (!node) return null;
       if (isFileLikeNode(node)) {
-        return node.parentId && node.parentId !== ROOT_PARENT_ID ? node.parentId : activeProjectRootId ?? null;
+        return node.parentId && node.parentId !== ROOT_PARENT_ID ? node.parentId : activeWorkspaceRootId ?? null;
       }
       return node.id;
     },
-    [activeProjectRootId]
+    [activeWorkspaceRootId]
   );
 
   const resolveNodeByIdWithFallback = useCallback(
@@ -6086,13 +7643,13 @@ export default function App() {
         appendNodeAndAncestors(nodeId);
       }
 
-      if (activeProjectRootId && !seenIds.has(activeProjectRootId)) {
-        orderedIds.push(activeProjectRootId);
+      if (activeWorkspaceRootId && !seenIds.has(activeWorkspaceRootId)) {
+        orderedIds.push(activeWorkspaceRootId);
       }
 
       return orderedIds;
     },
-    [activeProjectRootId, resolveCachedNodeById, resolveNavigableFolderIdFromNode]
+    [activeWorkspaceRootId, resolveCachedNodeById, resolveNavigableFolderIdFromNode]
   );
 
   const resolveExistingFolderRestoreId = useCallback(
@@ -6107,13 +7664,13 @@ export default function App() {
         if (navigableFolderId) {
           return navigableFolderId;
         }
-        if (candidateId && candidateId === activeProjectRootId) {
-          return activeProjectRootId;
+        if (candidateId && candidateId === activeWorkspaceRootId) {
+          return activeWorkspaceRootId;
         }
       }
-      return activeProjectRootId ?? null;
+      return activeWorkspaceRootId ?? null;
     },
-    [activeProjectRootId, buildFolderRestoreCandidateIds, resolveNavigableFolderIdFromNode, resolveNodeByIdWithFallback]
+    [activeWorkspaceRootId, buildFolderRestoreCandidateIds, resolveNavigableFolderIdFromNode, resolveNodeByIdWithFallback]
   );
 
   const resolveMutationTargetNode = useCallback(
@@ -6191,7 +7748,7 @@ export default function App() {
       isFavoriteNode: isNodeFavorite,
       primaryOrderById: scopedNumbering,
       fallbackOrderById: numbering
-    });
+    }).filter((node) => !isDocumentationWorkspaceRootNode(node) && !isProcedureInlineAssetNode(node));
   }, [store.allNodes, projectScopedNodeIds, scopedNumbering, numbering]);
 
   const favoriteNodes = useMemo(() => {
@@ -6220,13 +7777,40 @@ export default function App() {
   }, [favoriteGroups.length, favoriteNodes]);
 
   useEffect(() => {
-    if (!activeProjectRootId) return;
-    if (!nodeById.has(activeProjectRootId)) return;
+    if (!activeWorkspaceRootId) return;
+    if (!nodeById.has(activeWorkspaceRootId)) return;
     const currentFolderId = store.currentFolderId;
     if (currentFolderId && projectScopedNodeIds?.has(currentFolderId)) return;
-    void store.navigateTo(activeProjectRootId);
-    store.setSelectedNodeId(activeProjectRootId);
-  }, [activeProjectRootId, nodeById, projectScopedNodeIds, store.currentFolderId, store.navigateTo, store.setSelectedNodeId]);
+    void store.navigateTo(activeWorkspaceRootId);
+    store.setSelectedNodeId(activeWorkspaceDefaultSelectionId ?? activeWorkspaceRootId);
+  }, [
+    activeWorkspaceDefaultSelectionId,
+    activeWorkspaceRootId,
+    nodeById,
+    projectScopedNodeIds,
+    store.currentFolderId,
+    store.navigateTo,
+    store.setSelectedNodeId
+  ]);
+
+  useEffect(() => {
+    if (!documentationWorkspaceRootId) return;
+    if (!documentationModeActive) return;
+    if (!projectScopedNodeIds) return;
+    if (store.selectedNodeId && store.selectedNodeId !== documentationWorkspaceRootId && projectScopedNodeIds.has(store.selectedNodeId)) {
+      return;
+    }
+    const nextSelectionId = activeWorkspaceDefaultSelectionId ?? documentationWorkspaceRootId;
+    if (!nextSelectionId || nextSelectionId === store.selectedNodeId) return;
+    store.setSelectedNodeId(nextSelectionId);
+  }, [
+    activeWorkspaceDefaultSelectionId,
+    documentationModeActive,
+    documentationWorkspaceRootId,
+    projectScopedNodeIds,
+    store.selectedNodeId,
+    store.setSelectedNodeId
+  ]);
 
   const effectiveTimelineScheduleByNodeId = useMemo(() => {
     return buildEffectiveTimelineScheduleMap<NodeTimelineSchedule>({
@@ -6304,6 +7888,7 @@ export default function App() {
     () => (scheduleModalNodeId ? nodeById.get(scheduleModalNodeId) ?? null : null),
     [scheduleModalNodeId, nodeById]
   );
+  const scheduleModalCanEdit = scheduleModalNode ? canWriteNodeForActiveRole(scheduleModalNode.id) : false;
 
   useEffect(() => {
     if (!scheduleModalNodeId) return;
@@ -6312,6 +7897,12 @@ export default function App() {
       setScheduleModalNodeId(null);
     }
   }, [scheduleModalNodeId, nodeById]);
+  useEffect(() => {
+    if (!scheduleModalNodeId) return;
+    if (canReadNodeForActiveRole(scheduleModalNodeId)) return;
+    setScheduleModalOpen(false);
+    setScheduleModalNodeId(null);
+  }, [canReadNodeForActiveRole, scheduleModalNodeId]);
 
   const searchFocusMode = deriveWorkspaceFocusMode(activeNodeStateFilters);
   const searchUsesNodeStateScope =
@@ -6328,7 +7919,7 @@ export default function App() {
         activeNodeStateFilters,
         filterFolderNodeStateById,
         doesNodeMatchNodeStateFilters
-      }),
+      }).filter((result) => !isDocumentationWorkspaceRootNode(result.node) && !isProcedureInlineAssetNode(result.node)),
     [
       store.searchQuery,
       store.searchResults,
@@ -6548,6 +8139,29 @@ export default function App() {
 
   const currentWorkspaceFocusModeForRows = deriveWorkspaceFocusMode(activeNodeStateFilters);
   const currentTimelineModeForRows = resolveTimelineMode(currentWorkspaceFocusModeForRows);
+  const normalizeDocumentationTreeRows = useCallback(
+    (rows: TreeRow[]): TreeRow[] => {
+      if (!documentationWorkspaceRootId || !documentationModeActive) return rows;
+      const hasRootRow = rows.some((row) => row.id === documentationWorkspaceRootId);
+      if (!hasRootRow) return rows.filter((row) => row.id !== documentationWorkspaceRootId);
+      return rows
+        .filter((row) => row.id !== documentationWorkspaceRootId)
+        .map((row) => ({
+          ...row,
+          level: Math.max(0, row.level - 1)
+        }));
+    },
+    [documentationModeActive, documentationWorkspaceRootId]
+  );
+  const hideWorkspaceContainerRow = useMemo(
+    () =>
+      Boolean(
+        activeWorkspaceRootId &&
+          !documentationModeActive &&
+          (currentWorkspaceFocusModeForRows === "structure" || currentWorkspaceFocusModeForRows === "execution")
+      ),
+    [activeWorkspaceRootId, currentWorkspaceFocusModeForRows, documentationModeActive]
+  );
 
   const treeRows = useMemo(() => {
     const rows: TreeRow[] = [];
@@ -6557,10 +8171,16 @@ export default function App() {
       if (isFileLikeNode(node)) {
         return true;
       }
+      if (isWorkareaRootNode(node)) {
+        return true;
+      }
       if (isHiddenExecutionTaskNode(node)) {
         return true;
       }
       if (isWorkareaItemNode(node) && currentWorkspaceFocusModeForRows !== "execution") {
+        return true;
+      }
+      if (shouldHideDocumentationNodeInOrganizationView(node)) {
         return true;
       }
       return false;
@@ -6586,21 +8206,25 @@ export default function App() {
       }
     };
 
-    if (activeProjectRootId) {
-      const rootNode = nodeById.get(activeProjectRootId);
+    if (activeWorkspaceRootId) {
+      const rootNode = nodeById.get(activeWorkspaceRootId);
       if (!rootNode) return rows;
       const rootHasChildren = splitTreeChildrenForDisplay(byParent.get(rootNode.id) ?? []).some(
         (child) => !shouldHideTreeRowNode(child)
       );
-      rows.push({
-        id: rootNode.id,
-        node: rootNode,
-        level: 0,
-        indexLabel: scopedNumbering.get(rootNode.id) ?? "",
-        hasChildren: rootHasChildren
-      });
+      const hideScopeRootRow =
+        (documentationModeActive && documentationWorkspaceRootId === rootNode.id) || hideWorkspaceContainerRow;
+      if (!hideScopeRootRow) {
+        rows.push({
+          id: rootNode.id,
+          node: rootNode,
+          level: 0,
+          indexLabel: scopedNumbering.get(rootNode.id) ?? "",
+          hasChildren: rootHasChildren
+        });
+      }
       if (rootHasChildren && expandedIds.has(rootNode.id)) {
-        visit(rootNode.id, 1);
+        visit(rootNode.id, hideScopeRootRow ? 0 : 1);
       }
       return rows;
     }
@@ -6608,17 +8232,21 @@ export default function App() {
     visit(ROOT_PARENT_ID, 0);
     return rows;
   }, [
-    activeProjectRootId,
+    activeWorkspaceRootId,
     byParent,
     currentWorkspaceFocusModeForRows,
+    documentationModeActive,
+    documentationWorkspaceRootId,
     expandedIds,
+    hideWorkspaceContainerRow,
     nodeById,
-    scopedNumbering
+    scopedNumbering,
+    shouldHideDocumentationNodeInOrganizationView
   ]);
 
   const timelineRows = useMemo(() => {
     return buildTimelineTreeRows({
-      activeProjectRootId,
+      activeProjectRootId: activeWorkspaceRootId,
       nodeById,
       byParent,
       expandedIds,
@@ -6626,16 +8254,21 @@ export default function App() {
       isHiddenExecutionTaskNode,
       isRenderableExecutionProjectionNode,
       shouldHideNode: (node) =>
-        isFileLikeNode(node) || (isWorkareaItemNode(node) && currentTimelineModeForRows !== "tasks")
+        isFileLikeNode(node) ||
+        isWorkareaRootNode(node) ||
+        (isWorkareaItemNode(node) && currentTimelineModeForRows !== "tasks") ||
+        shouldHideDocumentationNodeInOrganizationView(node),
+      shouldFlattenNode: (node) => isWorkareaRootNode(node)
     });
   }, [
-    activeProjectRootId,
+    activeWorkspaceRootId,
     byParent,
     expandedIds,
     nodeById,
     scopedNumbering,
     currentTimelineModeForRows,
-    isRenderableExecutionProjectionNode
+    isRenderableExecutionProjectionNode,
+    shouldHideDocumentationNodeInOrganizationView
   ]);
   const timelineVisibleRowIdSet = useMemo(
     () => new Set(timelineRows.map((row) => row.id)),
@@ -6792,6 +8425,9 @@ export default function App() {
     const appendNode = (nodeId: string, level: number) => {
       if (lines.length >= limit) return;
       if (visited.has(nodeId)) return;
+      if (!documentationModeActive && documentationScopedNodeIds?.has(nodeId) && nodeId !== activeProjectRootId) {
+        return;
+      }
       visited.add(nodeId);
       const node = nodeById.get(nodeId);
       if (
@@ -6831,12 +8467,13 @@ export default function App() {
         appendNode(child.id, level + 1);
       }
     };
-    if (activeProjectRootId) {
-      appendNode(activeProjectRootId, 0);
+    if (activeWorkspaceRootId) {
+      appendNode(activeWorkspaceRootId, 0);
     } else {
       const roots = byParent.get(ROOT_PARENT_ID) ?? [];
       for (const root of roots) {
         if (isFileLikeNode(root)) continue;
+        if (shouldHideDocumentationNodeInOrganizationView(root)) continue;
         appendNode(root.id, 0);
       }
     }
@@ -6846,18 +8483,53 @@ export default function App() {
     return lines.join("\n");
   }, [
     activeProjectRootId,
+    activeWorkspaceRootId,
     byParent,
     currentWorkspaceFocusModeForRows,
+    documentationModeActive,
+    documentationScopedNodeIds,
     folderNodeStateById,
     nodeById,
     numbering,
-    scopedNumbering
+    scopedNumbering,
+    shouldHideDocumentationNodeInOrganizationView
   ]);
 
   const hasActiveNodeStateFiltering =
     activeNodeStateFilters.size > 0 && !areAllNodeStateFiltersSelected(activeNodeStateFilters);
   const workspaceFocusMode = currentWorkspaceFocusModeForRows;
   const timelineMode = resolveTimelineMode(workspaceFocusMode);
+  const executionVisibleBrowseNodeId = useMemo(() => {
+    if (workspaceMode !== "grid" || workspaceFocusMode !== "execution") {
+      return null;
+    }
+    const currentFolderNode =
+      store.currentFolderId
+        ? nodeById.get(store.currentFolderId) ?? store.allNodes.find((node) => node.id === store.currentFolderId) ?? null
+        : null;
+    const fallbackExecutionNodeId =
+      currentFolderNode &&
+      (isWorkareaRootNode(currentFolderNode) ||
+        isWorkareaItemNode(currentFolderNode) ||
+        Boolean(getExecutionTaskMeta(currentFolderNode)))
+        ? currentFolderNode.id
+        : null;
+    return resolveVisibleWorkareaBrowseNodeId(executionBrowseNodeId ?? fallbackExecutionNodeId);
+  }, [
+    executionBrowseNodeId,
+    getExecutionTaskMeta,
+    nodeById,
+    resolveVisibleWorkareaBrowseNodeId,
+    store.allNodes,
+    store.currentFolderId,
+    workspaceFocusMode,
+    workspaceMode
+  ]);
+  useEffect(() => {
+    if (workspaceMode !== "grid" || workspaceFocusMode !== "execution") return;
+    if (!executionVisibleBrowseNodeId || executionVisibleBrowseNodeId === executionBrowseNodeId) return;
+    setExecutionBrowseNodeId(executionVisibleBrowseNodeId);
+  }, [executionBrowseNodeId, executionVisibleBrowseNodeId, workspaceFocusMode, workspaceMode]);
   useEffect(() => {
     if (workspaceFocusMode !== "data") return;
     setActiveNodeStateFilters(createAllNodeStateFilters());
@@ -6889,7 +8561,6 @@ export default function App() {
     if (workareaAvailable || workspaceFocusMode !== "execution") return;
     setExecutionQuickOpenDeliverableId(null);
     setContextMenu((current) => (current?.workareaMode ? null : current));
-    setActiveNodeStateFilters(createAllNodeStateFilters());
   }, [workareaAvailable, workspaceFocusMode]);
   const executionOwnerNodeIds = useMemo(() => {
     const ownerIds = collectExecutionOwnerNodeIds({
@@ -6903,22 +8574,32 @@ export default function App() {
   }, [getExecutionTaskMeta, isRenderableExecutionProjectionNode, projectScopedNodeIds, store.allNodes, workareaOwnerNodeIds]);
   const desktopWorkareaOwnerNodeId = useMemo(() => {
     if (workspaceMode !== "grid" || workspaceFocusMode !== "execution") return null;
-    const selectedNodeId = store.selectedNodeId ?? null;
-    if (selectedNodeId) {
-      const ownerNodeId = resolveWorkareaOwnerNodeId(selectedNodeId);
+    if (executionVisibleBrowseNodeId) {
+      const ownerNodeId = resolveWorkareaOwnerNodeId(executionVisibleBrowseNodeId);
       if (ownerNodeId) return ownerNodeId;
     }
-    const currentFolderId = store.currentFolderId ?? null;
-    if (currentFolderId) {
-      const ownerNodeId = resolveWorkareaOwnerNodeId(currentFolderId);
+    const currentFolderNode =
+      store.currentFolderId
+        ? nodeById.get(store.currentFolderId) ?? store.allNodes.find((node) => node.id === store.currentFolderId) ?? null
+        : null;
+    if (
+      currentFolderNode &&
+      (isWorkareaRootNode(currentFolderNode) ||
+        isWorkareaItemNode(currentFolderNode) ||
+        Boolean(getExecutionTaskMeta(currentFolderNode)))
+    ) {
+      const ownerNodeId = resolveWorkareaOwnerNodeId(currentFolderNode.id);
       if (ownerNodeId) return ownerNodeId;
     }
     return Array.from(workareaOwnerNodeIds)[0] ?? null;
   }, [
+    executionVisibleBrowseNodeId,
+    getExecutionTaskMeta,
+    nodeById,
     resolveWorkareaOwnerNodeId,
+    store.allNodes,
     workareaOwnerNodeIds,
     store.currentFolderId,
-    store.selectedNodeId,
     workspaceFocusMode,
     workspaceMode
   ]);
@@ -6929,17 +8610,23 @@ export default function App() {
   const desktopWorkareaScopeNodeIds = useMemo(() => {
     if (!desktopWorkareaOwnerNodeId) return null;
     const next = new Set<string>([desktopWorkareaOwnerNodeId]);
-    const stack = [...((byParent.get(desktopWorkareaOwnerNodeId) ?? []).filter((child) => isWorkareaItemNode(child)))];
+    const ownerNode = nodeById.get(desktopWorkareaOwnerNodeId) ?? null;
+    const stack = [
+      ...getVisibleWorkareaChildNodes({
+        parentNode: ownerNode,
+        byParent
+      })
+    ];
     while (stack.length > 0) {
       const current = stack.pop();
       if (!current || next.has(current.id)) continue;
       next.add(current.id);
-      for (const child of (byParent.get(current.id) ?? []).filter((candidate) => isWorkareaItemNode(candidate))) {
+      for (const child of getVisibleWorkareaChildNodes({ parentNode: current, byParent })) {
         stack.push(child);
       }
     }
     return next;
-  }, [byParent, desktopWorkareaOwnerNodeId]);
+  }, [byParent, desktopWorkareaOwnerNodeId, nodeById]);
   const desktopWorkareaOwnerOptions = useMemo(() => {
     return Array.from(workareaOwnerNodeIds)
       .map((nodeId) => nodeById.get(nodeId) ?? null)
@@ -6985,9 +8672,10 @@ export default function App() {
       hasChildren: boolean;
     }> = [];
     const visitNode = (node: AppNode, level: number) => {
-      const children = (byParent.get(node.id) ?? []).filter(
-        (child) => !isHiddenExecutionTaskNode(child) && isWorkareaItemNode(child)
-      );
+      const children = getVisibleWorkareaChildNodes({
+        parentNode: node,
+        byParent
+      }).filter((child) => !isHiddenExecutionTaskNode(child));
       rows.push({
         id: node.id,
         node,
@@ -7000,15 +8688,27 @@ export default function App() {
         visitNode(child, level + 1);
       }
     };
+    const hideOwnerRow = activeWorkspaceRootId !== null && desktopWorkareaOwnerNode.id === activeWorkspaceRootId;
+    if (hideOwnerRow) {
+      const children = getVisibleWorkareaChildNodes({
+        parentNode: desktopWorkareaOwnerNode,
+        byParent
+      }).filter((child) => !isHiddenExecutionTaskNode(child));
+      for (const child of children) {
+        visitNode(child, 0);
+      }
+      return rows;
+    }
     visitNode(desktopWorkareaOwnerNode, 0);
     return rows;
-  }, [byParent, desktopWorkareaOwnerNode, expandedIds, isHiddenExecutionTaskNode, scopedNumbering]);
+  }, [activeWorkspaceRootId, byParent, desktopWorkareaOwnerNode, expandedIds, isHiddenExecutionTaskNode, scopedNumbering]);
   const desktopWorkareaScopedGridNodes = useMemo(() => {
     if (!desktopWorkareaBrowseNodeId) return [] as AppNode[];
-    return (byParent.get(desktopWorkareaBrowseNodeId) ?? []).filter(
-      (node) => !isHiddenExecutionTaskNode(node) && isWorkareaItemNode(node)
-    );
-  }, [byParent, desktopWorkareaBrowseNodeId, isHiddenExecutionTaskNode]);
+    return getVisibleWorkareaChildNodes({
+      parentNode: nodeById.get(desktopWorkareaBrowseNodeId) ?? null,
+      byParent
+    }).filter((node) => !isHiddenExecutionTaskNode(node));
+  }, [byParent, desktopWorkareaBrowseNodeId, isHiddenExecutionTaskNode, nodeById]);
   const desktopSidebarSearchResults = useMemo(() => {
     if (workspaceMode !== "grid" || workspaceFocusMode !== "execution") {
       return searchResults.filter((result) => !isFileLikeNode(result.node));
@@ -7022,6 +8722,7 @@ export default function App() {
     if (!hasActiveFavoriteGroupTreeFiltering) return [] as AppNode[];
     return favoriteNodes.filter((node) => {
       if (isFileLikeNode(node)) return false;
+      if (isDocumentationWorkspaceRootNode(node)) return false;
       if (isHiddenExecutionTaskNode(node)) return false;
       if (isWorkareaItemNode(node) && workspaceFocusMode !== "execution") return false;
       if (!treeUsesNodeStateFiltering) return true;
@@ -7115,7 +8816,7 @@ export default function App() {
       isRenderableExecutionProjectionNode,
       prioritizeFlaggedTimelineTasks,
       isTimelineNodeFlagged
-    });
+    }).filter((result) => !isDocumentationWorkspaceRootNode(result.node));
   }, [
     store.searchQuery,
     store.allNodes,
@@ -7162,13 +8863,16 @@ export default function App() {
   );
   const displayedTreeRows = useMemo(() => {
     const rows = (() => {
+    if (desktopViewMode === "library") {
+      return libraryTreeRows;
+    }
     if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
       return desktopWorkareaScopedTreeRows;
     }
     if (hasActiveFavoriteGroupTreeFiltering) return favoriteGroupDisplayRows;
     if (!treeUsesNodeStateFiltering) return treeRows;
     return buildFilteredWorkspaceTreeRows({
-      activeProjectRootId,
+      activeProjectRootId: activeWorkspaceRootId,
       nodeById,
       byParent,
       matchesNodeState: (node) =>
@@ -7185,14 +8889,17 @@ export default function App() {
       scopedNumbering,
       isHiddenExecutionTaskNode,
       shouldHideNode: (node) =>
-        isWorkareaItemNode(node) && workspaceFocusMode !== "execution",
-      forceTaskFilterParents
+        isWorkareaRootNode(node) ||
+        (isWorkareaItemNode(node) && workspaceFocusMode !== "execution") ||
+        shouldHideDocumentationNodeInOrganizationView(node),
+      forceTaskFilterParents,
+      hideProjectRootRow: hideWorkspaceContainerRow
     });
     })();
-    return rows.filter((row) => !isFileLikeNode(row.node));
+    return normalizeDocumentationTreeRows(rows.filter((row) => !isFileLikeNode(row.node)));
   }, [
     activeNodeStateFilters,
-    activeProjectRootId,
+    activeWorkspaceRootId,
     byParent,
     favoriteGroupDisplayRows,
     filterFolderNodeStateById,
@@ -7201,11 +8908,16 @@ export default function App() {
     includeNodeStateFilterParents,
     forceTaskFilterParents,
     executionOwnerNodeIds,
+    hideWorkspaceContainerRow,
+    libraryTreeRows,
     nodeById,
+    normalizeDocumentationTreeRows,
     scopedNumbering,
+    shouldHideDocumentationNodeInOrganizationView,
     treeRows,
     desktopWorkareaOwnerNode,
     desktopWorkareaScopedTreeRows,
+    desktopViewMode,
     workspaceMode,
     workspaceFocusMode
   ]);
@@ -7226,7 +8938,7 @@ export default function App() {
       ? new Set(timelineSearchResults.map((result) => result.node.id))
       : null;
 
-    return buildDisplayedTimelineRows({
+    const rows = buildDisplayedTimelineRows({
       timelineMode,
       hasTimelineTaskSearch,
       matchedTimelineSearchNodeIds,
@@ -7237,7 +8949,7 @@ export default function App() {
       prioritizeFlaggedTimelineTasks,
       timelineRows,
       timelineVisibleRowIdSet,
-      activeProjectRootId,
+      activeProjectRootId: activeWorkspaceRootId,
       nodeById,
       byParent,
       numbering,
@@ -7266,8 +8978,29 @@ export default function App() {
           filterFolderNodeStateById,
           executionOwnerNodeIds
         ),
-      shouldHideNode: (node) => isFileLikeNode(node) || (isWorkareaItemNode(node) && timelineMode !== "tasks")
+      shouldHideNode: (node) =>
+        isFileLikeNode(node) ||
+        isWorkareaRootNode(node) ||
+        (isWorkareaItemNode(node) && timelineMode !== "tasks") ||
+        shouldHideDocumentationNodeInOrganizationView(node),
+      shouldFlattenNode: (node) => isWorkareaRootNode(node)
     });
+
+    if (!hideWorkspaceContainerRow || !activeWorkspaceRootId) {
+      return rows;
+    }
+
+    const hasVisibleWorkspaceContainer = rows.some((row) => row.id === activeWorkspaceRootId);
+    if (!hasVisibleWorkspaceContainer) {
+      return rows;
+    }
+
+    return rows
+      .filter((row) => row.id !== activeWorkspaceRootId)
+      .map((row) => ({
+        ...row,
+        level: Math.max(0, row.level - 1)
+      }));
   }, [
     hasTimelineTaskSearch,
     timelineMode,
@@ -7294,10 +9027,11 @@ export default function App() {
     includeTimelineBranchParents,
     includeNodeStateFilterParents,
     scopedNumbering,
-    activeProjectRootId,
+    activeWorkspaceRootId,
+    hideWorkspaceContainerRow,
     isRenderableExecutionProjectionNode,
     sortTimelineNodesForDisplay,
-    timelineMode
+    shouldHideDocumentationNodeInOrganizationView
   ]);
   const canExpandAllTimelineNodes = displayedTimelineRows.some(
     (row) => row.hasChildren && !expandedIds.has(row.id)
@@ -7327,10 +9061,97 @@ export default function App() {
     return map;
   }, [displayedTimelineRows]);
 
+  const executionBreadcrumbNodes = useMemo(() => {
+    if (workspaceMode !== "grid" || workspaceFocusMode !== "execution" || !executionVisibleBrowseNodeId) {
+      return [] as AppNode[];
+    }
+    const path: AppNode[] = [];
+    const ownerNodeId = resolveWorkareaOwnerNodeId(executionVisibleBrowseNodeId);
+    let current = nodeById.get(executionVisibleBrowseNodeId) ?? null;
+    let safety = 0;
+    while (current && safety < 200) {
+      if (!isWorkareaRootNode(current)) {
+        path.unshift(current);
+      }
+      if (!current.parentId || current.parentId === ROOT_PARENT_ID || current.id === ownerNodeId) {
+        break;
+      }
+      current = nodeById.get(current.parentId) ?? null;
+      safety += 1;
+    }
+    return path;
+  }, [executionVisibleBrowseNodeId, nodeById, resolveWorkareaOwnerNodeId, workspaceFocusMode, workspaceMode]);
+
   const breadcrumbNodes = useMemo(() => {
+    const stripWorkspaceRoot = (nodes: AppNode[]) => {
+      if (!hideWorkspaceContainerRow || !activeWorkspaceRootId) return nodes;
+      return nodes.filter((node, index) => !(index === 0 && node.id === activeWorkspaceRootId));
+    };
+    if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
+      return stripWorkspaceRoot(executionBreadcrumbNodes);
+    }
     if (store.currentFolderId === null) return [];
-    return store.breadcrumbs;
-  }, [store.breadcrumbs, store.currentFolderId]);
+    return stripWorkspaceRoot(store.breadcrumbs);
+  }, [
+    activeWorkspaceRootId,
+    executionBreadcrumbNodes,
+    hideWorkspaceContainerRow,
+    store.breadcrumbs,
+    store.currentFolderId,
+    workspaceFocusMode,
+    workspaceMode
+  ]);
+  const hideDefaultProcedureRootBreadcrumb = useMemo(() => {
+    if (!documentationModeActive || !procedureRootNode) return false;
+    const normalizedName = procedureRootNode.name.trim().toLowerCase();
+    return (
+      normalizedName === DOCUMENTATION_SCOPE_DEFAULT_NAME.toLowerCase() ||
+      LEGACY_DOCUMENTATION_SCOPE_NAMES.has(normalizedName)
+    );
+  }, [documentationModeActive, procedureRootNode]);
+  const procedureBreadcrumbNodes = useMemo(() => {
+    if (!documentationModeActive || !procedureRootNode) {
+      return [] as AppNode[];
+    }
+    const targetNode = procedureSelectedNode ?? procedureRootNode;
+    const path: AppNode[] = [];
+    const visited = new Set<string>();
+    let current: AppNode | null = targetNode;
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      path.unshift(current);
+      if (current.id === procedureRootNode.id) {
+        break;
+      }
+      if (!current.parentId || current.parentId === ROOT_PARENT_ID) {
+        break;
+      }
+      current = nodeById.get(current.parentId) ?? null;
+    }
+
+    const anchoredPath =
+      path.length > 0 && path[0]?.id === procedureRootNode.id ? path : [procedureRootNode, ...path];
+    const visiblePath = hideDefaultProcedureRootBreadcrumb
+      ? anchoredPath.filter((node, index) => !(index === 0 && node.id === procedureRootNode.id))
+      : anchoredPath;
+
+    if (visiblePath.length > 0) {
+      return visiblePath;
+    }
+
+    return hideDefaultProcedureRootBreadcrumb ? ([] as AppNode[]) : [procedureRootNode];
+  }, [documentationModeActive, hideDefaultProcedureRootBreadcrumb, nodeById, procedureRootNode, procedureSelectedNode]);
+  const mainPaneBreadcrumbNodes = useMemo(() => {
+    if (!documentationModeActive) {
+      return breadcrumbNodes;
+    }
+    return procedureBreadcrumbNodes;
+  }, [
+    breadcrumbNodes,
+    documentationModeActive,
+    procedureBreadcrumbNodes
+  ]);
   const desktopOpenNodeTabs = useMemo(
     () =>
       activeWorkspaceNodeTabSession.openTabs
@@ -7365,17 +9186,35 @@ export default function App() {
     : 1;
 
   const nodeTreeMindMapRootLabel = useMemo(() => {
+    const hideWorkspaceRootInMindMap =
+      hideWorkspaceContainerRow &&
+      activeWorkspaceRootId !== null &&
+      desktopMirrorRootId === activeWorkspaceRootId;
+    if (hideWorkspaceRootInMindMap) {
+      return t("main.desktop");
+    }
     if (desktopMirrorRootId) {
       return nodeById.get(desktopMirrorRootId)?.name ?? t("main.desktop");
     }
     return t("main.desktop");
-  }, [desktopMirrorRootId, nodeById, t]);
+  }, [activeWorkspaceRootId, desktopMirrorRootId, hideWorkspaceContainerRow, nodeById, t]);
   const nodeTreeMindMapRootNode = useMemo(
-    () => (desktopMirrorRootId ? nodeById.get(desktopMirrorRootId) ?? null : null),
-    [desktopMirrorRootId, nodeById]
+    () =>
+      hideWorkspaceContainerRow &&
+      activeWorkspaceRootId !== null &&
+      desktopMirrorRootId === activeWorkspaceRootId
+        ? null
+        : desktopMirrorRootId
+          ? nodeById.get(desktopMirrorRootId) ?? null
+          : null,
+    [activeWorkspaceRootId, desktopMirrorRootId, hideWorkspaceContainerRow, nodeById]
   );
   const nodeTreeMindMapRootLevel = desktopMirrorRootId
-    ? nodeLevelById.get(desktopMirrorRootId) ?? 1
+    ? hideWorkspaceContainerRow &&
+      activeWorkspaceRootId !== null &&
+      desktopMirrorRootId === activeWorkspaceRootId
+      ? 1
+      : nodeLevelById.get(desktopMirrorRootId) ?? 1
     : 1;
 
   const gridNodes = useMemo(() => {
@@ -7388,7 +9227,7 @@ export default function App() {
       projectScopedNodeIds,
       currentChildren: desktopMirrorChildren,
       currentFolderId: desktopMirrorRootId,
-      activeProjectRootId,
+      activeProjectRootId: activeWorkspaceRootId,
       nodeById,
       byParent,
       matchesNodeState: (node) =>
@@ -7397,7 +9236,10 @@ export default function App() {
       forceTaskFilterParents,
       isHiddenExecutionTaskNode,
       shouldHideNode: (node) =>
-        isWorkareaItemNode(node) && workspaceFocusMode !== "execution"
+        isWorkareaRootNode(node) ||
+        (isWorkareaItemNode(node) && workspaceFocusMode !== "execution") ||
+        isProcedureInlineAssetNode(node) ||
+        shouldHideDocumentationNodeInOrganizationView(node)
     });
   }, [
     workspaceFocusMode,
@@ -7405,7 +9247,7 @@ export default function App() {
     projectScopedNodeIds,
     desktopMirrorChildren,
     desktopMirrorRootId,
-    activeProjectRootId,
+    activeWorkspaceRootId,
     nodeById,
     byParent,
     activeNodeStateFilters,
@@ -7414,7 +9256,8 @@ export default function App() {
     forceTaskFilterParents,
     executionOwnerNodeIds,
     desktopWorkareaScopedGridNodes,
-    workspaceMode
+    workspaceMode,
+    shouldHideDocumentationNodeInOrganizationView
   ]);
   const desktopBaseGridNodes = useMemo(() => {
     if (hasActiveFavoriteGroupTreeFiltering) {
@@ -7595,7 +9438,53 @@ export default function App() {
     desktopGridNodes
   ]);
 
+  useEffect(() => {
+    const selectedId = desktopViewMode === "library" ? librarySelectedNodeId : store.selectedNodeId;
+    if (!selectedId || treeSelectionRevealRequestKey <= 0) return;
+
+    const escapeCss = (value: string): string => {
+      if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+        return CSS.escape(value);
+      }
+      return value.replace(/["\\]/g, "\\$&");
+    };
+
+    const escapedId = escapeCss(selectedId);
+    let rafOne = 0;
+    let rafTwo = 0;
+
+    const revealTreeSelection = () => {
+      const target = document.querySelector<HTMLElement>(`.ode-tree-row[data-ode-node-id="${escapedId}"]`);
+      if (target) {
+        target.scrollIntoView({ block: "center", inline: "nearest" });
+      }
+    };
+
+    rafOne = window.requestAnimationFrame(() => {
+      revealTreeSelection();
+      rafTwo = window.requestAnimationFrame(revealTreeSelection);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(rafOne);
+      window.cancelAnimationFrame(rafTwo);
+    };
+  }, [desktopViewMode, displayedTreeRows, librarySelectedNodeId, store.selectedNodeId, treeSelectionRevealRequestKey]);
+
   const setPrimarySelection = (nodeId: string | null, surface: SelectionSurface = "tree") => {
+    if (desktopViewMode === "library" && surface === "tree") {
+      setLibrarySelectedNodeId(nodeId);
+      if (!nodeId) {
+        setLibrarySelectedNodeIds(new Set());
+        setLibrarySelectionAnchorId(null);
+        setSelectionSurface(surface);
+        return;
+      }
+      setLibrarySelectedNodeIds(new Set([nodeId]));
+      setLibrarySelectionAnchorId(nodeId);
+      setSelectionSurface(surface);
+      return;
+    }
     store.setSelectedNodeId(nodeId);
     if (!nodeId) {
       setSelectedNodeIds(new Set());
@@ -7616,6 +9505,13 @@ export default function App() {
     const normalizedSelection = normalizeSelectionState(nodeIds, focusId, nodeById);
     if (!normalizedSelection) {
       setPrimarySelection(null, surface);
+      return;
+    }
+    if (desktopViewMode === "library" && surface === "tree") {
+      setLibrarySelectedNodeId(normalizedSelection.focusId);
+      setLibrarySelectedNodeIds(new Set(normalizedSelection.selectedIds));
+      setLibrarySelectionAnchorId(normalizedSelection.focusId);
+      setSelectionSurface(surface);
       return;
     }
     store.setSelectedNodeId(normalizedSelection.focusId);
@@ -7741,6 +9637,181 @@ export default function App() {
     ]
   );
 
+  const getDedicatedNodeWindowByNodeId = async (nodeId: string): Promise<WebviewWindow | null> =>
+    WebviewWindow.getByLabel(getDedicatedNodeWindowLabel(nodeId));
+
+  const waitForDedicatedNodeWindow = async (nodeId: string, timeoutMs = 4200): Promise<WebviewWindow | null> => {
+    let resolvedWindow: WebviewWindow | null = null;
+    const ready = await waitForQaCondition(async () => {
+      const handle = await getDedicatedNodeWindowByNodeId(nodeId);
+      if (!handle) return false;
+      resolvedWindow = handle;
+      return true;
+    }, timeoutMs);
+    return ready ? resolvedWindow : null;
+  };
+
+  const applyDedicatedNodeWindowTarget = useCallback(
+    async (nodeId: string, preferredProjectId?: string | null) => {
+      const targetNode = resolveCachedNodeById(nodeId) ?? (await getNode(nodeId));
+      if (!targetNode || isFileLikeNode(targetNode)) {
+        return false;
+      }
+
+      const targetProject = resolveProjectForNodeId(targetNode.id, preferredProjectId);
+      if (targetProject) {
+        setActiveProjectId(targetProject.id);
+        activeProjectIdRef.current = targetProject.id;
+      }
+
+      const targetNodeAncestryIds = new Set<string>([targetNode.id, ...collectAncestorNodeIds(targetNode.id, nodeById)]);
+      const targetProjectDocumentationRoot = targetProject
+        ? findDocumentationWorkspaceRootNode(byParent.get(targetProject.rootNodeId) ?? [])
+        : null;
+      const shouldOpenInDocumentationMode = Boolean(
+        targetProjectDocumentationRoot && targetNodeAncestryIds.has(targetProjectDocumentationRoot.id)
+      );
+
+      if (shouldOpenInDocumentationMode) {
+        if (!documentationModeActive) {
+          documentationPreviousNodeStateFiltersRef.current = new Set(activeNodeStateFilters);
+        }
+        setWorkspaceMode("grid");
+        setDocumentationModeActive(true);
+        setDesktopViewMode("procedure");
+        setSelectionSurface("tree");
+        setKeyboardSurface("procedure");
+        if (!areAllNodeStateFiltersSelected(activeNodeStateFilters)) {
+          setActiveNodeStateFilters(createAllNodeStateFilters());
+        }
+        await store.navigateTo(targetNode.id);
+        updateExpandedIdsForContext("organization", (prev) => {
+          const next = new Set(prev);
+          next.add(targetNode.id);
+          for (const ancestorId of collectAncestorNodeIds(targetNode.id, nodeById)) {
+            next.add(ancestorId);
+          }
+          return next;
+        });
+        setPrimarySelection(targetNode.id, "tree");
+        return true;
+      }
+
+      setDocumentationModeActive(false);
+
+      setWorkspaceMode("grid");
+      setDesktopViewMode("grid");
+      setSelectionSurface("grid");
+      setKeyboardSurface("grid");
+      await store.navigateTo(targetNode.id);
+      updateExpandedIdsForContext("organization", (prev) => {
+        const next = new Set(prev);
+        next.add(targetNode.id);
+        for (const ancestorId of collectAncestorNodeIds(targetNode.id, nodeById)) {
+          next.add(ancestorId);
+        }
+        return next;
+      });
+      setPrimarySelection(targetNode.id, "grid");
+      return true;
+    },
+    [
+      activeNodeStateFilters,
+      byParent,
+      documentationModeActive,
+      nodeById,
+      resolveCachedNodeById,
+      resolveProjectForNodeId,
+      store,
+      updateExpandedIdsForContext
+    ]
+  );
+
+  const openNodeInDedicatedWindow = useCallback(
+    async (nodeId: string) => {
+      const node = resolveCachedNodeById(nodeId) ?? (await getNode(nodeId));
+      if (!node || isFileLikeNode(node)) return;
+      if (!ensureNodeAccessAllowed([node.id], "read")) return;
+
+      const targetProject = resolveProjectForNodeId(node.id);
+      const fallbackToInline = async () => {
+        await applyDedicatedNodeWindowTarget(node.id, targetProject?.id ?? null);
+      };
+
+      if (!isTauri()) {
+        await fallbackToInline();
+        return;
+      }
+
+      const label = getDedicatedNodeWindowLabel(node.id);
+      const existing = await WebviewWindow.getByLabel(label);
+      if (existing) {
+        const revealed =
+          (await existing.unminimize().then(() => true).catch(() => false)) &&
+          (await existing.show().then(() => true).catch(() => false)) &&
+          (await existing.setFocus().then(() => true).catch(() => false));
+        if (!revealed) {
+          await fallbackToInline();
+        }
+        return;
+      }
+
+      try {
+        const targetUrl = new URL(window.location.href);
+        targetUrl.searchParams.delete("utility");
+        targetUrl.searchParams.delete(LINKED_NODE_WINDOW_NODE_QUERY_PARAM);
+        targetUrl.searchParams.delete(LINKED_NODE_WINDOW_PROJECT_QUERY_PARAM);
+        targetUrl.searchParams.set(LINKED_NODE_WINDOW_NODE_QUERY_PARAM, node.id);
+        if (targetProject?.id) {
+          targetUrl.searchParams.set(LINKED_NODE_WINDOW_PROJECT_QUERY_PARAM, targetProject.id);
+        }
+
+        const panelWindow = new WebviewWindow(label, {
+          title: `${APP_DISPLAY_NAME} - ${node.name}`,
+          url: targetUrl.toString(),
+          center: true,
+          width: 1320,
+          height: 900,
+          minWidth: 960,
+          minHeight: 700,
+          resizable: true,
+          focus: true
+        });
+        void panelWindow.once("tauri://error", () => {});
+
+        const resolvedWindow = await waitForDedicatedNodeWindow(node.id);
+        if (!resolvedWindow) {
+          await fallbackToInline();
+          return;
+        }
+        const revealed =
+          (await resolvedWindow.unminimize().then(() => true).catch(() => false)) &&
+          (await resolvedWindow.show().then(() => true).catch(() => false)) &&
+          (await resolvedWindow.setFocus().then(() => true).catch(() => false));
+        if (!revealed) {
+          await fallbackToInline();
+        }
+      } catch {
+        await fallbackToInline();
+      }
+    },
+    [applyDedicatedNodeWindowTarget, ensureNodeAccessAllowed, resolveCachedNodeById, resolveProjectForNodeId]
+  );
+
+  const getFieldOrderWindowByNodeId = async (nodeId: string): Promise<WebviewWindow | null> =>
+    WebviewWindow.getByLabel(getFieldOrderWindowLabel(nodeId));
+
+  const waitForFieldOrderWindow = async (nodeId: string, timeoutMs = 4200): Promise<WebviewWindow | null> => {
+    let resolvedWindow: WebviewWindow | null = null;
+    const ready = await waitForQaCondition(async () => {
+      const handle = await getFieldOrderWindowByNodeId(nodeId);
+      if (!handle) return false;
+      resolvedWindow = handle;
+      return true;
+    }, timeoutMs);
+    return ready ? resolvedWindow : null;
+  };
+
   const closeDesktopNodeTab = useCallback(
     async (nodeId: string) => {
       if (!activeProjectRootId) return;
@@ -7779,6 +9850,30 @@ export default function App() {
     [activeProjectRootId, openNodeInDesktopTab, updateWorkspaceNodeTabSession, workspaceNodeTabSessions]
   );
 
+  const dedicatedNodeWindowTargetAppliedRef = useRef(false);
+  const dedicatedFieldOrderWindowTargetAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isDedicatedLinkedNodeWindow || !linkedNodeIdFromQuery) return;
+    if (dedicatedNodeWindowTargetAppliedRef.current) return;
+    if (!hasInitializedProjects || store.status !== "ready") return;
+
+    dedicatedNodeWindowTargetAppliedRef.current = true;
+    void (async () => {
+      const applied = await applyDedicatedNodeWindowTarget(linkedNodeIdFromQuery, linkedNodeProjectIdFromQuery);
+      if (!applied) {
+        dedicatedNodeWindowTargetAppliedRef.current = false;
+      }
+    })();
+  }, [
+    applyDedicatedNodeWindowTarget,
+    hasInitializedProjects,
+    isDedicatedLinkedNodeWindow,
+    linkedNodeIdFromQuery,
+    linkedNodeProjectIdFromQuery,
+    store.status
+  ]);
+
   useEffect(() => {
     if (workspaceMode !== "grid") return;
     if (!activeProjectRootId) return;
@@ -7813,7 +9908,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!activeProjectRootId || store.allNodes.length === 0) return;
+    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || !activeProjectRootId || store.allNodes.length === 0) return;
     const currentSession = workspaceNodeTabSessions[activeProjectRootId];
     if (!currentSession || currentSession.openTabs.length === 0) return;
 
@@ -7862,6 +9957,8 @@ export default function App() {
     );
   }, [
     activeProjectRootId,
+    isDedicatedFieldOrderWindow,
+    isDedicatedLinkedNodeWindow,
     isNodeWithinTabScope,
     nodeById,
     projectScopedNodeIds,
@@ -7871,7 +9968,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!activeProjectRootId || store.allNodes.length === 0) return;
+    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || !activeProjectRootId || store.allNodes.length === 0) return;
     if (restoredWorkspaceNodeTabsRef.current === activeProjectRootId) return;
 
     const currentSession = workspaceNodeTabSessions[activeProjectRootId];
@@ -7903,6 +10000,8 @@ export default function App() {
     });
   }, [
     activeProjectRootId,
+    isDedicatedFieldOrderWindow,
+    isDedicatedLinkedNodeWindow,
     nodeById,
     openNodeInDesktopTab,
     projectScopedNodeIds,
@@ -7969,10 +10068,138 @@ export default function App() {
     [restoreNodeStateFiltersAfterDocumentation]
   );
 
+  const applyFieldOrderWindowTarget = useCallback(
+    async (nodeId: string, preferredProjectId?: string | null) => {
+      const targetNode = resolveCachedNodeById(nodeId) ?? (await getNode(nodeId));
+      if (!targetNode || isFileLikeNode(targetNode)) {
+        return false;
+      }
+
+      const targetProject = resolveProjectForNodeId(targetNode.id, preferredProjectId);
+      if (targetProject) {
+        setActiveProjectId(targetProject.id);
+        activeProjectIdRef.current = targetProject.id;
+      }
+
+      enterDocumentationMode();
+      await store.navigateTo(targetNode.id);
+      updateExpandedIdsForContext("organization", (prev) => {
+        const next = new Set(prev);
+        next.add(targetNode.id);
+        for (const ancestorId of collectAncestorNodeIds(targetNode.id, nodeById)) {
+          next.add(ancestorId);
+        }
+        return next;
+      });
+      setPrimarySelection(targetNode.id, "tree");
+      setProcedureFieldOrderTargetNodeId(targetNode.id);
+      return true;
+    },
+    [enterDocumentationMode, nodeById, resolveCachedNodeById, resolveProjectForNodeId, store, updateExpandedIdsForContext]
+  );
+
+  const openProcedureFieldOrderWindow = useCallback(
+    async (nodeId: string) => {
+      const node = resolveCachedNodeById(nodeId) ?? (await getNode(nodeId));
+      if (!node || isFileLikeNode(node)) return;
+      if (!ensureNodeAccessAllowed([node.id], "read")) return;
+      const targetProject = resolveProjectForNodeId(node.id);
+      let didFallbackToInline = false;
+      const fallbackToInline = async () => {
+        if (didFallbackToInline) return;
+        didFallbackToInline = true;
+        await applyFieldOrderWindowTarget(node.id, targetProject?.id ?? null);
+      };
+
+      if (!isTauri()) {
+        await fallbackToInline();
+        return;
+      }
+
+      try {
+        const label = getFieldOrderWindowLabel(node.id);
+        const existing = await WebviewWindow.getByLabel(label);
+        if (existing) {
+          await existing.unminimize().catch(() => {});
+          await existing.show().catch(() => {});
+          await existing.setFocus().catch(() => {});
+          return;
+        }
+
+        const targetUrl = new URL(window.location.href);
+        targetUrl.searchParams.delete("utility");
+        targetUrl.searchParams.delete(LINKED_NODE_WINDOW_NODE_QUERY_PARAM);
+        targetUrl.searchParams.delete(LINKED_NODE_WINDOW_PROJECT_QUERY_PARAM);
+        targetUrl.searchParams.delete(FIELD_ORDER_WINDOW_NODE_QUERY_PARAM);
+        targetUrl.searchParams.delete(FIELD_ORDER_WINDOW_PROJECT_QUERY_PARAM);
+        targetUrl.searchParams.set(FIELD_ORDER_WINDOW_NODE_QUERY_PARAM, node.id);
+        if (targetProject?.id) {
+          targetUrl.searchParams.set(FIELD_ORDER_WINDOW_PROJECT_QUERY_PARAM, targetProject.id);
+        }
+
+        const panelWindow = new WebviewWindow(label, {
+          title: `${APP_DISPLAY_NAME} - Field Order - ${node.name}`,
+          url: targetUrl.toString(),
+          center: true,
+          width: 1100,
+          height: 920,
+          minWidth: 840,
+          minHeight: 680,
+          resizable: true,
+          focus: true
+        });
+        void panelWindow.once("tauri://error", () => {
+          void fallbackToInline();
+        });
+
+        const resolvedWindow = await waitForFieldOrderWindow(node.id);
+        if (!resolvedWindow) {
+          await fallbackToInline();
+          return;
+        }
+        await resolvedWindow.unminimize().catch(() => {});
+        await resolvedWindow.show().catch(() => {});
+        await resolvedWindow.setFocus().catch(() => {});
+      } catch {
+        await fallbackToInline();
+      }
+    },
+    [applyFieldOrderWindowTarget, ensureNodeAccessAllowed, resolveCachedNodeById, resolveProjectForNodeId]
+  );
+
+  useEffect(() => {
+    if (!isDedicatedFieldOrderWindow || !fieldOrderNodeIdFromQuery) return;
+    if (dedicatedFieldOrderWindowTargetAppliedRef.current) return;
+    if (!hasInitializedProjects || store.status !== "ready") return;
+
+    dedicatedFieldOrderWindowTargetAppliedRef.current = true;
+    void (async () => {
+      const applied = await applyFieldOrderWindowTarget(fieldOrderNodeIdFromQuery, fieldOrderProjectIdFromQuery);
+      if (!applied) {
+        dedicatedFieldOrderWindowTargetAppliedRef.current = false;
+      }
+    })();
+  }, [
+    applyFieldOrderWindowTarget,
+    fieldOrderNodeIdFromQuery,
+    fieldOrderProjectIdFromQuery,
+    hasInitializedProjects,
+    isDedicatedFieldOrderWindow,
+    store.status
+  ]);
+
   function hasVisibleWorkareaForOwner(node: AppNode | null | undefined): boolean {
     if (!node || isFileLikeNode(node)) return false;
+    if (isWorkareaRootNode(node)) return false;
     if (isDeclaredWorkareaOwnerNode(node)) return true;
-    if ((byParent.get(node.id) ?? []).some((child) => isWorkareaItemNode(child))) return true;
+    if (
+      getVisibleWorkareaChildNodes({
+        parentNode: node,
+        byParent
+      }).length > 0
+    ) {
+      return true;
+    }
     if (normalizeStructuredDeliverablesForNode(node.id, node.properties?.odeStructuredDeliverables).length > 0) {
       return true;
     }
@@ -7980,6 +10207,42 @@ export default function App() {
       const meta = getExecutionTaskMeta(candidate);
       return meta?.ownerNodeId === node.id && isRenderableExecutionProjectionNode(candidate);
     });
+  }
+
+  function resolveVisibleWorkareaBrowseNodeId(targetNodeId?: string | null): string | null {
+    const requestedNodeId = targetNodeId ?? null;
+    if (!requestedNodeId) return null;
+
+    const targetNode =
+      nodeById.get(requestedNodeId) ?? store.allNodes.find((node) => node.id === requestedNodeId) ?? null;
+    if (!targetNode) return null;
+
+    if (isWorkareaRootNode(targetNode)) {
+      return getWorkareaRootOwnerNodeId(targetNode, nodeById);
+    }
+
+    if (isWorkareaItemNode(targetNode)) {
+      return targetNode.id;
+    }
+
+    const executionMeta = getExecutionTaskMeta(targetNode);
+    if (executionMeta?.ownerNodeId) {
+      return executionMeta.ownerNodeId;
+    }
+
+    if (isFileLikeNode(targetNode)) {
+      if (!targetNode.parentId || targetNode.parentId === ROOT_PARENT_ID) return null;
+      const parentNode = nodeById.get(targetNode.parentId) ?? null;
+      if (isWorkareaRootNode(parentNode)) {
+        return getWorkareaRootOwnerNodeId(parentNode, nodeById);
+      }
+      if (parentNode && isWorkareaItemNode(parentNode)) {
+        return parentNode.id;
+      }
+      return parentNode && hasVisibleWorkareaForOwner(parentNode) ? parentNode.id : null;
+    }
+
+    return hasVisibleWorkareaForOwner(targetNode) ? targetNode.id : null;
   }
 
   function resolveWorkareaOwnerNodeId(targetNodeId?: string | null): string | null {
@@ -7993,6 +10256,9 @@ export default function App() {
         : null;
 
     if (targetNode) {
+      if (isWorkareaRootNode(targetNode)) {
+        return getWorkareaRootOwnerNodeId(targetNode, nodeById);
+      }
       const workareaOwnerNodeId = getWorkareaOwnerNodeId(targetNode, nodeById);
       if (workareaOwnerNodeId) return workareaOwnerNodeId;
       const executionMeta = getExecutionTaskMeta(targetNode);
@@ -8000,6 +10266,11 @@ export default function App() {
       if (isFileLikeNode(targetNode)) {
         if (!targetNode.parentId || targetNode.parentId === ROOT_PARENT_ID) return null;
         const parentNode = nodeById.get(targetNode.parentId) ?? null;
+        if (isWorkareaRootNode(parentNode)) {
+          return getWorkareaRootOwnerNodeId(parentNode, nodeById);
+        }
+        const parentWorkareaOwnerNodeId = getWorkareaOwnerNodeId(parentNode, nodeById);
+        if (parentWorkareaOwnerNodeId) return parentWorkareaOwnerNodeId;
         return hasVisibleWorkareaForOwner(parentNode) ? targetNode.parentId : null;
       }
       return hasVisibleWorkareaForOwner(targetNode) ? targetNode.id : null;
@@ -8018,30 +10289,33 @@ export default function App() {
   }
 
   function resolvePreferredWorkareaTargetNodeId(): string | null {
-    const visibleTreeSelection = resolveVisibleSelectionForSurface({
-      selectedNode,
-      projectScopedNodeIds,
-      surface: "tree",
-      displayedTreeIndexById,
-      displayedGridIndexById,
-      displayedTimelineIndexById
-    });
-    if (visibleTreeSelection) {
-      const ownerNodeId = resolveWorkareaOwnerNodeId(visibleTreeSelection.id);
-      if (ownerNodeId) {
-        return visibleTreeSelection.id;
-      }
+    if (executionVisibleBrowseNodeId && resolveWorkareaOwnerNodeId(executionVisibleBrowseNodeId)) {
+      return executionVisibleBrowseNodeId;
     }
-    if (selectedNode) {
-      const ownerNodeId = resolveWorkareaOwnerNodeId(selectedNode.id);
-      if (ownerNodeId) {
-        return selectedNode.id;
-      }
-    }
-    return resolveWorkareaOwnerNodeId();
+    return Array.from(workareaOwnerNodeIds)[0] ?? null;
   }
 
   function resolveWorkareaCreationParentNodeId(surface: SelectionSurface): string | null {
+    if (workspaceFocusMode === "execution") {
+      const executionContextNodeId =
+        executionVisibleBrowseNodeId ?? resolveVisibleWorkareaBrowseNodeId(store.currentFolderId ?? null);
+      if (executionContextNodeId) {
+        const executionContextNode =
+          nodeById.get(executionContextNodeId) ??
+          store.allNodes.find((node) => node.id === executionContextNodeId) ??
+          null;
+        if (executionContextNode && !isFileLikeNode(executionContextNode)) {
+          if (isWorkareaItemNode(executionContextNode)) {
+            return executionContextNode.id;
+          }
+          const ownerNodeId = resolveWorkareaOwnerNodeId(executionContextNode.id);
+          if (ownerNodeId) return ownerNodeId;
+          return executionContextNode.id;
+        }
+      }
+      return Array.from(workareaOwnerNodeIds)[0] ?? null;
+    }
+
     const selectedContextNode =
       store.selectedNodeId
         ? nodeById.get(store.selectedNodeId) ?? store.allNodes.find((node) => node.id === store.selectedNodeId) ?? null
@@ -8118,7 +10392,8 @@ export default function App() {
       return;
     }
     if (mode === "execution") {
-      const ownerNodeId = resolveWorkareaOwnerNodeId();
+      const targetNodeId = resolvePreferredWorkareaTargetNodeId();
+      const ownerNodeId = targetNodeId ? resolveWorkareaOwnerNodeId(targetNodeId) : null;
       if (ownerNodeId) {
         void ensureLegacyWorkareaTreeForOwner(ownerNodeId);
       }
@@ -8219,20 +10494,29 @@ export default function App() {
     setWorkspaceSettingsOpen(nextState.workspaceSettingsOpen);
   }, [handleCreateWorkspace]);
 
-  const handleCreateFirstNodeRequest = useCallback(
-    async (surface: SelectionSurface) => {
-      if (projects.length === 0) {
-        openWorkspaceCreateInline();
-        return;
+  const handleCreateFirstNodeRequest = async (surface: SelectionSurface) => {
+    if (projects.length === 0) {
+      openWorkspaceCreateInline();
+      return;
+    }
+    if (documentationModeActive) {
+      const anchorNodeId =
+        procedureSelectedNode?.id ??
+        procedureRootNode?.id ??
+        documentationWorkspaceRootId ??
+        activeWorkspaceRootId ??
+        null;
+      if (anchorNodeId) {
+        await createProcedureDocumentItem(anchorNodeId, "section", "inside");
       }
-      if (workspaceFocusMode === "execution") {
-        await createSurfaceDefaultTopic(surface);
-        return;
-      }
-      await createChildFolder(surface);
-    },
-    [openWorkspaceCreateInline, projects.length, workspaceFocusMode]
-  );
+      return;
+    }
+    if (workspaceFocusMode === "execution") {
+      await createSurfaceDefaultTopic(surface);
+      return;
+    }
+    await createChildFolder(surface);
+  };
 
   const openSelectedTimelineExecutionDetails = useCallback(async () => {
     if (!selectedNode) return;
@@ -8365,9 +10649,16 @@ export default function App() {
   ) => {
     event.preventDefault();
     event.stopPropagation();
-    if (shouldRetainContextMenuSelection(selectedNodeIds, nodeId)) {
-      store.setSelectedNodeId(nodeId);
-      setSelectionAnchorId(nodeId);
+    const useLibraryTreeSelection = desktopViewMode === "library" && surface === "tree";
+    const activeSelectedNodeIds = useLibraryTreeSelection ? librarySelectedNodeIds : selectedNodeIds;
+    if (shouldRetainContextMenuSelection(activeSelectedNodeIds, nodeId)) {
+      if (useLibraryTreeSelection) {
+        setLibrarySelectedNodeId(nodeId);
+        setLibrarySelectionAnchorId(nodeId);
+      } else {
+        store.setSelectedNodeId(nodeId);
+        setSelectionAnchorId(nodeId);
+      }
       setSelectionSurface(surface);
     } else {
       setPrimarySelection(nodeId, surface);
@@ -8542,6 +10833,32 @@ export default function App() {
     indexById: Map<string, number>,
     options?: { range?: boolean; toggle?: boolean }
   ) => {
+    const libraryTreeSelection = desktopViewMode === "library" && surface === "tree";
+    const activeAnchorId = libraryTreeSelection
+      ? librarySelectionAnchorId ?? librarySelectedNodeId ?? nodeId
+      : selectionAnchorId ?? store.selectedNodeId ?? nodeId;
+    const activeSelectedNodeIds = libraryTreeSelection ? librarySelectedNodeIds : selectedNodeIds;
+    const setActiveSelectedNodeId = (nextId: string | null) => {
+      if (libraryTreeSelection) {
+        setLibrarySelectedNodeId(nextId);
+        return;
+      }
+      store.setSelectedNodeId(nextId);
+    };
+    const setActiveSelectedNodeIds = (nextIds: Set<string>) => {
+      if (libraryTreeSelection) {
+        setLibrarySelectedNodeIds(nextIds);
+        return;
+      }
+      setSelectedNodeIds(nextIds);
+    };
+    const setActiveAnchorSelectionId = (nextId: string | null) => {
+      if (libraryTreeSelection) {
+        setLibrarySelectionAnchorId(nextId);
+        return;
+      }
+      setSelectionAnchorId(nextId);
+    };
     const range = options?.range ?? false;
     const toggle = options?.toggle ?? false;
     const targetIndex = indexById.get(nodeId);
@@ -8551,7 +10868,7 @@ export default function App() {
     }
 
     if (range) {
-      const anchorId = selectionAnchorId ?? store.selectedNodeId ?? nodeId;
+      const anchorId = activeAnchorId;
       const anchorIndex = indexById.get(anchorId);
       if (anchorIndex === undefined) {
         setPrimarySelection(nodeId, surface);
@@ -8560,15 +10877,15 @@ export default function App() {
 
       const [start, end] = anchorIndex <= targetIndex ? [anchorIndex, targetIndex] : [targetIndex, anchorIndex];
       const rangeIds = new Set(orderedIds.slice(start, end + 1));
-      store.setSelectedNodeId(nodeId);
-      setSelectedNodeIds(rangeIds);
-      setSelectionAnchorId(anchorId);
+      setActiveSelectedNodeId(nodeId);
+      setActiveSelectedNodeIds(rangeIds);
+      setActiveAnchorSelectionId(anchorId);
       setSelectionSurface(surface);
       return;
     }
 
     if (toggle) {
-      const next = new Set(selectedNodeIds);
+      const next = new Set(activeSelectedNodeIds);
       if (next.has(nodeId)) {
         next.delete(nodeId);
       } else {
@@ -8579,9 +10896,9 @@ export default function App() {
       }
 
       const nextActive = next.has(nodeId) ? nodeId : Array.from(next)[next.size - 1] ?? nodeId;
-      store.setSelectedNodeId(nextActive);
-      setSelectedNodeIds(next);
-      setSelectionAnchorId(nodeId);
+      setActiveSelectedNodeId(nextActive);
+      setActiveSelectedNodeIds(next);
+      setActiveAnchorSelectionId(nodeId);
       setSelectionSurface(surface);
       return;
     }
@@ -8620,20 +10937,40 @@ export default function App() {
   }, []);
 
   const browseTreeNodeInGrid = useCallback(
-    async (nodeId: string) => {
+    async (nodeId: string, options?: { preserveTreeSurface?: boolean }) => {
       const target = nodeById.get(nodeId) ?? store.allNodes.find((node) => node.id === nodeId) ?? null;
       if (!target) return;
+      if (!ensureNodeAccessAllowed([target.id], "read")) return;
+      const preserveTreeSurface = options?.preserveTreeSurface ?? false;
 
       clearActiveDesktopNodeTab();
       if (workspaceFocusMode === "execution") {
         await openNodeInWorkareaRef.current?.(nodeId);
         return;
       }
-      activateDesktopGridBrowseSurface();
+      if (preserveTreeSurface) {
+        setWorkspaceMode("grid");
+        setDesktopViewMode("grid");
+      } else {
+        activateDesktopGridBrowseSurface();
+      }
       await store.navigateTo(isFileLikeNode(target) ? resolveSearchResultNavigationParentId(target) : target.id);
-      setPrimarySelection(nodeId, "grid");
+      setPrimarySelection(nodeId, preserveTreeSurface ? "tree" : "grid");
+      if (preserveTreeSurface) {
+        setKeyboardSurface("tree");
+      }
     },
-    [activateDesktopGridBrowseSurface, clearActiveDesktopNodeTab, nodeById, store, workspaceFocusMode]
+    [
+      activateDesktopGridBrowseSurface,
+      clearActiveDesktopNodeTab,
+      ensureNodeAccessAllowed,
+      nodeById,
+      setDesktopViewMode,
+      setKeyboardSurface,
+      setWorkspaceMode,
+      store,
+      workspaceFocusMode
+    ]
   );
   const jumpToWorkspaceChantierNode = useCallback(
     async (nodeId: string) => {
@@ -8658,6 +10995,14 @@ export default function App() {
       favoriteGroupTreeFilterEnabled,
       selectedFavoriteGroupIds
     ]
+  );
+  const openReusableLibraryItemForReview = useCallback(
+    async (nodeId: string) => {
+      if (!libraryVisibleTreeRowIds.has(nodeId)) return;
+      selectReusableLibraryItem(nodeId, { surface: "tree" });
+      await browseTreeNodeInGrid(nodeId, { preserveTreeSurface: true });
+    },
+    [browseTreeNodeInGrid, libraryVisibleTreeRowIds, selectReusableLibraryItem]
   );
 
   const applyGridSelection = (nodeId: string, options?: { range?: boolean; toggle?: boolean }) => {
@@ -8710,9 +11055,10 @@ export default function App() {
       setExpandedIds((prev) => {
         const next = new Set(prev);
         const visitNode = (nodeId: string) => {
-          const children = (byParent.get(nodeId) ?? []).filter(
-            (child) => !isHiddenExecutionTaskNode(child) && isWorkareaItemNode(child)
-          );
+          const children = getVisibleWorkareaChildNodes({
+            parentNode: nodeById.get(nodeId) ?? null,
+            byParent
+          }).filter((child) => !isHiddenExecutionTaskNode(child));
           if (children.length === 0) return;
           next.add(nodeId);
           for (const child of children) {
@@ -8731,6 +11077,7 @@ export default function App() {
           const children = sortTimelineNodesForDisplay(byParent.get(nodeId) ?? []).filter((child) => {
             if (isFileLikeNode(child)) return false;
             if (isWorkareaItemNode(child) && timelineMode !== "tasks") return false;
+            if (shouldHideDocumentationNodeInOrganizationView(child)) return false;
             if (isHiddenExecutionTaskNode(child) && !isRenderableExecutionProjectionNode(child)) {
               return false;
             }
@@ -8743,11 +11090,12 @@ export default function App() {
           }
         };
 
-        if (activeProjectRootId) {
-          visitNode(activeProjectRootId);
+        if (activeWorkspaceRootId) {
+          visitNode(activeWorkspaceRootId);
         } else {
           const roots = sortTimelineNodesForDisplay(byParent.get(ROOT_PARENT_ID) ?? []);
           for (const root of roots) {
+            if (shouldHideDocumentationNodeInOrganizationView(root)) continue;
             if (isFileLikeNode(root)) continue;
             if (isWorkareaItemNode(root) && timelineMode !== "tasks") continue;
             if (isHiddenExecutionTaskNode(root) && !isRenderableExecutionProjectionNode(root)) {
@@ -8780,12 +11128,13 @@ export default function App() {
         return [...branchNodes, ...fileLikeNodes];
       };
 
-      const visitNode = (nodeId: string) => {
-        const children = orderChildrenForDisplay(byParent.get(nodeId) ?? []).filter((child) => {
-          if (isHiddenExecutionTaskNode(child)) return false;
-          if (isWorkareaItemNode(child) && workspaceFocusMode !== "execution") return false;
-          return true;
-        });
+        const visitNode = (nodeId: string) => {
+          const children = orderChildrenForDisplay(byParent.get(nodeId) ?? []).filter((child) => {
+            if (shouldHideDocumentationNodeInOrganizationView(child)) return false;
+            if (isHiddenExecutionTaskNode(child)) return false;
+            if (isWorkareaItemNode(child) && workspaceFocusMode !== "execution") return false;
+            return true;
+          });
         if (children.length === 0) return;
         next.add(nodeId);
         for (const child of children) {
@@ -8794,15 +11143,16 @@ export default function App() {
         }
       };
 
-      if (activeProjectRootId) {
-        visitNode(activeProjectRootId);
-      } else {
-        const roots = orderChildrenForDisplay(byParent.get(ROOT_PARENT_ID) ?? []);
-        for (const root of roots) {
-          if (isHiddenExecutionTaskNode(root)) continue;
-          if (isWorkareaItemNode(root) && workspaceFocusMode !== "execution") continue;
-          if (isFileLikeNode(root)) continue;
-          visitNode(root.id);
+        if (activeWorkspaceRootId) {
+          visitNode(activeWorkspaceRootId);
+        } else {
+          const roots = orderChildrenForDisplay(byParent.get(ROOT_PARENT_ID) ?? []);
+          for (const root of roots) {
+            if (shouldHideDocumentationNodeInOrganizationView(root)) continue;
+            if (isHiddenExecutionTaskNode(root)) continue;
+            if (isWorkareaItemNode(root) && workspaceFocusMode !== "execution") continue;
+            if (isFileLikeNode(root)) continue;
+            visitNode(root.id);
         }
       }
 
@@ -8812,12 +11162,13 @@ export default function App() {
       return next;
     });
   }, [
-    activeProjectRootId,
+    activeWorkspaceRootId,
     byParent,
     desktopWorkareaOwnerNodeId,
     hasActiveFavoriteGroupTreeFiltering,
     isHiddenExecutionTaskNode,
     isRenderableExecutionProjectionNode,
+    shouldHideDocumentationNodeInOrganizationView,
     sortTimelineNodesForDisplay,
     treeUsesNodeStateFiltering,
     timelineMode,
@@ -8845,6 +11196,7 @@ export default function App() {
   };
 
   const openFileNode = async (nodeId: string) => {
+    if (!ensureNodeAccessAllowed([nodeId], "read")) return;
     try {
       await openNodeFile(nodeId);
     } catch {
@@ -8853,6 +11205,7 @@ export default function App() {
   };
 
   const openFileNodeWith = async (nodeId: string) => {
+    if (!ensureNodeAccessAllowed([nodeId], "read")) return;
     try {
       await openNodeFileWith(nodeId);
     } catch {
@@ -8861,6 +11214,7 @@ export default function App() {
   };
 
   const openFileNodeLocation = async (nodeId: string) => {
+    if (!ensureNodeAccessAllowed([nodeId], "read")) return;
     const node = nodeById.get(nodeId);
     const filePath = node && isFileLikeNode(node) ? getNodePreferredFileLocationPath(node) : null;
     const fallbackParentPath = (() => {
@@ -8883,6 +11237,7 @@ export default function App() {
   };
 
   const copyFileNodeFullPath = async (nodeId: string) => {
+    if (!ensureNodeAccessAllowed([nodeId], "read")) return;
     const node = nodeById.get(nodeId);
     if (!node || !isFileLikeNode(node)) return;
     const fullPath = getNodePreferredFileActionPath(node);
@@ -8894,6 +11249,13 @@ export default function App() {
       // Keep UX silent if clipboard write fails.
     }
   };
+  const openFilePreview = useCallback(
+    (nodeId: string) => {
+      if (!ensureNodeAccessAllowed([nodeId], "read")) return;
+      setMindMapReviewNodeId(nodeId);
+    },
+    [ensureNodeAccessAllowed]
+  );
 
   const materializeSpreadsheetTreeNodes = async (
     parentId: string | null,
@@ -8996,7 +11358,7 @@ export default function App() {
         targetNode,
         surface,
         currentFolderId: store.currentFolderId,
-        activeProjectRootId
+        activeProjectRootId: activeWorkspaceRootId
       });
       if (!ensureStructureMutationAllowed([parentId])) return;
       const createdRoots = await materializeSpreadsheetTreeNodes(parentId, treeNodes);
@@ -9028,7 +11390,7 @@ export default function App() {
     const resolveExportNodeId = (node: AppNode | null): string | null => {
       if (!node) return null;
       if (!isFileLikeNode(node)) return node.id;
-      return node.parentId && node.parentId !== ROOT_PARENT_ID ? node.parentId : activeProjectRootId ?? null;
+      return node.parentId && node.parentId !== ROOT_PARENT_ID ? node.parentId : activeWorkspaceRootId ?? null;
     };
 
     const currentFolderNode =
@@ -9041,10 +11403,10 @@ export default function App() {
     return (
       resolveExportNodeId(currentFolderNode) ??
       resolveExportNodeId(selectedNode) ??
-      activeProjectRootId ??
+      activeWorkspaceRootId ??
       null
     );
-  }, [activeProjectRootId, nodeById, selectedNode, store.allNodes, store.currentFolderId]);
+  }, [activeWorkspaceRootId, nodeById, selectedNode, store.allNodes, store.currentFolderId]);
   const treeSpreadsheetToolbarTargetNodeId = resolveTreeSpreadsheetToolbarTargetNodeId();
   const canImportTreeSpreadsheet = projects.length > 0 && !workspaceStructureLocked;
   const canExportTreeSpreadsheet = Boolean(treeSpreadsheetToolbarTargetNodeId);
@@ -9210,8 +11572,8 @@ export default function App() {
   const resolveDesktopUploadTargetId = useCallback((): string | null => {
     const fallbackUploadTargetId =
       workspaceMode === "grid" && workspaceFocusMode === "execution"
-        ? desktopWorkareaBrowseNodeId ?? desktopWorkareaOwnerNodeId ?? activeProjectRootId ?? null
-        : desktopMirrorRootId ?? activeProjectRootId ?? null;
+        ? desktopWorkareaBrowseNodeId ?? desktopWorkareaOwnerNodeId ?? activeWorkspaceRootId ?? null
+        : desktopMirrorRootId ?? activeWorkspaceRootId ?? null;
 
     if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
       return fallbackUploadTargetId;
@@ -9223,10 +11585,10 @@ export default function App() {
         const parentId =
           node.parentId && node.parentId !== ROOT_PARENT_ID
             ? node.parentId
-            : activeProjectRootId ?? null;
-        if (!parentId) return activeProjectRootId ?? null;
+            : activeWorkspaceRootId ?? null;
+        if (!parentId) return activeWorkspaceRootId ?? null;
         if (projectScopedNodeIds && !projectScopedNodeIds.has(parentId)) {
-          return activeProjectRootId ?? null;
+          return activeWorkspaceRootId ?? null;
         }
         return parentId;
       }
@@ -9265,7 +11627,7 @@ export default function App() {
 
     return fallbackUploadTargetId;
   }, [
-    activeProjectRootId,
+    activeWorkspaceRootId,
     desktopMirrorRootId,
     desktopWorkareaBrowseNodeId,
     desktopWorkareaOwnerNodeId,
@@ -9278,8 +11640,8 @@ export default function App() {
     workspaceMode
   ]);
 
-  const triggerDesktopUpload = async () => {
-    const uploadTargetId = resolveDesktopUploadTargetId();
+  const triggerDesktopUpload = async (targetNodeId?: string | null) => {
+    const uploadTargetId = targetNodeId ?? resolveDesktopUploadTargetId();
     pendingDesktopUploadTargetIdRef.current = uploadTargetId;
     if (isDesktopRuntime) {
       let shouldFallbackToHtmlInput = false;
@@ -9349,6 +11711,72 @@ export default function App() {
     return null;
   };
 
+  const getWorkareaContainerId = useCallback(
+    (ownerNodeId: string | null | undefined) => {
+      if (!ownerNodeId) return null;
+      return getWorkareaContainerNodeId(ownerNodeId, byParent);
+    },
+    [byParent]
+  );
+
+  const ensureWorkareaRootNodeForOwner = useCallback(
+    async (ownerNodeId: string) => {
+      const requestedOwnerNode =
+        nodeById.get(ownerNodeId) ?? store.allNodes.find((node) => node.id === ownerNodeId) ?? (await getNode(ownerNodeId)) ?? null;
+      const normalizedOwnerNodeId = isWorkareaRootNode(requestedOwnerNode)
+        ? getWorkareaRootOwnerNodeId(requestedOwnerNode, nodeById) ?? ownerNodeId
+        : ownerNodeId;
+      const ownerNode =
+        normalizedOwnerNodeId === ownerNodeId
+          ? requestedOwnerNode
+          : nodeById.get(normalizedOwnerNodeId) ??
+            store.allNodes.find((node) => node.id === normalizedOwnerNodeId) ??
+            (await getNode(normalizedOwnerNodeId)) ??
+            null;
+      if (!ownerNode || isFileLikeNode(ownerNode)) return ownerNodeId;
+
+      const ownerChildren = await getChildren(ownerNode.id);
+      let workareaRootNode = ownerChildren.find((child) => isWorkareaRootNode(child)) ?? null;
+      if (!workareaRootNode) {
+        workareaRootNode = await createNode(ownerNode.id, "__ode_execution__", "folder");
+        const nextProperties: Record<string, unknown> = {
+          ...(workareaRootNode.properties ?? {}),
+          odeWorkareaRoot: true
+        };
+        await updateNodeProperties(workareaRootNode.id, nextProperties);
+        store.patchNode(workareaRootNode.id, {
+          properties: nextProperties,
+          updatedAt: Date.now()
+        });
+      } else if (workareaRootNode.properties?.odeWorkareaRoot !== true) {
+        const nextProperties: Record<string, unknown> = {
+          ...(workareaRootNode.properties ?? {}),
+          odeWorkareaRoot: true
+        };
+        await updateNodeProperties(workareaRootNode.id, nextProperties);
+        store.patchNode(workareaRootNode.id, {
+          properties: nextProperties,
+          updatedAt: Date.now()
+        });
+      }
+
+      let previousMovedNodeId: string | null = null;
+      for (const child of ownerChildren) {
+        if (child.id === workareaRootNode.id) continue;
+        if (!isWorkareaItemNode(child) && !isHiddenExecutionTaskNode(child)) continue;
+        await moveNode(child.id, workareaRootNode.id, previousMovedNodeId);
+        store.patchNode(child.id, {
+          parentId: workareaRootNode.id,
+          updatedAt: Date.now()
+        });
+        previousMovedNodeId = child.id;
+      }
+
+      return workareaRootNode.id;
+    },
+    [nodeById, store]
+  );
+
   const getWorkareaBaseLabel = (kind: WorkareaItemKind): string => {
     if (kind === "deliverable") return t("procedure.node_deliverable_default");
     if (kind === "subtask") return t("procedure.node_subtask_default");
@@ -9360,25 +11788,66 @@ export default function App() {
     surface: SelectionSurface,
     options?: {
       initialText?: string;
+      initialProperties?: Record<string, unknown>;
       expandNodeIds?: string[];
       repositionAfterId?: string | null;
       reposition?: boolean;
       startInlineEdit?: boolean;
       commitInitialText?: boolean;
+      inlineEditSurface?: SelectionSurface;
     }
   ) => {
+    const requestedParentId = parentId;
+    let scopedParentId = resolveScopedStructureParentId(requestedParentId);
     const fallbackSelectionId = store.selectedNodeId;
-    const expandNodeIds = options?.expandNodeIds ?? [parentId ?? ROOT_PARENT_ID];
-    const currentDesktopFolderId = store.currentFolderId ?? null;
-    const revealDesktopFolderId =
-      surface === "grid" && parentId !== currentDesktopFolderId ? parentId : undefined;
-    const workareaParentNode =
-      parentId !== null
-        ? nodeById.get(parentId) ?? store.allNodes.find((node) => node.id === parentId) ?? null
-        : null;
     const shouldCreateWorkareaItem = workspaceFocusMode === "execution";
+    let visibleWorkareaParentId = scopedParentId;
+    if (shouldCreateWorkareaItem && scopedParentId) {
+      const requestedParentNode =
+        nodeById.get(scopedParentId) ?? store.allNodes.find((node) => node.id === scopedParentId) ?? null;
+      if (requestedParentNode) {
+        if (isWorkareaItemNode(requestedParentNode)) {
+          visibleWorkareaParentId = requestedParentNode.id;
+        } else if (isWorkareaRootNode(requestedParentNode)) {
+          const ownerNodeId = getWorkareaRootOwnerNodeId(requestedParentNode, nodeById);
+          visibleWorkareaParentId = ownerNodeId;
+          scopedParentId = ownerNodeId
+            ? getWorkareaContainerNodeId(ownerNodeId, byParent)
+            : requestedParentNode.id;
+        } else {
+          visibleWorkareaParentId = requestedParentNode.id;
+          scopedParentId = await ensureWorkareaRootNodeForOwner(requestedParentNode.id);
+        }
+      }
+    }
+    const expandNodeIds = Array.from(
+      new Set([
+        ...(options?.expandNodeIds ?? []),
+        shouldCreateWorkareaItem
+          ? (visibleWorkareaParentId ?? scopedParentId ?? ROOT_PARENT_ID)
+          : (scopedParentId ?? ROOT_PARENT_ID),
+        ...(shouldCreateWorkareaItem &&
+        visibleWorkareaParentId &&
+        scopedParentId &&
+        visibleWorkareaParentId !== scopedParentId
+          ? [scopedParentId]
+          : [])
+      ])
+    );
+    const currentDesktopFolderId = store.currentFolderId ?? null;
+    const revealTargetFolderId = shouldCreateWorkareaItem
+      ? visibleWorkareaParentId ?? scopedParentId
+      : scopedParentId;
+    const revealDesktopFolderId =
+      surface === "grid" && revealTargetFolderId !== currentDesktopFolderId
+        ? revealTargetFolderId ?? undefined
+        : undefined;
+    const workareaParentNode =
+      scopedParentId !== null
+        ? nodeById.get(scopedParentId) ?? store.allNodes.find((node) => node.id === scopedParentId) ?? null
+        : null;
     if (
-      !ensureStructureMutationAllowed([parentId], {
+      !ensureStructureMutationAllowed([scopedParentId], {
         scope: shouldCreateWorkareaItem ? "workarea" : "organization"
       })
     ) {
@@ -9388,8 +11857,11 @@ export default function App() {
       ? resolveWorkareaItemKindForParent(workareaParentNode, nodeById)
       : null;
     const workareaSiblingTitles =
-      shouldCreateWorkareaItem && parentId !== null
-        ? (byParent.get(parentId) ?? []).filter((child) => isWorkareaItemNode(child)).map((child) => child.name)
+      shouldCreateWorkareaItem && workareaParentNode
+        ? getVisibleWorkareaChildNodes({
+            parentNode: workareaParentNode,
+            byParent
+          }).map((child) => child.name)
         : [];
     const nextWorkareaTitle =
       shouldCreateWorkareaItem && workareaKind
@@ -9409,7 +11881,7 @@ export default function App() {
           : ""
         : options?.initialText ?? "";
     const newNode = await createNode(
-      parentId,
+      scopedParentId,
       shouldCreateWorkareaItem && workareaKind
         ? hasRequestedInitialText
           ? requestedInitialText
@@ -9423,7 +11895,20 @@ export default function App() {
       const nextProperties: Record<string, unknown> = {
         ...(newNode.properties ?? {}),
         odeWorkareaItem: true,
-        odeWorkareaItemKind: workareaKind ?? "deliverable"
+        odeWorkareaItemKind: workareaKind ?? "deliverable",
+        ...(options?.initialProperties ?? {})
+      };
+      await updateNodeProperties(newNode.id, nextProperties);
+      store.patchNode(newNode.id, {
+        properties: nextProperties,
+        updatedAt: Date.now()
+      });
+    }
+    if (documentationModeActive && !shouldCreateWorkareaItem) {
+      const nextProperties: Record<string, unknown> = {
+        ...(newNode.properties ?? {}),
+        odeProcedureItemType: "section",
+        ...(options?.initialProperties ?? {})
       };
       await updateNodeProperties(newNode.id, nextProperties);
       store.patchNode(newNode.id, {
@@ -9437,15 +11922,17 @@ export default function App() {
         surface,
         expandNodeIds
       });
-      primeInlineEditState(newNode.id, initialInlineText, surface);
     }
     if (options?.reposition) {
-      await moveNode(newNode.id, parentId, options.repositionAfterId ?? null);
+      await moveNode(newNode.id, scopedParentId, options.repositionAfterId ?? null);
     }
     if (surface === "grid" && desktopViewMode === "mindmap" && mindMapContentMode === "quick_access") {
       setMindMapContentMode("node_tree");
     }
     await refreshTreeAndKeepContext(newNode.id, expandNodeIds, surface, revealDesktopFolderId);
+    if (shouldStartInlineEdit) {
+      primeInlineEditState(newNode.id, initialInlineText, options?.inlineEditSurface ?? surface);
+    }
     return newNode.id;
   };
 
@@ -9457,8 +11944,8 @@ export default function App() {
       commitInitialText?: boolean;
     }
   ) => {
-    const resolvedSurface = resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
-    const parentId = activeProjectRootId ?? null;
+    const resolvedSurface = resolveScopedCreationSurface(surface);
+    const parentId = activeWorkspaceRootId ?? null;
     await createNewTopicNode(parentId, resolvedSurface, {
       initialText,
       expandNodeIds: parentId ? [parentId] : [],
@@ -9473,9 +11960,22 @@ export default function App() {
     options?: {
       startInlineEdit?: boolean;
       commitInitialText?: boolean;
+      inlineEditSurface?: SelectionSurface;
     }
   ) => {
-    const resolvedSurface = resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
+    if (documentationModeActive) {
+      const anchorNodeId =
+        procedureSelectedNode?.id ??
+        procedureRootNode?.id ??
+        documentationWorkspaceRootId ??
+        activeWorkspaceRootId ??
+        null;
+      if (anchorNodeId) {
+        await createProcedureDocumentItem(anchorNodeId, "section", "inside");
+      }
+      return;
+    }
+    const resolvedSurface = resolveScopedCreationSurface(surface);
     if (resolvedSurface === "timeline") {
       const timelineSelection = resolveVisibleSelectionForSurface({
         selectedNode,
@@ -9535,17 +12035,19 @@ export default function App() {
             initialText,
             expandNodeIds: [parentId],
             startInlineEdit: options?.startInlineEdit,
-            commitInitialText: options?.commitInitialText
+            commitInitialText: options?.commitInitialText,
+            inlineEditSurface: options?.inlineEditSurface
           });
           return;
         }
       }
-      const parentId = store.currentFolderId ?? activeProjectRootId ?? null;
+      const parentId = store.currentFolderId ?? activeWorkspaceRootId ?? null;
       await createNewTopicNode(parentId, "grid", {
         initialText,
         expandNodeIds: parentId ? [parentId] : [],
         startInlineEdit: options?.startInlineEdit,
-        commitInitialText: options?.commitInitialText
+        commitInitialText: options?.commitInitialText,
+        inlineEditSurface: options?.inlineEditSurface
       });
       return;
     }
@@ -9568,7 +12070,7 @@ export default function App() {
     surface: SelectionSurface = selectionSurface,
     initialText?: string
   ) => {
-    const resolvedSurface = resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
+    const resolvedSurface = resolveScopedCreationSurface(surface);
     const visibleSelection = resolveStructuralCreationTargetNode(
       resolveVisibleSelectionForSurface({
         selectedNode,
@@ -9603,7 +12105,7 @@ export default function App() {
     const parentId = resolveDefaultCreationParentNodeId({
       resolvedSurface,
       currentFolderId: store.currentFolderId,
-      activeProjectRootId
+      activeProjectRootId: activeWorkspaceRootId
     });
     await createNewTopicNode(parentId, resolvedSurface, {
       initialText,
@@ -9614,20 +12116,20 @@ export default function App() {
   const navigateUpOneFolder = async (surface: SelectionSurface = selectionSurface) => {
     const currentFolderId = store.currentFolderId;
     if (!currentFolderId) return;
-    if (activeProjectRootId && currentFolderId === activeProjectRootId) return;
+    if (activeWorkspaceRootId && currentFolderId === activeWorkspaceRootId) return;
     const targetSurface: SelectionSurface = workspaceMode === "timeline" ? "timeline" : surface;
 
     const currentFolder = nodeById.get(currentFolderId);
     if (!currentFolder) {
-      await store.navigateTo(activeProjectRootId ?? null);
+      await store.navigateTo(activeWorkspaceRootId ?? null);
       setPrimarySelection(null, targetSurface);
       return;
     }
 
     const parentFolderId = currentFolder.parentId === ROOT_PARENT_ID ? null : currentFolder.parentId;
     const boundedParentId =
-      activeProjectRootId && (parentFolderId === null || !projectScopedNodeIds?.has(parentFolderId))
-        ? activeProjectRootId
+      activeWorkspaceRootId && (parentFolderId === null || !projectScopedNodeIds?.has(parentFolderId))
+        ? activeWorkspaceRootId
         : parentFolderId;
     await store.navigateTo(boundedParentId);
     // Keep the folder we came from selected on the same active surface,
@@ -9642,6 +12144,7 @@ export default function App() {
 
   const openScheduleModal = (nodeId: string) => {
     if (!nodeById.has(nodeId)) return;
+    if (!ensureNodeAccessAllowed([nodeId], "read")) return;
     setScheduleModalNodeId(nodeId);
     setScheduleModalOpen(true);
   };
@@ -9649,6 +12152,99 @@ export default function App() {
   const closeScheduleModal = () => {
     setScheduleModalOpen(false);
     setScheduleModalNodeId(null);
+  };
+
+  const syncAutomationSourceRecordFromTimeline = async (
+    node: AppNode,
+    schedule: NodeTimelineSchedule | null
+  ): Promise<boolean> => {
+    const sourceTableNodeId =
+      typeof node.properties?.odeAutomationSourceTableNodeId === "string"
+        ? node.properties.odeAutomationSourceTableNodeId.trim()
+        : "";
+    const sourceRecordId =
+      typeof node.properties?.odeAutomationSourceRecordId === "string"
+        ? node.properties.odeAutomationSourceRecordId.trim()
+        : "";
+    if (!sourceTableNodeId || !sourceRecordId) return false;
+
+    const procedureModel = buildProcedureDatabaseModel(store.allNodes);
+    const sourceTable = procedureModel.tablesById.get(sourceTableNodeId) ?? null;
+    if (!sourceTable) return false;
+
+    const sourceRecord = sourceTable.records.find((record) => record.id === sourceRecordId) ?? null;
+    if (!sourceRecord) return false;
+
+    const automationKind =
+      typeof node.properties?.odeAutomationKind === "string" ? node.properties.odeAutomationKind.trim() : "";
+    const titleField =
+      automationKind === "subtask"
+        ? sourceTable.fields.find((field) => field.automationRole === "execution_subtask") ??
+          sourceTable.fields.find((field) => field.automationRole === "execution_task") ??
+          null
+        : sourceTable.fields.find((field) => field.automationRole === "execution_task") ?? null;
+    const statusField = sourceTable.fields.find((field) => field.automationRole === "execution_status") ?? null;
+    const dueDateField = sourceTable.fields.find((field) => field.automationRole === "execution_due_date") ?? null;
+
+    const nextValues = {
+      ...sourceRecord.values
+    };
+    let changed = false;
+
+    const setStringValue = (fieldNodeId: string, nextValue: string) => {
+      const currentValue = nextValues[fieldNodeId];
+      const currentComparable =
+        typeof currentValue === "string"
+          ? currentValue
+          : Array.isArray(currentValue)
+            ? currentValue.join("|")
+            : currentValue && typeof currentValue === "object"
+              ? JSON.stringify(currentValue)
+              : "";
+      if (currentComparable === nextValue) return;
+      nextValues[fieldNodeId] = nextValue;
+      changed = true;
+    };
+
+    if (schedule) {
+      const normalizedTitle = schedule.title.trim() || node.name.trim();
+      if (titleField) {
+        setStringValue(titleField.nodeId, normalizedTitle);
+      }
+      if (statusField) {
+        setStringValue(statusField.nodeId, schedule.status);
+      }
+      if (dueDateField) {
+        setStringValue(dueDateField.nodeId, schedule.endDate);
+      }
+    } else if (dueDateField) {
+      setStringValue(dueDateField.nodeId, "");
+    }
+
+    if (!changed) return false;
+
+    const updatedAt = Date.now();
+    const nextRecords = sourceTable.records.map((record) =>
+      record.id === sourceRecordId
+        ? {
+            ...record,
+            updatedAt,
+            values: nextValues
+          }
+        : record
+    );
+
+    const nextProperties: Record<string, unknown> = {
+      ...(sourceTable.node.properties as Record<string, unknown> | undefined),
+      [PROCEDURE_RECORDS_PROPERTY_KEY]: nextRecords
+    };
+
+    await updateNodeProperties(sourceTable.node.id, nextProperties);
+    store.patchNode(sourceTable.node.id, {
+      properties: nextProperties,
+      updatedAt
+    });
+    return true;
   };
 
   const saveNodeSchedule = async (schedule: NodeTimelineSchedule) => {
@@ -9659,9 +12255,13 @@ export default function App() {
   const saveNodeScheduleForNodeId = async (nodeId: string, schedule: NodeTimelineSchedule) => {
     const node = nodeById.get(nodeId);
     if (!node) return;
+    if (!ensureNodeAccessAllowed([node.id], "write")) return;
     const executionMeta = getExecutionTaskMeta(node);
+    const automationManaged = node.properties?.odeAutomationManaged === true;
     const refreshTargetId = executionMeta?.ownerNodeId ?? node.id;
     const normalizedSchedule = normalizeTimelineSchedule(schedule);
+    const flagged =
+      normalizedSchedule.priority === "high" || normalizedSchedule.priority === "urgent";
     const nextProperties: Record<string, unknown> = {
       ...(node.properties ?? {}),
       timelineSchedule: {
@@ -9669,11 +12269,22 @@ export default function App() {
         mode: "manual"
       }
     };
+    if (executionMeta || automationManaged) {
+      nextProperties.odeExecutionTaskStatus = normalizedSchedule.status;
+      nextProperties.odeExecutionTaskDueDate = normalizedSchedule.endDate;
+      nextProperties.odeExecutionTaskFlagged = flagged;
+    }
+
     await updateNodeProperties(node.id, nextProperties);
     store.patchNode(node.id, {
       properties: nextProperties,
       updatedAt: Date.now()
     });
+
+    if (automationManaged) {
+      await syncAutomationSourceRecordFromTimeline(node, normalizedSchedule);
+      await runProcedureEngineSync();
+    }
     await refreshTreeAndKeepContext(refreshTargetId);
   };
 
@@ -9681,17 +12292,26 @@ export default function App() {
     if (!scheduleModalNodeId) return;
     const node = nodeById.get(scheduleModalNodeId);
     if (!node) return;
+    if (!ensureNodeAccessAllowed([node.id], "write")) return;
     const executionMeta = getExecutionTaskMeta(node);
+    const automationManaged = node.properties?.odeAutomationManaged === true;
     const refreshTargetId = executionMeta?.ownerNodeId ?? node.id;
     const nextProperties: Record<string, unknown> = {
       ...(node.properties ?? {})
     };
     delete nextProperties.timelineSchedule;
+    if (executionMeta || automationManaged) {
+      delete nextProperties.odeExecutionTaskDueDate;
+    }
     await updateNodeProperties(node.id, nextProperties);
     store.patchNode(node.id, {
       properties: nextProperties,
       updatedAt: Date.now()
     });
+    if (automationManaged) {
+      await syncAutomationSourceRecordFromTimeline(node, null);
+      await runProcedureEngineSync();
+    }
     await refreshTreeAndKeepContext(refreshTargetId);
   };
 
@@ -9702,7 +12322,7 @@ export default function App() {
     if (existingGroupId) return existingGroupId;
 
     const nextId = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setFavoriteGroups((prev) => [...prev, { id: nextId, name: normalizedName }]);
+    setFavoriteGroups((prev) => [...prev, { id: nextId, name: normalizedName, objective: favoriteObjectiveKey }]);
     return nextId;
   };
 
@@ -9728,12 +12348,13 @@ export default function App() {
     sourceNodeId?: string | null,
     surface: SelectionSurface = selectionSurface,
     options?: { filterDescendants?: boolean }
-  ): string[] =>
-    resolveOrderedActionSelectionIds({
+  ): string[] => {
+    const useLibrarySelection = desktopViewMode === "library" && surface === "tree";
+    return resolveOrderedActionSelectionIds({
       sourceNodeId,
       surface,
-      selectedNodeId: store.selectedNodeId,
-      selectedNodeIds,
+      selectedNodeId: useLibrarySelection ? librarySelectedNodeId : store.selectedNodeId,
+      selectedNodeIds: useLibrarySelection ? librarySelectedNodeIds : selectedNodeIds,
       nodeById,
       displayedTreeIndexById,
       displayedGridIndexById,
@@ -9742,6 +12363,7 @@ export default function App() {
       filterDescendants: options?.filterDescendants,
       isNodeInSubtree
     });
+  };
 
   const resolveFavoriteActionNodes = (
     sourceNodeId?: string | null,
@@ -10214,7 +12836,8 @@ export default function App() {
     sourceNodeId?: string | null;
     surface?: SelectionSurface;
   }) => {
-    const targetSurface = options?.surface ?? selectionSurface;
+    const targetSurface =
+      options?.surface ?? (desktopViewMode === "library" ? "tree" : selectionSurface);
     const rootDeleteIds = resolveSelectedActionNodeIds(
       options?.sourceNodeId,
       targetSurface,
@@ -10321,6 +12944,14 @@ export default function App() {
   const getDesktopWindow = (): TauriWindow | null => {
     if (!isTauri()) return null;
     return appWindowRef.current ?? appWindow ?? getCurrentWindow();
+  };
+
+  const clearScheduledDesktopWindowStateSync = () => {
+    if (desktopWindowStateSyncTimeoutIdsRef.current.length === 0) return;
+    desktopWindowStateSyncTimeoutIdsRef.current.forEach((timeoutId) => {
+      window.clearTimeout(timeoutId);
+    });
+    desktopWindowStateSyncTimeoutIdsRef.current = [];
   };
 
   const getWindowsDesktopWindowLayoutState = async (): Promise<WindowsDesktopWindowLayoutState | null> => {
@@ -10502,9 +13133,9 @@ export default function App() {
 
     const windowsLayoutState = await getWindowsDesktopWindowLayoutState();
     if (windowsLayoutState) {
-      const targetBounds = resolveWindowsDesktopTargetBounds(windowsLayoutState.monitorBounds, {
+      const targetBounds = resolveWindowsDesktopTargetBounds(windowsLayoutState.workAreaBounds, {
         fillWorkArea: true,
-        coverTaskbar: true,
+        coverTaskbar: false,
         margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
       });
       return (
@@ -10517,7 +13148,7 @@ export default function App() {
 
     const fit = await resolveDesktopWindowWorkAreaFit(win, {
       fillWorkArea: true,
-      coverTaskbar: true,
+      coverTaskbar: false,
       margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
     });
     if (!fit) return false;
@@ -10551,6 +13182,47 @@ export default function App() {
       x: outerPosition.x,
       y: outerPosition.y
     };
+  };
+
+  const syncDesktopWindowChromeState = async (
+    win?: TauriWindow | null,
+    options?: { captureRestoreBounds?: boolean }
+  ) => {
+    const targetWindow = win ?? getDesktopWindow();
+    if (!targetWindow || !isTauri()) return;
+
+    try {
+      const minimized = await targetWindow.isMinimized().catch(() => false);
+      if (minimized) {
+        return;
+      }
+
+      const maximized = await isDesktopWindowEffectivelyMaximized(targetWindow);
+      if (!maximized && (options?.captureRestoreBounds ?? true)) {
+        desktopWindowRestoreBoundsRef.current = await captureDesktopWindowRestoreBounds(targetWindow);
+      }
+      setIsWindowMaximized(maximized);
+    } catch {
+      // Window state syncing is best-effort only.
+    }
+  };
+
+  const scheduleDesktopWindowChromeStateSync = (
+    win?: TauriWindow | null,
+    delays: number[] = [0, 90, 180, 320]
+  ) => {
+    clearScheduledDesktopWindowStateSync();
+    const timeoutIds: number[] = [];
+    for (const delay of delays) {
+      const timeoutId = window.setTimeout(() => {
+        desktopWindowStateSyncTimeoutIdsRef.current = desktopWindowStateSyncTimeoutIdsRef.current.filter(
+          (pendingId) => pendingId !== timeoutId
+        );
+        void syncDesktopWindowChromeState(win);
+      }, delay);
+      timeoutIds.push(timeoutId);
+    }
+    desktopWindowStateSyncTimeoutIdsRef.current = timeoutIds;
   };
 
   const restoreDesktopWindowBounds = async (
@@ -11075,7 +13747,7 @@ export default function App() {
     }
 
     await deleteNodeWithExecutionSync(nodeId);
-    const fallbackSelectionId = resolveInlineEditFallbackSelectionId(provisional, node, activeProjectRootId);
+    const fallbackSelectionId = resolveInlineEditFallbackSelectionId(provisional, node, activeWorkspaceRootId);
     await refreshTreeAndKeepContext(
       fallbackSelectionId ?? undefined,
       provisional.expandNodeIds,
@@ -11095,11 +13767,22 @@ export default function App() {
       workspaceMode,
       selectionSurface
     });
-    setPrimarySelection(nodeId, editSurface);
-    closeTextEditContextMenu();
-    setEditingNodeId(nodeId);
-    setEditingSurface(editSurface);
-    setEditingValue(nextValue);
+    const nextKeyboardSurface: KeyboardSurface =
+      desktopViewModeRef.current === "procedure"
+        ? "procedure"
+        : editSurface === "timeline"
+          ? "timeline"
+          : editSurface === "tree"
+            ? "tree"
+            : "grid";
+    flushSync(() => {
+      setPrimarySelection(nodeId, editSurface);
+      setKeyboardSurface(nextKeyboardSurface);
+      closeTextEditContextMenu();
+      setEditingNodeId(nodeId);
+      setEditingSurface(editSurface);
+      setEditingValue(nextValue);
+    });
     pendingInlineEditSelectionRef.current = options?.selectAll
       ? {
           nodeId,
@@ -11226,8 +13909,19 @@ export default function App() {
     return nodeId;
   };
 
+  const getTransientNodeDisplayLabel = (node: AppNode): string => {
+    if (editingNodeId === node.id) {
+      return editingValue;
+    }
+    if (provisionalInlineCreateByNodeIdRef.current.has(node.id)) {
+      return "";
+    }
+    return getNodeDisplayName(node);
+  };
+
   const saveProcedureNodeContent = useCallback(
     async (nodeId: string, text: string) => {
+      if (!ensureNodeAccessAllowed([nodeId], "write")) return;
       const normalizedText = text.replace(/\r\n/g, "\n");
       await updateNodeContent(nodeId, normalizedText);
       store.patchNode(nodeId, {
@@ -11235,28 +13929,30 @@ export default function App() {
         updatedAt: Date.now()
       });
     },
-    [store]
+    [ensureNodeAccessAllowed, store]
   );
 
   const saveProcedureNodeDescription = useCallback(
     async (nodeId: string, description: string | null) => {
+      if (!ensureNodeAccessAllowed([nodeId], "write")) return;
       await updateNodeDescription(nodeId, description);
       store.patchNode(nodeId, {
         description,
         updatedAt: Date.now()
       });
     },
-    [store]
+    [ensureNodeAccessAllowed, store]
   );
   const saveProcedureNodeProperties = useCallback(
     async (nodeId: string, properties: Record<string, unknown>) => {
+      if (!ensureNodeAccessAllowed([nodeId], "write")) return;
       await updateNodeProperties(nodeId, properties);
       store.patchNode(nodeId, {
         properties,
         updatedAt: Date.now()
       });
     },
-    [store]
+    [ensureNodeAccessAllowed, store]
   );
   const saveTooltipEditorDescription = useCallback(async () => {
     if (!tooltipEditorNodeId) return;
@@ -11312,6 +14008,7 @@ export default function App() {
     if (!quickAppsModalNodeId) return;
     const node = nodeById.get(quickAppsModalNodeId) ?? null;
     if (!node) return;
+    if (!ensureNodeAccessAllowed([node.id], "write")) return;
 
     const nextQuickApps = normalizeNodeQuickApps(quickAppsDraftItems);
     const nextProperties = buildNodeQuickAppsProperties(node.properties, nextQuickApps);
@@ -11351,7 +14048,7 @@ export default function App() {
     } finally {
       setQuickAppsSaving(false);
     }
-  }, [nodeById, quickAppsDraftItems, quickAppsModalNodeId, store]);
+  }, [ensureNodeAccessAllowed, nodeById, quickAppsDraftItems, quickAppsModalNodeId, store]);
 
   const launchQuickApp = useCallback(
     async (item: NodeQuickAppItem) => {
@@ -11362,7 +14059,25 @@ export default function App() {
       }
 
       try {
-        if (item.kind === "local_path") {
+        if (target.startsWith("ode://node/")) {
+          const targetNodeId = decodeNodeLinkId(target);
+          const targetNode = resolveCachedNodeById(targetNodeId) ?? (await getNode(targetNodeId));
+          if (!targetNode) {
+            setProjectError(
+              t("quick_apps.launch_failed", {
+                name: item.label || target,
+                reason: "The linked ODE node could not be found."
+              })
+            );
+            return;
+          }
+
+          if (isFileLikeNode(targetNode)) {
+            await openFileNode(targetNode.id);
+          } else {
+            await openNodeInDedicatedWindow(targetNode.id);
+          }
+        } else if (item.kind === "local_path") {
           await openLocalPath(target);
         } else {
           await openExternalUrl(target);
@@ -11376,7 +14091,7 @@ export default function App() {
         );
       }
     },
-    [t]
+    [openFileNode, openNodeInDedicatedWindow, resolveCachedNodeById, t]
   );
 
   const syncExecutionTaskDeletionToOwner = useCallback(
@@ -12042,6 +14757,7 @@ export default function App() {
       const ownerNode =
         nodeById.get(ownerNodeId) ?? store.allNodes.find((node) => node.id === ownerNodeId) ?? null;
       if (!ownerNode) return;
+      if (!ensureNodeAccessAllowed([ownerNodeId], "write")) return;
 
       const nextProperties: Record<string, unknown> = {
         ...(ownerNode.properties ?? {})
@@ -12086,7 +14802,7 @@ export default function App() {
         updatedAt: Date.now()
       });
     },
-    [nodeById, store]
+    [ensureNodeAccessAllowed, nodeById, store]
   );
 
   const applyStructuredDeliverablesToWorkareaTree = useCallback(
@@ -12235,6 +14951,396 @@ export default function App() {
     [ensureWorkareaItemProperties, nodeById, saveWorkareaOwnerMeaning, store, t]
   );
 
+  const syncProcedureExecutionAutomationTree = useCallback(
+    async (plans: ProcedureExecutionAutomationPlan[], nodesSnapshot: AppNode[]) => {
+      const nodeSnapshotById = new Map(nodesSnapshot.map((node) => [node.id, node] as const));
+      const planByOwnerId = new Map(plans.map((plan) => [plan.ownerNodeId, plan.items] as const));
+      const ownerIds = new Set<string>();
+      let treeMutated = false;
+
+      for (const plan of plans) {
+        ownerIds.add(plan.ownerNodeId);
+      }
+      for (const node of nodesSnapshot) {
+        const ownerNodeId =
+          typeof node.properties?.odeAutomationManagedOwnerNodeId === "string"
+            ? node.properties.odeAutomationManagedOwnerNodeId.trim()
+            : "";
+        if (ownerNodeId) {
+          ownerIds.add(ownerNodeId);
+        }
+      }
+
+      const serializeComparable = (value: unknown) => JSON.stringify(value ?? null);
+
+      const updateNodePropertiesIfNeeded = async (
+        currentNode: AppNode,
+        patch: Record<string, unknown>
+      ): Promise<AppNode> => {
+        const nextProperties: Record<string, unknown> = {
+          ...(currentNode.properties as Record<string, unknown> | undefined),
+          ...patch
+        };
+        if (patch.timelineSchedule === null) {
+          delete nextProperties.timelineSchedule;
+        }
+        if (serializeComparable(currentNode.properties) === serializeComparable(nextProperties)) {
+          return currentNode;
+        }
+        await updateNodeProperties(currentNode.id, nextProperties);
+        const updatedNode: AppNode = {
+          ...currentNode,
+          properties: nextProperties,
+          updatedAt: Date.now()
+        };
+        store.patchNode(currentNode.id, {
+          properties: nextProperties,
+          updatedAt: updatedNode.updatedAt
+        });
+        return updatedNode;
+      };
+
+      const renameNodeIfNeeded = async (currentNode: AppNode, nextName: string): Promise<AppNode> => {
+        const trimmedName = nextName.trim();
+        if (!trimmedName || currentNode.name.trim() === trimmedName) {
+          return currentNode;
+        }
+        const uniqueName = await renameNode(currentNode.id, trimmedName);
+        const updatedNode: AppNode = {
+          ...currentNode,
+          name: uniqueName,
+          updatedAt: Date.now()
+        };
+        store.patchNode(currentNode.id, {
+          name: uniqueName,
+          updatedAt: updatedNode.updatedAt
+        });
+        return updatedNode;
+      };
+
+      const updateNodeDescriptionIfNeeded = async (
+        currentNode: AppNode,
+        nextDescription: string | null
+      ): Promise<AppNode> => {
+        const normalizedDescription = nextDescription?.trim() || null;
+        if ((currentNode.description ?? null) === normalizedDescription) {
+          return currentNode;
+        }
+        await updateNodeDescription(currentNode.id, normalizedDescription);
+        const updatedNode: AppNode = {
+          ...currentNode,
+          description: normalizedDescription,
+          updatedAt: Date.now()
+        };
+        store.patchNode(currentNode.id, {
+          description: normalizedDescription,
+          updatedAt: updatedNode.updatedAt
+        });
+        return updatedNode;
+      };
+
+      const buildTimelineScheduleForAutomation = (
+        currentNode: AppNode | null,
+        title: string,
+        dueDate: string | null,
+        status: ScheduleStatus
+      ): NodeTimelineSchedule | null => {
+        if (!dueDate) return null;
+        const existingSchedule = currentNode ? parseNodeTimelineSchedule(currentNode) : null;
+        const existingFlagged =
+          typeof currentNode?.properties?.odeExecutionTaskFlagged === "boolean"
+            ? currentNode.properties.odeExecutionTaskFlagged
+            : false;
+        const existingPriority = existingSchedule?.priority ?? "normal";
+        const preservedPriority =
+          status === "blocked"
+            ? "high"
+            : existingFlagged
+              ? existingPriority === "urgent"
+                ? "urgent"
+                : "high"
+              : existingPriority;
+        const preservedStartDate =
+          existingSchedule?.startDate && existingSchedule.startDate <= dueDate ? existingSchedule.startDate : dueDate;
+        return normalizeTimelineSchedule({
+          title,
+          status,
+          startDate: preservedStartDate,
+          endDate: dueDate,
+          assignees: existingSchedule?.assignees ?? [],
+          priority: preservedPriority,
+          progress: existingSchedule?.progress ?? (status === "done" ? 100 : status === "active" ? 50 : 0),
+          predecessor: existingSchedule?.predecessor ?? "",
+          mode: "manual"
+        });
+      };
+
+      const readManagedChildren = async (parentId: string): Promise<AppNode[]> =>
+        (await getChildren(parentId)).filter((child) => child.properties?.odeAutomationManaged === true);
+
+      for (const ownerNodeId of ownerIds) {
+        const ownerNode = nodeSnapshotById.get(ownerNodeId) ?? (await getNode(ownerNodeId)) ?? null;
+        const items = planByOwnerId.get(ownerNodeId) ?? [];
+
+        const ownerChildren = ownerNode ? await getChildren(ownerNodeId) : [];
+        const containerNode = ownerChildren.find((child) => isWorkareaRootNode(child)) ?? null;
+        const containerNodeId =
+          items.length > 0 && ownerNode && !isFileLikeNode(ownerNode)
+            ? await ensureWorkareaRootNodeForOwner(ownerNodeId)
+            : containerNode?.id ?? ownerNodeId;
+        if (items.length > 0 && ownerNode && !isFileLikeNode(ownerNode) && !containerNode) {
+          treeMutated = true;
+        }
+
+        const existingManagedDeliverables = await readManagedChildren(containerNodeId);
+
+        if (!ownerNode || isFileLikeNode(ownerNode) || items.length === 0) {
+          for (const node of existingManagedDeliverables) {
+            await deleteNode(node.id);
+            store.removeNode(node.id);
+            treeMutated = true;
+          }
+          continue;
+        }
+
+        const itemsByDeliverable = new Map<string, typeof items>();
+        for (const item of items) {
+          const deliverableKey = item.deliverableTitle.trim().toLowerCase() || item.deliverableTitle;
+          const bucket = itemsByDeliverable.get(deliverableKey) ?? [];
+          bucket.push(item);
+          itemsByDeliverable.set(deliverableKey, bucket);
+        }
+
+        const usedDeliverableNodeIds = new Set<string>();
+
+        for (const [deliverableKey, deliverableItems] of itemsByDeliverable.entries()) {
+          const deliverableTitle = deliverableItems[0]?.deliverableTitle.trim() || "Deliverable";
+          let deliverableNode =
+            existingManagedDeliverables.find((node) => {
+              const candidateKey =
+                typeof node.properties?.odeAutomationDeliverableKey === "string"
+                  ? node.properties.odeAutomationDeliverableKey.trim()
+                  : "";
+              return candidateKey === deliverableKey;
+            }) ?? null;
+
+          if (!deliverableNode) {
+            deliverableNode = await createNode(containerNodeId, deliverableTitle, "folder");
+            treeMutated = true;
+          }
+
+          deliverableNode = await renameNodeIfNeeded(deliverableNode, deliverableTitle);
+          deliverableNode = await updateNodePropertiesIfNeeded(deliverableNode, {
+            odeWorkareaItem: true,
+            odeWorkareaItemKind: "deliverable",
+            odeAutomationManaged: true,
+            odeAutomationManagedOwnerNodeId: ownerNodeId,
+            odeAutomationKind: "deliverable",
+            odeAutomationDeliverableKey: deliverableKey
+          });
+
+          const existingTaskNodes = await readManagedChildren(deliverableNode.id);
+          const usedTaskNodeIds = new Set<string>();
+
+          for (const item of deliverableItems) {
+            const taskKey = `${item.sourceTableNodeId}:${item.sourceRecordId}:task`;
+            let taskNode =
+              existingTaskNodes.find((node) => {
+                const candidateKey =
+                  typeof node.properties?.odeAutomationExecutionKey === "string"
+                    ? node.properties.odeAutomationExecutionKey.trim()
+                    : "";
+                return candidateKey === taskKey;
+              }) ?? null;
+
+            if (!taskNode) {
+              taskNode = await createNode(deliverableNode.id, item.taskTitle, "folder");
+              treeMutated = true;
+            }
+
+            taskNode = await renameNodeIfNeeded(taskNode, item.taskTitle);
+            const taskFlagged =
+              item.status === "blocked" ||
+              (typeof taskNode.properties?.odeExecutionTaskFlagged === "boolean"
+                ? taskNode.properties.odeExecutionTaskFlagged
+                : false);
+            taskNode = await updateNodePropertiesIfNeeded(taskNode, {
+              odeWorkareaItem: true,
+              odeWorkareaItemKind: "task",
+              odeAutomationManaged: true,
+              odeAutomationManagedOwnerNodeId: ownerNodeId,
+              odeAutomationKind: "task",
+              odeAutomationExecutionKey: taskKey,
+              odeAutomationSourceTableNodeId: item.sourceTableNodeId,
+              odeAutomationSourceRecordId: item.sourceRecordId,
+              odeExecutionTaskStatus: item.status,
+              odeExecutionTaskDueDate: item.dueDate,
+              odeExecutionTaskFlagged: taskFlagged,
+              timelineSchedule: buildTimelineScheduleForAutomation(taskNode, item.taskTitle, item.dueDate, item.status)
+            });
+
+            const existingSubtaskNodes = await readManagedChildren(taskNode.id);
+            if (item.subtaskTitle?.trim()) {
+              const subtaskKey = `${item.sourceTableNodeId}:${item.sourceRecordId}:subtask`;
+              let subtaskNode =
+                existingSubtaskNodes.find((node) => {
+                  const candidateKey =
+                    typeof node.properties?.odeAutomationExecutionKey === "string"
+                      ? node.properties.odeAutomationExecutionKey.trim()
+                      : "";
+                  return candidateKey === subtaskKey;
+                }) ?? null;
+
+              if (!subtaskNode) {
+                subtaskNode = await createNode(taskNode.id, item.subtaskTitle.trim(), "folder");
+                treeMutated = true;
+              }
+
+              subtaskNode = await renameNodeIfNeeded(subtaskNode, item.subtaskTitle.trim());
+              const subtaskFlagged =
+                item.status === "blocked" ||
+                (typeof subtaskNode.properties?.odeExecutionTaskFlagged === "boolean"
+                  ? subtaskNode.properties.odeExecutionTaskFlagged
+                  : false);
+              subtaskNode = await updateNodePropertiesIfNeeded(subtaskNode, {
+                odeWorkareaItem: true,
+                odeWorkareaItemKind: "subtask",
+                odeAutomationManaged: true,
+                odeAutomationManagedOwnerNodeId: ownerNodeId,
+                odeAutomationKind: "subtask",
+                odeAutomationExecutionKey: subtaskKey,
+                odeAutomationSourceTableNodeId: item.sourceTableNodeId,
+                odeAutomationSourceRecordId: item.sourceRecordId,
+                odeExecutionTaskStatus: item.status,
+                odeExecutionTaskDueDate: item.dueDate,
+                odeExecutionTaskFlagged: subtaskFlagged,
+                timelineSchedule: buildTimelineScheduleForAutomation(
+                  subtaskNode,
+                  item.subtaskTitle.trim(),
+                  item.dueDate,
+                  item.status
+                )
+              });
+              await updateNodeDescriptionIfNeeded(subtaskNode, item.note);
+
+              for (const staleNode of existingSubtaskNodes) {
+                if (staleNode.id === subtaskNode.id) continue;
+                await deleteNode(staleNode.id);
+                store.removeNode(staleNode.id);
+                treeMutated = true;
+              }
+              taskNode = await updateNodeDescriptionIfNeeded(taskNode, null);
+            } else {
+              for (const staleNode of existingSubtaskNodes) {
+                await deleteNode(staleNode.id);
+                store.removeNode(staleNode.id);
+                treeMutated = true;
+              }
+              taskNode = await updateNodeDescriptionIfNeeded(taskNode, item.note);
+            }
+
+            usedTaskNodeIds.add(taskNode.id);
+          }
+
+          for (const staleTaskNode of existingTaskNodes) {
+            if (usedTaskNodeIds.has(staleTaskNode.id)) continue;
+            await deleteNode(staleTaskNode.id);
+            store.removeNode(staleTaskNode.id);
+            treeMutated = true;
+          }
+
+          usedDeliverableNodeIds.add(deliverableNode.id);
+        }
+
+        for (const staleDeliverableNode of existingManagedDeliverables) {
+          if (usedDeliverableNodeIds.has(staleDeliverableNode.id)) continue;
+          await deleteNode(staleDeliverableNode.id);
+          store.removeNode(staleDeliverableNode.id);
+          treeMutated = true;
+        }
+      }
+
+      if (treeMutated) {
+        await store.refreshTree();
+      }
+    },
+    [ensureWorkareaRootNodeForOwner, store]
+  );
+
+  const runProcedureEngineSync = useCallback(async () => {
+    if (procedureEngineSyncInFlightRef.current) {
+      procedureEngineSyncPendingRef.current = true;
+      return;
+    }
+
+    procedureEngineSyncInFlightRef.current = true;
+    try {
+      do {
+        procedureEngineSyncPendingRef.current = false;
+        const nodesSnapshot = await getAllNodes();
+        const formulaUpdates = computeProcedureFormulaUpdates(nodesSnapshot);
+        if (formulaUpdates.length > 0) {
+          for (const update of formulaUpdates) {
+            const currentNode = nodesSnapshot.find((node) => node.id === update.tableNodeId) ?? null;
+            if (!currentNode) continue;
+            const nextProperties: Record<string, unknown> = {
+              ...(currentNode.properties as Record<string, unknown> | undefined),
+              [PROCEDURE_RECORDS_PROPERTY_KEY]: update.records
+            };
+            await updateNodeProperties(currentNode.id, nextProperties);
+            store.patchNode(currentNode.id, {
+              properties: nextProperties,
+              updatedAt: Date.now()
+            });
+          }
+          procedureEngineSyncPendingRef.current = true;
+          continue;
+        }
+
+        const automationPlans = buildProcedureExecutionAutomationPlans(nodesSnapshot);
+        await syncProcedureExecutionAutomationTree(automationPlans, nodesSnapshot);
+      } while (procedureEngineSyncPendingRef.current);
+    } finally {
+      procedureEngineSyncInFlightRef.current = false;
+    }
+  }, [store, syncProcedureExecutionAutomationTree]);
+
+  useEffect(() => {
+    void runProcedureEngineSync();
+  }, [runProcedureEngineSync, store.allNodes]);
+
+  const resolveNodeWorkspaceTarget = useCallback(
+    (targetNodeId?: string | null): AppNode | null => {
+      const requestedNodeId =
+        targetNodeId === undefined
+          ? store.currentNode?.id ?? selectedNode?.id ?? store.selectedNodeId ?? null
+          : targetNodeId;
+      const requestedNode =
+        requestedNodeId !== null && requestedNodeId !== undefined
+          ? nodeById.get(requestedNodeId) ?? store.allNodes.find((node) => node.id === requestedNodeId) ?? null
+          : null;
+      if (!requestedNode) return null;
+      if (requestedNode.properties?.odeDashboardWidget === true) {
+        if (!requestedNode.parentId || requestedNode.parentId === ROOT_PARENT_ID) return null;
+        const parentNode =
+          nodeById.get(requestedNode.parentId) ??
+          store.allNodes.find((node) => node.id === requestedNode.parentId) ??
+          null;
+        return parentNode && !isFileLikeNode(parentNode) ? parentNode : null;
+      }
+      if (isFileLikeNode(requestedNode)) {
+        if (!requestedNode.parentId || requestedNode.parentId === ROOT_PARENT_ID) return null;
+        return (
+          nodeById.get(requestedNode.parentId) ??
+          store.allNodes.find((node) => node.id === requestedNode.parentId) ??
+          null
+        );
+      }
+      return requestedNode;
+    },
+    [nodeById, selectedNode, store.allNodes, store.currentNode?.id, store.selectedNodeId]
+  );
+
   const openNodeInWorkarea = async (
     targetNodeId?: string | null,
     options?: { deliverableId?: string | null; openExecution?: boolean }
@@ -12245,14 +15351,16 @@ export default function App() {
         : null;
     const ownerNodeId = resolveWorkareaOwnerNodeId(targetNodeId);
     if (!ownerNodeId) return;
+    if (!ensureNodeAccessAllowed([targetNode?.id ?? ownerNodeId], "read")) return;
     await ensureLegacyWorkareaTreeForOwner(ownerNodeId);
     const browseTargetId = targetNode && isWorkareaItemNode(targetNode) ? targetNode.id : ownerNodeId;
     setWorkspaceMode("grid");
-    setDesktopViewMode(desktopBrowseViewModeRef.current === "details" ? "details" : "grid");
+    setDesktopViewMode("grid");
     setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("execution"));
     setSelectionSurface("tree");
     setKeyboardSurface("tree");
     setExecutionQuickOpenDeliverableId(options?.deliverableId ?? null);
+    setExecutionBrowseNodeId(browseTargetId);
     await store.navigateTo(browseTargetId);
     updateExpandedIdsForContext("workarea", (prev) => {
       const next = new Set(prev);
@@ -12273,14 +15381,33 @@ export default function App() {
   };
   openNodeInWorkareaRef.current = openNodeInWorkarea;
 
+  const toggleNodeMetaCapability = useCallback(
+    (
+      properties: Record<string, unknown> | undefined,
+      capability: MetaCapability,
+      enabled: boolean
+    ): Record<string, unknown> => {
+      const nextCapabilities = new Set(readExplicitMetaCapabilities(properties));
+      if (enabled) {
+        nextCapabilities.add(capability);
+      } else {
+        nextCapabilities.delete(capability);
+      }
+      return mergeNodeMetaCapabilities(properties, Array.from(nextCapabilities));
+    },
+    []
+  );
+
   const setNodeWorkareaOwner = async (nodeId: string, enabled: boolean) => {
     const node = nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null;
     if (!node || isFileLikeNode(node) || isWorkareaItemNode(node)) return;
     if (!ensureStructureMutationAllowed([node.id], { scope: "workarea" })) return;
 
-    const nextProperties: Record<string, unknown> = {
-      ...(node.properties as Record<string, unknown> | undefined)
-    };
+    const nextProperties: Record<string, unknown> = toggleNodeMetaCapability(
+      node.properties as Record<string, unknown> | undefined,
+      "work",
+      enabled
+    );
     if (enabled) {
       nextProperties.odeWorkareaOwner = true;
     } else {
@@ -12307,6 +15434,113 @@ export default function App() {
       await openNodeInWorkarea(node.id);
     }
   };
+
+  const openNodeHomeView = useCallback(
+    async (targetNodeId?: string | null) => {
+      const targetNode = resolveNodeWorkspaceTarget(targetNodeId);
+      if (!targetNode) return;
+      if (!ensureNodeAccessAllowed([targetNode.id], "read")) return;
+
+      exitDocumentationMode();
+      clearActiveDesktopNodeTab();
+      setWorkspaceMode("grid");
+      setDesktopViewMode("dashboard");
+      setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("structure"));
+      setExecutionQuickOpenDeliverableId(null);
+      await store.navigateTo(targetNode.id);
+      setPrimarySelection(targetNode.id, "grid");
+      setSelectionSurface("grid");
+      setKeyboardSurface("grid");
+    },
+    [
+      clearActiveDesktopNodeTab,
+      ensureNodeAccessAllowed,
+      exitDocumentationMode,
+      resolveNodeWorkspaceTarget,
+      store
+    ]
+  );
+
+  const openNodeExecutionView = useCallback(
+    async (targetNodeId?: string | null) => {
+      const targetNode = resolveNodeWorkspaceTarget(targetNodeId);
+      if (!targetNode) return;
+
+      exitDocumentationMode();
+      clearActiveDesktopNodeTab();
+      const ownerNodeId = resolveWorkareaOwnerNodeId(targetNode.id);
+      if (!ownerNodeId) {
+        await setNodeWorkareaOwner(targetNode.id, true);
+        return;
+      }
+      await openNodeInWorkarea(targetNode.id);
+    },
+    [
+      clearActiveDesktopNodeTab,
+      exitDocumentationMode,
+      openNodeInWorkarea,
+      resolveNodeWorkspaceTarget,
+      setNodeWorkareaOwner
+    ]
+  );
+
+  const openNodeTimelineView = useCallback(
+    async (targetNodeId?: string | null) => {
+      const targetNode = resolveNodeWorkspaceTarget(targetNodeId);
+      if (!targetNode) return;
+      if (!ensureNodeAccessAllowed([targetNode.id], "read")) return;
+
+      exitDocumentationMode();
+      clearActiveDesktopNodeTab();
+      const workareaOwnerNodeId = resolveWorkareaOwnerNodeId(targetNode.id);
+      const nextFocusMode: WorkspaceFocusMode = workareaOwnerNodeId ? "execution" : "structure";
+
+      if (workareaOwnerNodeId) {
+        await ensureLegacyWorkareaTreeForOwner(workareaOwnerNodeId);
+      }
+
+      setWorkspaceMode("timeline");
+      setDesktopViewMode("grid");
+      setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode(nextFocusMode));
+      setExecutionQuickOpenDeliverableId(null);
+      await store.navigateTo(targetNode.id);
+      await refreshTreeAndKeepContext(
+        targetNode.id,
+        [targetNode.id, ...collectAncestorNodeIds(targetNode.id, nodeById)],
+        "timeline"
+      );
+      setPrimarySelection(targetNode.id, "timeline");
+      setSelectionSurface("timeline");
+      setKeyboardSurface("timeline");
+    },
+    [
+      clearActiveDesktopNodeTab,
+      ensureLegacyWorkareaTreeForOwner,
+      ensureNodeAccessAllowed,
+      exitDocumentationMode,
+      nodeById,
+      resolveNodeWorkspaceTarget,
+      store
+    ]
+  );
+
+  const handleProcedureNodeSelection = useCallback(
+    (nodeId: string) => {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.add(nodeId);
+        for (const ancestorId of collectAncestorNodeIds(nodeId, nodeById)) {
+          next.add(ancestorId);
+        }
+        return next;
+      });
+      setTreeSelectionRevealRequestKey((current) => current + 1);
+      setPrimarySelection(nodeId, "tree");
+      setSelectionSurface("tree");
+      setKeyboardSurface("procedure");
+    },
+    [nodeById, setExpandedIds]
+  );
 
   const addWorkareaDeliverable = async (ownerNodeId: string) => {
     if (!ensureStructureMutationAllowed([ownerNodeId], { scope: "workarea" })) return;
@@ -12541,7 +15775,7 @@ export default function App() {
         sourceNodeIds: items.map((item) => item.sourceNodeId),
         items,
         copiedAt: Date.now(),
-        sourceApp: "odetool-rebuild"
+        sourceApp: APP_SOURCE_ID
       };
     },
     [resolveExecutionTaskContext]
@@ -12806,6 +16040,138 @@ export default function App() {
     [ensureStructureMutationAllowed, store]
   );
 
+  const createDashboardWidgetNode = useCallback(
+    async (parentNodeId: string) => {
+      const parentNode = nodeById.get(parentNodeId) ?? null;
+      if (!parentNode || isFileLikeNode(parentNode)) return null;
+      if (!ensureStructureMutationAllowed([parentNodeId])) return null;
+
+      const siblings = byParent.get(parentNodeId) ?? [];
+      const siblingNames = new Set(siblings.map((node) => node.name.trim().toLowerCase()));
+      let nextIndex = siblings.length + 1;
+      let nextTitle = `Widget ${nextIndex}`;
+      while (siblingNames.has(nextTitle.toLowerCase())) {
+        nextIndex += 1;
+        nextTitle = `Widget ${nextIndex}`;
+      }
+
+      const createdWidget = await createNode(parentNodeId, nextTitle, "folder");
+      const nextProperties: Record<string, unknown> = {
+        ...mergeNodeMetaCapabilities(createdWidget.properties ?? {}, ["insight"]),
+        odeDashboardWidget: true,
+        odeDashboardWidgetType: "metric",
+        odeDashboardSourceKind: "database_records",
+        odeDashboardAggregation: "count",
+        odeDashboardDisplayFieldIds: [],
+        odeDashboardLimit: 6
+      };
+      await updateNodeProperties(createdWidget.id, nextProperties);
+      await refreshTreeAndKeepContext(createdWidget.id, [parentNodeId], "grid", parentNodeId);
+      return createdWidget.id;
+    },
+    [byParent, ensureStructureMutationAllowed, nodeById, refreshTreeAndKeepContext]
+  );
+
+  const saveDashboardWidgetProperties = useCallback(
+    async (nodeId: string, properties: Record<string, unknown>) => {
+      const node = nodeById.get(nodeId) ?? null;
+      if (!node) return;
+      if (!ensureStructureMutationAllowed([nodeId])) return;
+      const nextProperties: Record<string, unknown> = {
+        ...mergeNodeMetaCapabilities(node.properties ?? {}, ["insight"]),
+        ...properties,
+        odeDashboardWidget: true
+      };
+      await saveProcedureNodeProperties(nodeId, nextProperties);
+    },
+    [ensureStructureMutationAllowed, nodeById, saveProcedureNodeProperties]
+  );
+
+  const moveDashboardWidgetNode = useCallback(
+    async (nodeId: string, direction: "up" | "down" | "left" | "right") => {
+      const node = nodeById.get(nodeId) ?? null;
+      if (!node) return;
+      if (!ensureStructureMutationAllowed([nodeId])) return;
+
+      const parentId = node.parentId === ROOT_PARENT_ID ? null : node.parentId;
+      const allChildren = byParent.get(node.parentId) ?? [];
+      const widgetChildren = allChildren.filter((child) => isDashboardWidgetNode(child));
+      const widgetIndex = widgetChildren.findIndex((child) => child.id === nodeId);
+      if (widgetIndex < 0) return;
+
+      const delta = direction === "left" ? -1 : direction === "right" ? 1 : direction === "up" ? -2 : 2;
+      const targetWidgetIndex = Math.max(0, Math.min(widgetChildren.length - 1, widgetIndex + delta));
+      if (targetWidgetIndex === widgetIndex) return;
+
+      const nextWidgetOrder = widgetChildren.slice();
+      const [movedWidget] = nextWidgetOrder.splice(widgetIndex, 1);
+      nextWidgetOrder.splice(targetWidgetIndex, 0, movedWidget);
+
+      let nextWidgetCursor = 0;
+      const nextChildren = allChildren.map((child) =>
+        isDashboardWidgetNode(child) ? nextWidgetOrder[nextWidgetCursor++] : child
+      );
+      const nextIndex = nextChildren.findIndex((child) => child.id === nodeId);
+      const afterId = nextIndex > 0 ? nextChildren[nextIndex - 1]?.id ?? null : null;
+
+      await moveNode(nodeId, parentId, afterId);
+      await refreshTreeAndKeepContext(nodeId, parentId ? [parentId] : [], "grid", parentId);
+    },
+    [byParent, ensureStructureMutationAllowed, nodeById, refreshTreeAndKeepContext]
+  );
+
+  const moveProcedureNodeWithinParent = useCallback(
+    async (nodeId: string, direction: "up" | "down") => {
+      const node = nodeById.get(nodeId) ?? null;
+      if (!node) return;
+      if (!ensureStructureMutationAllowed([nodeId])) return;
+
+      const parentId = node.parentId === ROOT_PARENT_ID ? null : node.parentId;
+      const allChildren = byParent.get(node.parentId) ?? [];
+      const siblingGroup = isProcedureFieldNode(node)
+        ? allChildren.filter((child) => isProcedureFieldNode(child))
+        : allChildren.filter((child) => child.type !== "file" && !isProcedureFieldNode(child));
+      const itemIndex = siblingGroup.findIndex((child) => child.id === nodeId);
+      if (itemIndex < 0) return;
+
+      const targetIndex = direction === "up" ? itemIndex - 1 : itemIndex + 1;
+      if (targetIndex < 0 || targetIndex >= siblingGroup.length) return;
+
+      const nextGroup = siblingGroup.slice();
+      const [movedNode] = nextGroup.splice(itemIndex, 1);
+      nextGroup.splice(targetIndex, 0, movedNode);
+
+      let nextGroupCursor = 0;
+      const nextChildren = allChildren.map((child) =>
+        isProcedureFieldNode(node)
+          ? isProcedureFieldNode(child)
+            ? nextGroup[nextGroupCursor++]
+            : child
+          : child.type !== "file" && !isProcedureFieldNode(child)
+            ? nextGroup[nextGroupCursor++]
+            : child
+      );
+      const nextIndex = nextChildren.findIndex((child) => child.id === nodeId);
+      const afterId = nextIndex > 0 ? nextChildren[nextIndex - 1]?.id ?? null : null;
+
+      await moveNode(nodeId, parentId, afterId);
+      await refreshTreeAndKeepContext(nodeId, parentId ? [parentId] : [], "tree");
+    },
+    [byParent, ensureStructureMutationAllowed, nodeById, refreshTreeAndKeepContext]
+  );
+
+  const deleteDashboardWidgetNode = useCallback(
+    async (nodeId: string) => {
+      const node = nodeById.get(nodeId) ?? null;
+      if (!node) return;
+      if (!ensureStructureMutationAllowed([nodeId])) return;
+      const parentId = node.parentId === ROOT_PARENT_ID ? null : node.parentId;
+      await deleteNode(nodeId);
+      await refreshTreeAndKeepContext(parentId ?? undefined, parentId ? [parentId] : [], "grid", parentId);
+    },
+    [ensureStructureMutationAllowed, nodeById, refreshTreeAndKeepContext]
+  );
+
   const createProcedureDocumentItem = useCallback(
     async (
       anchorNodeId: string,
@@ -12844,16 +16210,8 @@ export default function App() {
         table: "New Table",
         attachment: "New Attachment"
       };
-      const newNodeId = await createNewTopicNode(parentId, "tree", {
-        initialText: titles[kind],
-        expandNodeIds: [parentId ?? ROOT_PARENT_ID],
-        repositionAfterId: afterId,
-        reposition: Boolean(afterId) || !canInsertInside,
-        startInlineEdit: false,
-        commitInitialText: true
-      });
-      if (!newNodeId) return null;
-
+      const shouldStartBlankInlineEdit = kind === "section";
+      const initialText = kind === "section" ? "" : titles[kind];
       const nextProperties: Record<string, unknown> = {
         odeProcedureItemType: kind === "table" ? "field" : kind
       };
@@ -12867,21 +16225,32 @@ export default function App() {
         nextProperties.odeProcedureOptions = ["Column 1", "Column 2"];
         nextProperties.odeProcedureTableRows = [["", ""]];
       }
-      await saveProcedureNodeProperties(newNodeId, nextProperties);
-      setPrimarySelection(newNodeId, "tree");
+      const newNodeId = await createNewTopicNode(parentId, "tree", {
+        initialText,
+        initialProperties: nextProperties,
+        expandNodeIds: [parentId ?? ROOT_PARENT_ID],
+        repositionAfterId: afterId,
+        reposition: Boolean(afterId) || !canInsertInside,
+        startInlineEdit: shouldStartBlankInlineEdit,
+        commitInitialText: !shouldStartBlankInlineEdit
+      });
+      if (!newNodeId) return null;
       setSelectionSurface("tree");
       setKeyboardSurface("procedure");
+      if (kind === "field" || kind === "table") {
+        setProcedureFieldEditorTargetNodeId(newNodeId);
+      }
       return newNodeId;
     },
-    [byParent, createNewTopicNode, procedureRootNode?.id, saveProcedureNodeProperties, store.allNodes]
+    [byParent, createNewTopicNode, procedureRootNode?.id, store.allNodes]
   );
 
   const attachPickedFilesToProcedureNode = useCallback(
     async (nodeId: string, mode: "all" | "images") => {
-      if (!isDesktopRuntime) return 0;
-      if (!ensureStructureMutationAllowed([nodeId], { scope: "content" })) return 0;
+      if (!isDesktopRuntime) return [];
+      if (!ensureStructureMutationAllowed([nodeId], { scope: "content" })) return [];
       const targetNode = nodeById.get(nodeId) ?? null;
-      if (!targetNode || isFileLikeNode(targetNode)) return 0;
+      if (!targetNode || isFileLikeNode(targetNode)) return [];
 
       try {
         const picked = await pickWindowsFilesForImport();
@@ -12900,22 +16269,36 @@ export default function App() {
           mode === "images"
             ? cleaned.filter((path) => IMAGE_PREVIEW_EXTENSIONS.has(extractFileExtensionLower(path)))
             : cleaned;
-        if (filtered.length === 0) return 0;
+        if (filtered.length === 0) return [];
 
         const created = await importFilesToNode(nodeId, filtered);
-        if (created.length === 0) return 0;
+        if (created.length === 0) return [];
+
+        if (mode === "images") {
+          for (const createdNode of created) {
+            const nextProperties: Record<string, unknown> = {
+              ...(createdNode.properties ?? {}),
+              [PROCEDURE_INLINE_ASSET_PROPERTY]: true
+            };
+            await updateNodeProperties(createdNode.id, nextProperties);
+            store.patchNode(createdNode.id, {
+              properties: nextProperties,
+              updatedAt: Date.now()
+            });
+          }
+        }
 
         await refreshTreeAndKeepContext(nodeId, [nodeId], "tree");
         setPrimarySelection(nodeId, "tree");
         setSelectionSurface("tree");
         setKeyboardSurface("procedure");
         setProjectError(null);
-        return created.length;
+        return created;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
         setProjectNotice(null);
         setProjectError(t("share.import_failed", { reason }));
-        return 0;
+        return [];
       }
     },
     [
@@ -12923,12 +16306,14 @@ export default function App() {
       isDesktopRuntime,
       nodeById,
       refreshTreeAndKeepContext,
+      store,
+      updateNodeProperties,
       t
     ]
   );
 
   const attachFilesToProcedureNode = useCallback(
-    async (nodeId: string) => attachPickedFilesToProcedureNode(nodeId, "all"),
+    async (nodeId: string) => (await attachPickedFilesToProcedureNode(nodeId, "all")).length,
     [attachPickedFilesToProcedureNode]
   );
 
@@ -12965,7 +16350,7 @@ export default function App() {
     insertBefore: boolean,
     surface: SelectionSurface = selectionSurface
   ) => {
-    const resolvedSurface = resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
+    const resolvedSurface = resolveScopedCreationSurface(surface);
     const selected = store.allNodes.find((item) => item.id === nodeId);
     if (!selected) return;
     if (
@@ -12991,7 +16376,7 @@ export default function App() {
 
     // In a scoped workspace, the visible project root has no visible siblings.
     // Treat Enter on that root as top-level branch creation inside the workspace.
-    if (activeProjectRootId && selected.id === activeProjectRootId) {
+    if (activeWorkspaceRootId && selected.id === activeWorkspaceRootId) {
       const existingChildren = byParent.get(selected.id) ?? [];
       const anchorAfterId = insertBefore
         ? null
@@ -13010,25 +16395,12 @@ export default function App() {
     const siblings = byParent.get(selected.parentId) ?? [];
     const selectedIndex = siblings.findIndex((item) => item.id === selected.id);
     const previousSiblingId = selectedIndex > 0 ? siblings[selectedIndex - 1].id : null;
-    const selectedIsProcedureField =
-      desktopViewModeRef.current === "procedure" &&
-      (selected.properties?.odeProcedureItemType === "field" ||
-        (typeof selected.properties?.odeProcedureFieldType === "string" &&
-          selected.properties.odeProcedureFieldType.trim().length > 0));
-
     const afterId = insertBefore ? previousSiblingId : selected.id;
-    const newNodeId = await createNewTopicNode(parentId, resolvedSurface, {
+    await createNewTopicNode(parentId, resolvedSurface, {
       expandNodeIds: [selected.parentId],
       repositionAfterId: afterId,
       reposition: true
     });
-    if (selectedIsProcedureField && newNodeId) {
-      await saveProcedureNodeProperties(newNodeId, {
-        odeProcedureItemType: "field",
-        odeProcedureFieldType: "short_text",
-        odeProcedureShowInMasterList: true
-      });
-    }
   };
 
   const createChildNode = async (
@@ -13040,7 +16412,7 @@ export default function App() {
       commitInitialText?: boolean;
     }
   ) => {
-    const resolvedSurface = resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
+    const resolvedSurface = resolveScopedCreationSurface(surface);
     const selectedNode = store.allNodes.find((item) => item.id === nodeId) ?? null;
     if (
       !ensureStructureMutationAllowed([nodeId], {
@@ -13066,7 +16438,7 @@ export default function App() {
           selected.properties.odeProcedureFieldType.trim().length > 0);
       if (isProcedureField) {
         const parentId = selected.parentId === ROOT_PARENT_ID ? null : selected.parentId;
-        const newNodeId = await createNewTopicNode(parentId, resolvedSurface, {
+        await createNewTopicNode(parentId, resolvedSurface, {
           initialText,
           expandNodeIds: selected.parentId ? [selected.parentId] : [],
           repositionAfterId: selected.id,
@@ -13074,20 +16446,13 @@ export default function App() {
           startInlineEdit: options?.startInlineEdit,
           commitInitialText: options?.commitInitialText
         });
-        if (newNodeId) {
-          await saveProcedureNodeProperties(newNodeId, {
-            odeProcedureItemType: "field",
-            odeProcedureFieldType: "short_text",
-            odeProcedureShowInMasterList: true
-          });
-        }
         return;
       }
     }
 
     if (isFileLikeNode(selected)) {
       const parentId = selected.parentId === ROOT_PARENT_ID ? null : selected.parentId;
-      const newNodeId = await createNewTopicNode(parentId, resolvedSurface, {
+      await createNewTopicNode(parentId, resolvedSurface, {
         initialText,
         expandNodeIds: [selected.parentId],
         repositionAfterId: selected.id,
@@ -13095,29 +16460,15 @@ export default function App() {
         startInlineEdit: options?.startInlineEdit,
         commitInitialText: options?.commitInitialText
       });
-      if (desktopViewModeRef.current === "procedure" && newNodeId) {
-        await saveProcedureNodeProperties(newNodeId, {
-          odeProcedureItemType: "field",
-          odeProcedureFieldType: "short_text",
-          odeProcedureShowInMasterList: true
-        });
-      }
       return;
     }
 
-    const newNodeId = await createNewTopicNode(selected.id, resolvedSurface, {
+    await createNewTopicNode(selected.id, resolvedSurface, {
       initialText,
       expandNodeIds: [selected.id],
       startInlineEdit: options?.startInlineEdit,
       commitInitialText: options?.commitInitialText
     });
-    if (desktopViewModeRef.current === "procedure" && newNodeId) {
-      await saveProcedureNodeProperties(newNodeId, {
-        odeProcedureItemType: "field",
-        odeProcedureFieldType: "short_text",
-        odeProcedureShowInMasterList: true
-      });
-    }
   };
 
   const createParentNode = async (nodeId: string, surface: SelectionSurface = selectionSurface) => {
@@ -13190,6 +16541,13 @@ export default function App() {
   const selectFromSearch = async (nodeId: string) => {
     const target = nodeById.get(nodeId);
     if (!target) return;
+    if (desktopViewMode === "library") {
+      selectReusableLibraryItem(nodeId, { surface: "tree" });
+      store.setSearchQuery("");
+      setSearchActiveIndex(0);
+      setSearchDropdownOpen(false);
+      return;
+    }
     if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
       await openNodeInWorkarea(nodeId);
       store.setSearchQuery("");
@@ -13310,8 +16668,7 @@ export default function App() {
     pasteClipboardBranch,
     duplicateSelectedBranch
   } = useBranchClipboardActions({
-    t,
-    selectedNode,
+    selectedNode: desktopViewMode === "library" ? selectedReusableLibraryNode : selectedNode,
     nodeById,
     byParent,
     currentFolderId: store.currentFolderId,
@@ -13322,14 +16679,17 @@ export default function App() {
     isNodeInSubtree,
     setSelectionFromIds,
     resolveBranchSourceIds: (sourceNodeId, surface) =>
-      resolveSelectedActionNodeIds(sourceNodeId, surface ?? selectionSurface, { filterDescendants: true }),
+      resolveSelectedActionNodeIds(
+        sourceNodeId,
+        surface ?? (desktopViewMode === "library" ? "tree" : selectionSurface),
+        { filterDescendants: true }
+      ),
     beginInlineEdit,
     refreshTreeAndKeepContext,
     writeBranchClipboardToSystem,
     readBranchClipboardFromSystem,
     clearBranchClipboardFromSystem,
     pasteExternalFilesFromClipboard,
-    buildCopyNameWithSuffix,
     ensureStructureMutationAllowed,
     buildSpecialClipboard: buildExecutionTaskClipboard,
     pasteSpecialClipboard: pasteExecutionTaskClipboard,
@@ -13395,7 +16755,10 @@ export default function App() {
         return;
       }
       event.preventDefault();
-      void pasteClipboardContent(store.selectedNodeId ?? undefined, selectionSurface, {
+      const targetNodeId =
+        desktopViewMode === "library" ? (librarySelectedNodeId ?? undefined) : (store.selectedNodeId ?? undefined);
+      const targetSurface: SelectionSurface = desktopViewMode === "library" ? "tree" : selectionSurface;
+      void pasteClipboardContent(targetNodeId, targetSurface, {
         clipboardData: event.clipboardData,
         rawText: readClipboardDataPlainText(event.clipboardData)
       });
@@ -13407,7 +16770,9 @@ export default function App() {
     };
   }, [
     commandBarOpen,
+    desktopViewMode,
     hasBlockingOverlayOpenWithMove,
+    librarySelectedNodeId,
     pasteClipboardContent,
     selectionSurface,
     store.selectedNodeId
@@ -13417,7 +16782,7 @@ export default function App() {
     targetNodeId: string | null,
     surface: SelectionSurface
   ) => {
-    const resolvedSurface = resolveEffectiveCreationSurfaceForWorkspace(surface, workspaceMode);
+    const resolvedSurface = resolveScopedCreationSurface(surface);
     if (targetNodeId) {
       await createChildNode(targetNodeId, resolvedSurface);
       return;
@@ -13435,34 +16800,57 @@ export default function App() {
     await createSurfaceDefaultTopic(resolvedSurface);
   };
 
-  const resolveTreeMoveSelectionIds = (sourceNodeId: string) =>
-    resolveSelectedActionNodeIds(sourceNodeId, "tree", { filterDescendants: true });
+  const resolveStructureMoveSurface = (
+    sourceNodeId: string,
+    surface: SelectionSurface = selectionSurface
+  ): SelectionSurface => {
+    if (surface === "timeline") return "tree";
+    if (surface === "grid" && !displayedGridIndexById.has(sourceNodeId) && displayedTreeIndexById.has(sourceNodeId)) {
+      return "tree";
+    }
+    return surface;
+  };
 
-  const resolveTreeMoveInPlans = (sourceNodeId: string) =>
+  const resolveTreeMoveSelectionIds = (
+    sourceNodeId: string,
+    surface: SelectionSurface = selectionSurface
+  ) =>
+    resolveSelectedActionNodeIds(sourceNodeId, resolveStructureMoveSurface(sourceNodeId, surface), {
+      filterDescendants: true
+    });
+
+  const resolveTreeMoveInPlans = (
+    sourceNodeId: string,
+    surface: SelectionSurface = selectionSurface
+  ) =>
     resolveTreeMoveInPlansState({
-      selectedNodeIds: resolveTreeMoveSelectionIds(sourceNodeId),
+      selectedNodeIds: resolveTreeMoveSelectionIds(sourceNodeId, surface),
       nodeById,
       byParent,
       workspaceRootIdSet
     });
 
-  const resolveTreeMoveOutPlans = (sourceNodeId: string) =>
+  const resolveTreeMoveOutPlans = (
+    sourceNodeId: string,
+    surface: SelectionSurface = selectionSurface
+  ) =>
     resolveTreeMoveOutPlansState({
-      selectedNodeIds: resolveTreeMoveSelectionIds(sourceNodeId),
+      selectedNodeIds: resolveTreeMoveSelectionIds(sourceNodeId, surface),
       nodeById,
       byParent,
       workspaceRootIdSet
     });
 
-  const canMoveTreeSelectionIn = (sourceNodeId: string) =>
-    resolveTreeMoveInPlans(sourceNodeId).length > 0;
+  const canMoveTreeSelectionIn = (sourceNodeId: string, surface: SelectionSurface = selectionSurface) =>
+    resolveTreeMoveInPlans(sourceNodeId, surface).length > 0;
 
-  const canMoveTreeSelectionOut = (sourceNodeId: string) =>
-    resolveTreeMoveOutPlans(sourceNodeId).length > 0;
+  const canMoveTreeSelectionOut = (sourceNodeId: string, surface: SelectionSurface = selectionSurface) =>
+    resolveTreeMoveOutPlans(sourceNodeId, surface).length > 0;
 
   const moveTreeNodeIn = async (nodeId: string, surface: SelectionSurface = "tree") => {
-    if (surface !== "tree") return;
-    const plans = resolveTreeMoveInPlans(nodeId);
+    const resolvedSurface = resolveStructureMoveSurface(nodeId, surface);
+    if (resolvedSurface !== "tree" && resolvedSurface !== "grid") return;
+    const plans = resolveTreeMoveInPlans(nodeId, resolvedSurface);
     if (plans.length === 0) return;
     if (
       !ensureStructureMutationAllowed(
@@ -13490,16 +16878,17 @@ export default function App() {
     await refreshTreeAndKeepContext(
       movedNodeIds[0],
       Array.from(ensureExpandedIds),
-      surface
+      resolvedSurface
     );
-    setSelectionFromIds(movedNodeIds, movedNodeIds[0], surface);
+    setSelectionFromIds(movedNodeIds, movedNodeIds[0], resolvedSurface);
   };
 
   const moveTreeNodeOut = async (nodeId: string, surface: SelectionSurface = "tree") => {
-    if (surface !== "tree") return;
-    const sourceNodeIds = resolveTreeMoveSelectionIds(nodeId);
+    const resolvedSurface = resolveStructureMoveSurface(nodeId, surface);
+    if (resolvedSurface !== "tree" && resolvedSurface !== "grid") return;
+    const sourceNodeIds = resolveTreeMoveSelectionIds(nodeId, resolvedSurface);
     if (sourceNodeIds.length === 0) return;
-    const plans = resolveTreeMoveOutPlans(nodeId);
+    const plans = resolveTreeMoveOutPlans(nodeId, resolvedSurface);
     if (plans.length === 0) return;
     if (
       !ensureStructureMutationAllowed(
@@ -13522,9 +16911,9 @@ export default function App() {
     await refreshTreeAndKeepContext(
       orderedMovedIds[0] ?? movedNodeIds[0],
       Array.from(ensureExpandedIds),
-      surface
+      resolvedSurface
     );
-    setSelectionFromIds(orderedMovedIds, orderedMovedIds[0] ?? null, surface);
+    setSelectionFromIds(orderedMovedIds, orderedMovedIds[0] ?? null, resolvedSurface);
   };
 
   const { runContextMenuAction } = useContextMenuActions({
@@ -13534,6 +16923,9 @@ export default function App() {
     setPrimarySelection,
     openScheduleModal,
     onCreateTopicFromContext: createTopicFromContext,
+    onCreateChantier: async (targetNodeId) => {
+      await openCreateChantierDialog(targetNodeId);
+    },
     onCreateTimelineTaskRelative: async (targetNodeId, options) => {
       await createExecutionTaskRelative(targetNodeId, {
         insertBefore: options.insertBefore,
@@ -13549,6 +16941,14 @@ export default function App() {
     onPasteBranch: pasteClipboardContent,
     onMoveToWorkspace: openMoveToWorkspaceModal,
     onDistributeToNAWorkspace: openNADistributionModal,
+    onSaveAsOrganisationModel: async (nodeId) => {
+      if (!nodeId) return;
+      await saveNodeAsReusableLibraryItem(nodeId, "organisation_model");
+    },
+    onSaveAsDatabaseTemplate: async (nodeId) => {
+      if (!nodeId) return;
+      await saveNodeAsReusableLibraryItem(nodeId, "database_template");
+    },
     onImportPackage: importNodeBranchPackage,
     onExportPackage: exportNodeBranchPackage,
     onOpenFileNode: openFileNode,
@@ -13566,7 +16966,7 @@ export default function App() {
     },
     onDeleteWorkareaDeliverable: deleteWorkareaDeliverable,
     onOpenQuickAccessNode: openQuickAccessNode,
-    onPreviewFileNode: setMindMapReviewNodeId,
+    onPreviewFileNode: openFilePreview,
     onCopySelectedBranch: copySelectedBranch,
     onDuplicateSelectedBranch: duplicateSelectedBranch,
     onToggleFavoriteNode: toggleFavoriteNode,
@@ -13581,7 +16981,8 @@ export default function App() {
     onDeleteSelectedNodes: async (sourceNodeId, surface) => {
       await removeSelectedNodes({ confirm: true, sourceNodeId, surface });
     },
-    onSetNodeStructureLocked: setNodeStructureLocked
+    onSetNodeStructureLocked: setNodeStructureLocked,
+    onEditNodeAccessPolicy: openNodeAccessPolicyEditor
   });
 
   const activeKeyboardSelectionSurface = resolveSelectionSurfaceForKeyboardSurface(
@@ -13604,7 +17005,7 @@ export default function App() {
     contextMenuOpen: Boolean(contextMenu),
     editingNodeId,
     branchClipboardPresent: Boolean(branchClipboard),
-    selectedNodeId: store.selectedNodeId,
+    selectedNodeId: desktopViewMode === "library" ? librarySelectedNodeId : store.selectedNodeId,
     currentFolderId: store.currentFolderId,
     displayedTreeRows,
     displayedTreeIndexById,
@@ -13614,8 +17015,8 @@ export default function App() {
     gridNodes: desktopGridNodes,
     nodeById,
     byParent,
-    selectedNodeIds,
-    selectionAnchorId,
+    selectedNodeIds: desktopViewMode === "library" ? librarySelectedNodeIds : selectedNodeIds,
+    selectionAnchorId: desktopViewMode === "library" ? librarySelectionAnchorId : selectionAnchorId,
     selectionSurface,
     keyboardSurface,
     expandedIds,
@@ -13629,9 +17030,15 @@ export default function App() {
       setCanPasteBranch(false);
       void clearBranchClipboardFromSystem();
     },
-    onSetSelectedNodeId: store.setSelectedNodeId,
-    onSetSelectedNodeIds: setSelectedNodeIds,
-    onSetSelectionAnchorId: setSelectionAnchorId,
+    onSetSelectedNodeId: (nodeId) => {
+      if (desktopViewMode === "library") {
+        setLibrarySelectedNodeId(nodeId);
+        return;
+      }
+      store.setSelectedNodeId(nodeId);
+    },
+    onSetSelectedNodeIds: desktopViewMode === "library" ? setLibrarySelectedNodeIds : setSelectedNodeIds,
+    onSetSelectionAnchorId: desktopViewMode === "library" ? setLibrarySelectionAnchorId : setSelectionAnchorId,
     onSetSelectionSurface: setSelectionSurface,
     onSetExpandedIds: setExpandedIds,
     onSetPrimarySelection: setPrimarySelection,
@@ -13639,8 +17046,21 @@ export default function App() {
     onPasteClipboardBranch: pasteClipboardContent,
     onDuplicateSelectedBranch: duplicateSelectedBranch,
     onNavigateUpOneFolder: navigateUpOneFolder,
-    onOpenFolder: openFolder,
-    onOpenFileNode: openFileNode,
+    onBrowseTreeNode: async (nodeId) => {
+      if (desktopViewMode === "library") {
+        selectReusableLibraryItem(nodeId, { surface: "tree" });
+        return;
+      }
+      if (documentationModeActive) {
+        setSelectionSurface("tree");
+        setKeyboardSurface("procedure");
+        return;
+      }
+      await browseTreeNodeInGrid(nodeId, { preserveTreeSurface: true });
+    },
+    onOpenLibraryItem: async (nodeId) => {
+      await openReusableLibraryItemForReview(nodeId);
+    },
     onBeginInlineEdit: beginInlineEdit,
     onCreateNodeWithoutSelection: async (initialText?: string) => {
       if (documentationModeActive) {
@@ -13650,17 +17070,43 @@ export default function App() {
           return;
         }
       }
-      await createSurfaceDefaultTopic(keyboardCreationSurface, initialText);
+      await createSurfaceDefaultTopic(keyboardCreationSurface, initialText, {
+        inlineEditSurface:
+          workspaceMode === "grid" &&
+          keyboardCreationSurface === "grid" &&
+          workspaceFocusMode !== "execution"
+            ? "tree"
+            : undefined
+      });
     },
     onCreateChildNode: async (nodeId) => {
       await createChildNode(nodeId, activeKeyboardSelectionSurface);
     },
     onCreateProcedureSectionNode: async (nodeId) => {
       if (documentationModeActive) {
-        await createProcedureDocumentItem(nodeId, "section", "inside");
+        await createProcedureDocumentItem(nodeId, "section", "after");
         return;
       }
       await createSiblingNode(nodeId, false, activeKeyboardSelectionSurface);
+    },
+    onCreateProcedureFieldNode: async (nodeId) => {
+      if (!documentationModeActive) {
+        if (nodeId) {
+          await createChildNode(nodeId, activeKeyboardSelectionSurface);
+        }
+        return;
+      }
+      const targetNodeId = nodeId ?? procedureSelectedNode?.id ?? procedureRootNode?.id ?? null;
+      if (!targetNodeId) return;
+      const targetNode = nodeById.get(targetNodeId) ?? null;
+      const insertPosition =
+        targetNode &&
+        (targetNode.properties?.odeProcedureItemType === "field" ||
+          (typeof targetNode.properties?.odeProcedureFieldType === "string" &&
+            targetNode.properties.odeProcedureFieldType.trim().length > 0))
+          ? "after"
+          : "inside";
+      await createProcedureDocumentItem(targetNodeId, "field", insertPosition);
     },
     onCreateParentNode: async (nodeId) => {
       await createParentNode(nodeId, activeKeyboardSelectionSurface);
@@ -14084,13 +17530,31 @@ export default function App() {
   const handleWindowMinimize = async () => {
     const win = getDesktopWindow();
     if (!win) return;
-    if (await minimizeWindowsDesktopPrimaryWindow(win)) return;
+    clearDesktopWindowHeaderDragSession();
+    clearScheduledDesktopWindowStateSync();
+
+    const [minimized, maximized] = await Promise.all([
+      win.isMinimized().catch(() => false),
+      isDesktopWindowEffectivelyMaximized(win)
+    ]);
+    if (minimized) return;
+    if (!maximized) {
+      desktopWindowRestoreBoundsRef.current = await captureDesktopWindowRestoreBounds(win);
+    }
+
+    if (await minimizeWindowsDesktopPrimaryWindow(win)) {
+      scheduleDesktopWindowChromeStateSync(win, [180, 360, 540]);
+      return;
+    }
     await win.minimize();
+    scheduleDesktopWindowChromeStateSync(win, [180, 360, 540]);
   };
 
   const handleWindowToggleMaximize = async () => {
     const win = getDesktopWindow();
     if (!win) return;
+    clearDesktopWindowHeaderDragSession();
+    clearScheduledDesktopWindowStateSync();
 
     const [fullscreen, nativeMaximized, effectiveMaximized] = await Promise.all([
       getWindowsDesktopPrimaryWindowFullscreenState(win),
@@ -14119,17 +17583,21 @@ export default function App() {
       }
 
       setIsWindowMaximized(false);
+      scheduleDesktopWindowChromeStateSync(win);
     } else {
       desktopWindowRestoreBoundsRef.current = await captureDesktopWindowRestoreBounds(win);
-      const fullscreenApplied = await setDesktopWindowFullscreen(win, true);
-      if (!fullscreenApplied) {
-        await fitDesktopWindowToWorkArea({
-          fillWorkArea: true,
-          coverTaskbar: true,
-          margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
+      const fittedToWorkArea = await fitDesktopWindowToWorkArea({
+        fillWorkArea: true,
+        coverTaskbar: false,
+        margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
+      });
+      if (!fittedToWorkArea) {
+        await win.maximize().catch(() => {
+          // Native maximize is the safest fallback because it respects the OS work area.
         });
       }
       setIsWindowMaximized(await isDesktopWindowEffectivelyMaximized(win));
+      scheduleDesktopWindowChromeStateSync(win);
     }
   };
 
@@ -14157,21 +17625,21 @@ export default function App() {
   };
 
   const resolveCommandParentId = (): string | null => {
-    const selectedId = store.selectedNodeId ?? store.currentFolderId ?? activeProjectRootId;
-    if (!selectedId) return activeProjectRootId ?? null;
+    const selectedId = store.selectedNodeId ?? store.currentFolderId ?? activeWorkspaceRootId;
+    if (!selectedId) return activeWorkspaceRootId ?? null;
     const selected = nodeById.get(selectedId);
-    if (!selected) return activeProjectRootId ?? null;
+    if (!selected) return activeWorkspaceRootId ?? null;
     if (selected.type === "folder") {
-      if (activeProjectRootId && projectScopedNodeIds && !projectScopedNodeIds.has(selected.id)) {
-        return activeProjectRootId;
+      if (activeWorkspaceRootId && projectScopedNodeIds && !projectScopedNodeIds.has(selected.id)) {
+        return activeWorkspaceRootId;
       }
       return selected.id;
     }
     const parentId = selected.parentId === ROOT_PARENT_ID ? null : selected.parentId;
-    if (activeProjectRootId && parentId && projectScopedNodeIds && !projectScopedNodeIds.has(parentId)) {
-      return activeProjectRootId;
+    if (activeWorkspaceRootId && parentId && projectScopedNodeIds && !projectScopedNodeIds.has(parentId)) {
+      return activeWorkspaceRootId;
     }
-    return parentId ?? activeProjectRootId ?? null;
+    return parentId ?? activeWorkspaceRootId ?? null;
   };
 
   const resolveNodeByCommandRef = (
@@ -14827,6 +18295,429 @@ export default function App() {
     }
     return created.id;
   };
+
+  const cloneReusableLibrarySnapshot = async (
+    snapshot: ReusableLibrarySnapshot,
+    parentId: string | null,
+    afterId: string | null,
+    options?: {
+      rootNameOverride?: string;
+      rootPropertiesOverride?: Record<string, unknown>;
+      transformProperties?: (params: {
+        properties: Record<string, unknown>;
+        snapshot: ReusableLibrarySnapshot;
+        isRoot: boolean;
+        depth: number;
+        parentId: string | null;
+      }) => Record<string, unknown>;
+    }
+  ): Promise<string> => {
+    const cloneNode = async (
+      currentSnapshot: ReusableLibrarySnapshot,
+      currentParentId: string | null,
+      currentAfterId: string | null,
+      depth: number,
+      isRoot: boolean
+    ): Promise<string> => {
+      const snapshotProperties = (currentSnapshot.properties ?? {}) as Record<string, unknown>;
+      const snapshotMirrorPath =
+        typeof snapshotProperties.mirrorFilePath === "string" ? snapshotProperties.mirrorFilePath.trim() : "";
+      const sanitizedSnapshotProperties: Record<string, unknown> = { ...snapshotProperties };
+      delete sanitizedSnapshotProperties.importedFromPath;
+      delete sanitizedSnapshotProperties.sizeBytes;
+      delete sanitizedSnapshotProperties.odeWorkspaceNA;
+
+      const transformedSnapshotProperties = options?.transformProperties
+        ? options.transformProperties({
+            properties: sanitizedSnapshotProperties,
+            snapshot: currentSnapshot,
+            isRoot,
+            depth,
+            parentId: currentParentId
+          })
+        : sanitizedSnapshotProperties;
+
+      const applyRootPropertyOverride = (base: Record<string, unknown>) => {
+        if (!isRoot) return base;
+        const nextProperties = { ...base };
+        const overrides = options?.rootPropertiesOverride ?? {};
+        Object.entries(overrides).forEach(([key, value]) => {
+          if (value === undefined) {
+            delete nextProperties[key];
+            return;
+          }
+          nextProperties[key] = value;
+        });
+        return nextProperties;
+      };
+
+      if (currentSnapshot.type === "file" && snapshotMirrorPath.length > 0) {
+        try {
+          const imported = await importFilesToNode(currentParentId, [snapshotMirrorPath]);
+          const createdFromImport = imported[0];
+          if (createdFromImport) {
+            await moveNode(createdFromImport.id, currentParentId, currentAfterId);
+            const nextProperties = applyRootPropertyOverride({
+              ...(createdFromImport.properties ?? {}),
+              ...transformedSnapshotProperties
+            });
+            if (Object.keys(nextProperties).length > 0) {
+              await updateNodeProperties(createdFromImport.id, nextProperties);
+            }
+            if (currentSnapshot.description !== null) {
+              await updateNodeDescription(createdFromImport.id, currentSnapshot.description);
+            }
+            if (typeof currentSnapshot.content === "string" && currentSnapshot.content.length > 0) {
+              await updateNodeContent(createdFromImport.id, currentSnapshot.content);
+            }
+            return createdFromImport.id;
+          }
+        } catch {
+          // Fall through to generic branch clone behavior if file import cannot be used.
+        }
+      }
+
+      const created = await createNode(
+        currentParentId,
+        isRoot ? options?.rootNameOverride ?? currentSnapshot.name : currentSnapshot.name,
+        currentSnapshot.type
+      );
+      await moveNode(created.id, currentParentId, currentAfterId);
+      const nextProperties = applyRootPropertyOverride(transformedSnapshotProperties);
+      if (Object.keys(nextProperties).length > 0) {
+        await updateNodeProperties(created.id, nextProperties);
+      }
+      if (currentSnapshot.description !== null) {
+        await updateNodeDescription(created.id, currentSnapshot.description);
+      }
+      if (typeof currentSnapshot.content === "string" && currentSnapshot.content.length > 0) {
+        await updateNodeContent(created.id, currentSnapshot.content);
+      }
+
+      let previousChildId: string | null = null;
+      for (const child of currentSnapshot.children) {
+        previousChildId = await cloneNode(child, created.id, previousChildId, depth + 1, false);
+      }
+      return created.id;
+    };
+
+    return cloneNode(snapshot, parentId, afterId, 0, true);
+  };
+
+  const findReusableLibraryOwnerRoot = (
+    node: AppNode | null | undefined
+  ): AppNode | null => {
+    let current = node ?? null;
+    while (current) {
+      if (isLibraryRootNode(current)) {
+        return current;
+      }
+      current = current.parentId ? nodeById.get(current.parentId) ?? null : null;
+    }
+    return null;
+  };
+
+  const ensureReusableLibraryRoot = useCallback(
+    async (kind: ODELibraryKind, workspaceRootId: string | null | undefined) => {
+      if (!workspaceRootId) {
+        throw new Error("No active workspace root available.");
+      }
+      const existing = findReusableLibraryRoot(kind, workspaceRootId, byParent);
+      if (existing) {
+        return existing;
+      }
+      const created = await createNode(workspaceRootId, getLibraryRootName(kind), "folder");
+      const nextProperties: Record<string, unknown> = {
+        ...(created.properties ?? {}),
+        odeLibraryRoot: true,
+        odeLibraryKind: kind,
+        odeLibraryExportVersion: 1
+      };
+      await updateNodeProperties(created.id, nextProperties);
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.add(workspaceRootId);
+        return next;
+      });
+      return {
+        ...created,
+        properties: nextProperties
+      } satisfies AppNode;
+    },
+    [byParent]
+  );
+
+  const ensureReusableLibraryCategoryPath = useCallback(
+    async (rootNodeId: string, categoryPath: string[]) => {
+      let currentParentId = rootNodeId;
+      for (const rawSegment of categoryPath) {
+        const segment = rawSegment.trim();
+        if (!segment) continue;
+        const siblings = await getChildren(currentParentId);
+        const existing =
+          siblings.find(
+            (child) => child.type === "folder" && child.name.localeCompare(segment, undefined, { sensitivity: "base" }) === 0
+          ) ?? null;
+        if (existing) {
+          currentParentId = existing.id;
+          continue;
+        }
+        const created = await createNode(currentParentId, segment, "folder");
+        currentParentId = created.id;
+      }
+      return currentParentId;
+    },
+    []
+  );
+
+  const saveNodeAsReusableLibraryItem = useCallback(
+    async (nodeId: string, requestedKind?: ODELibraryKind | null) => {
+      const sourceNode = nodeById.get(nodeId) ?? null;
+      if (!sourceNode) return;
+      if (isLibraryRootNode(sourceNode) || isNodeInsideLibrary(sourceNode, nodeById)) {
+        setProjectNotice(null);
+        setProjectError("Library roots and saved library items cannot be saved into the library again.");
+        return;
+      }
+
+      const databaseItemType = inferDatabaseTemplateItemType(sourceNode, byParent);
+      const organisationItemType = inferOrganisationModelItemType(sourceNode, byParent);
+      const kind =
+        requestedKind ??
+        (databaseItemType ? "database_template" : organisationItemType ? "organisation_model" : null);
+      const itemType =
+        kind === "database_template"
+          ? databaseItemType
+          : kind === "organisation_model"
+            ? organisationItemType
+            : null;
+
+      if (!kind || !itemType) {
+        setProjectNotice(null);
+        setProjectError("This node cannot be saved as a reusable library item.");
+        return;
+      }
+
+      const snapshot = buildReusableLibrarySnapshot(sourceNode.id, nodeById, byParent, { includeFiles: true });
+      if (!snapshot) {
+        setProjectNotice(null);
+        setProjectError("The selected node could not be copied into the library.");
+        return;
+      }
+
+      try {
+        const libraryRoot = await ensureReusableLibraryRoot(kind, activeProjectRootId);
+        const siblings = byParent.get(libraryRoot.id) ?? [];
+        const afterId = siblings.length > 0 ? siblings[siblings.length - 1].id : null;
+        const createdId = await cloneReusableLibrarySnapshot(snapshot, libraryRoot.id, afterId, {
+          rootPropertiesOverride: buildSavedLibraryRootProperties({
+            kind,
+            itemType,
+            sourceNodeId: sourceNode.id,
+            summary: buildReusableLibrarySummary(sourceNode)
+          })
+        });
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(activeProjectRootId ?? ROOT_PARENT_ID);
+          next.add(libraryRoot.id);
+          return next;
+        });
+        await refreshTreeAndKeepContext(
+          sourceNode.id,
+          [libraryRoot.id, activeProjectRootId ?? ROOT_PARENT_ID],
+          selectionSurface
+        );
+        setProjectError(null);
+        setProjectNotice(
+          `${sourceNode.name} saved to ${kind === "database_template" ? "Database Templates" : "Organisation Models"}.`
+        );
+        return createdId;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        setProjectNotice(null);
+        setProjectError(`Library save failed: ${reason}`);
+        return null;
+      }
+    },
+    [
+      activeProjectRootId,
+      byParent,
+      ensureReusableLibraryRoot,
+      nodeById,
+      refreshTreeAndKeepContext,
+      selectionSurface
+    ]
+  );
+
+  const createFromReusableLibraryItem = useCallback(
+    async (
+      itemNodeId: string,
+      targetNodeId: string | null | undefined,
+      options?: {
+        rootNameOverride?: string;
+        rootPropertiesOverride?: Record<string, unknown>;
+        transformProperties?: (params: {
+          properties: Record<string, unknown>;
+          snapshot: ReusableLibrarySnapshot;
+          isRoot: boolean;
+          depth: number;
+          parentId: string | null;
+        }) => Record<string, unknown>;
+        openCreatedChantier?: boolean;
+        successNotice?: string | null;
+      }
+    ): Promise<string | null> => {
+      const itemNode = nodeById.get(itemNodeId) ?? null;
+      const targetNode = targetNodeId ? nodeById.get(targetNodeId) ?? null : null;
+      const kind = getNodeLibraryKind(itemNode);
+      const itemType = getNodeLibraryItemType(itemNode);
+      if (!itemNode || !targetNode || !kind || !itemType) return null;
+      if (isFileLikeNode(targetNode) || isLibraryRootNode(targetNode) || isNodeInsideLibrary(targetNode, nodeById)) {
+        setProjectNotice(null);
+        setProjectError("Choose a normal node as the creation target.");
+        return null;
+      }
+
+      const snapshot = buildReusableLibrarySnapshot(itemNode.id, nodeById, byParent, { includeFiles: true });
+      if (!snapshot) {
+        setProjectNotice(null);
+        setProjectError("The reusable item could not be copied.");
+        return null;
+      }
+
+      try {
+        const siblings = byParent.get(targetNode.id) ?? [];
+        const afterId = siblings.length > 0 ? siblings[siblings.length - 1].id : null;
+        const defaultRootProperties = buildCopiedFromLibraryRootProperties({
+          sourceNodeId: itemNode.id,
+          kind,
+          itemType,
+          sourceProperties: snapshot.properties
+        });
+        const createdId = await cloneReusableLibrarySnapshot(snapshot, targetNode.id, afterId, {
+          rootNameOverride: options?.rootNameOverride,
+          rootPropertiesOverride: {
+            ...defaultRootProperties,
+            ...(options?.rootPropertiesOverride ?? {})
+          },
+          transformProperties: options?.transformProperties
+        });
+        await refreshTreeAndKeepContext(createdId, [targetNode.id], "grid", targetNode.id);
+        setPrimarySelection(createdId, "grid");
+        if (options?.openCreatedChantier) {
+          await setNodeWorkareaOwner(createdId, true);
+        }
+        setProjectError(null);
+        if (options?.successNotice !== null) {
+          setProjectNotice(options?.successNotice ?? `${itemNode.name} created in ${targetNode.name}.`);
+        }
+        return createdId;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        setProjectNotice(null);
+        setProjectError(`Library create failed: ${reason}`);
+        return null;
+      }
+    },
+    [byParent, nodeById, refreshTreeAndKeepContext, setNodeWorkareaOwner]
+  );
+
+  const exportReusableLibraryItem = useCallback(
+    async (itemNodeId: string) => {
+      const itemNode = nodeById.get(itemNodeId) ?? null;
+      const kind = getNodeLibraryKind(itemNode);
+      const itemType = getNodeLibraryItemType(itemNode);
+      const libraryRoot = findReusableLibraryOwnerRoot(itemNode);
+      if (!itemNode || !kind || !itemType || !libraryRoot) return;
+
+      const payload = buildReusableLibraryExportPayload({
+        kind,
+        itemType,
+        node: itemNode,
+        rootNodeId: libraryRoot.id,
+        nodeById,
+        byParent
+      });
+      if (!payload) {
+        setProjectNotice(null);
+        setProjectError("The selected reusable item could not be exported.");
+        return;
+      }
+
+      try {
+        const bytes = Array.from(new TextEncoder().encode(JSON.stringify(payload, null, 2)));
+        const defaultFileName = `${itemNode.name.replace(/[^a-z0-9._-]+/gi, "_").replace(/^_+|_+$/g, "") || "library-item"}.json`;
+        const savedPath = await saveExportFile(
+          `Export ${itemNode.name}`,
+          defaultFileName,
+          "JSON",
+          "json",
+          bytes
+        );
+        if (!savedPath) return;
+        setProjectError(null);
+        setProjectNotice(`Exported ${itemNode.name} to ${savedPath}.`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        setProjectNotice(null);
+        setProjectError(`Library export failed: ${reason}`);
+      }
+    },
+    [byParent, nodeById]
+  );
+
+  const importReusableLibraryPayload = useCallback(
+    async (payload: ReusableLibraryExportPayload) => {
+      try {
+        const libraryRoot = await ensureReusableLibraryRoot(payload.odeLibraryKind, activeProjectRootId);
+        const targetParentId = await ensureReusableLibraryCategoryPath(libraryRoot.id, payload.categoryPath);
+        const siblings = byParent.get(targetParentId) ?? [];
+        const afterId = siblings.length > 0 ? siblings[siblings.length - 1].id : null;
+        const summary =
+          payload.summary ??
+          buildReusableLibrarySummary({
+            id: payload.root.name,
+            parentId: targetParentId,
+            name: payload.root.name,
+            type: payload.root.type,
+            description: payload.root.description,
+            content: payload.root.content,
+            order: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            properties: payload.root.properties
+          });
+        const createdId = await cloneReusableLibrarySnapshot(payload.root, targetParentId, afterId, {
+          rootPropertiesOverride: {
+            ...buildSavedLibraryRootProperties({
+              kind: payload.odeLibraryKind,
+              itemType: payload.odeLibraryItemType,
+              sourceNodeId: "",
+              summary
+            }),
+            odeLibraryImportedAt: new Date().toISOString()
+          }
+        });
+        setExpandedIds((prev) => {
+          const next = new Set(prev);
+          next.add(activeProjectRootId ?? ROOT_PARENT_ID);
+          next.add(libraryRoot.id);
+          next.add(targetParentId);
+          return next;
+        });
+        await refreshTreeAndKeepContext(createdId, [libraryRoot.id, targetParentId], "grid", libraryRoot.id);
+        setPrimarySelection(createdId, "grid");
+        setProjectError(null);
+        setProjectNotice(`${payload.name} imported into ${getLibraryRootName(payload.odeLibraryKind)}.`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        setProjectNotice(null);
+        setProjectError(`Library import failed: ${reason}`);
+      }
+    },
+    [activeProjectRootId, byParent, ensureReusableLibraryCategoryPath, ensureReusableLibraryRoot, refreshTreeAndKeepContext]
+  );
 
   const matchNAEntryByNodeName = (
     name: string,
@@ -15766,19 +19657,11 @@ export default function App() {
             : `WBS fallback template created from document context for "${proposal.goal}".`
         : generationTarget.odeCreation.createAs === "chantier"
           ? proposal.source === "llm"
-            ? proposal.sourceScope === "selected_documents"
-              ? `AI chantier created from selected documents for "${proposal.goal}".`
-              : `AI chantier created from document context for "${proposal.goal}".`
-            : proposal.sourceScope === "selected_documents"
-              ? `Chantier fallback template created from selected documents for "${proposal.goal}".`
-              : `Chantier fallback template created from document context for "${proposal.goal}".`
+            ? t("chantier.create_notice_ai_created", { name: proposal.goal })
+            : t("chantier.create_notice_ai_fallback", { name: proposal.goal })
           : proposal.source === "llm"
-            ? proposal.sourceScope === "selected_documents"
-              ? `AI chantier tasks created from selected documents for "${proposal.goal}".`
-              : `AI chantier tasks created from document context for "${proposal.goal}".`
-            : proposal.sourceScope === "selected_documents"
-              ? `Chantier tasks fallback template created from selected documents for "${proposal.goal}".`
-              : `Chantier tasks fallback template created from document context for "${proposal.goal}".`
+            ? t("chantier.tasks_notice_ai_created", { name: proposal.goal })
+            : t("chantier.tasks_notice_fallback", { name: proposal.goal })
     );
     return createdRoot;
   };
@@ -16622,10 +20505,11 @@ export default function App() {
     warning?: string,
     extraWbsMeta?: Record<string, unknown>,
     odeConfidence?: number,
-    extraRootProperties?: Record<string, unknown>
+    extraRootProperties?: Record<string, unknown>,
+    forcedGenerationTarget?: OdeAwareGenerationTarget
   ): Promise<AppNode | null> => {
     if (!ensureStructureMutationAllowed([rootParentId])) return null;
-    const generationTarget = await resolveOdeAwareGenerationTarget(rootParentId);
+    const generationTarget = forcedGenerationTarget ?? (await resolveOdeAwareGenerationTarget(rootParentId));
     const parentNode = generationTarget.parentNode;
     const odeCreation = generationTarget.odeCreation;
     if (!odeCreation.allowed) {
@@ -16748,6 +20632,17 @@ export default function App() {
     if (extraRootProperties) {
       Object.assign(baseRootProperties, extraRootProperties);
     }
+    const rootDocumentationProperties = buildAiGeneratedDocumentationNodeProperties({
+      title: rootTitle,
+      hasChildren: (documentBusinessRoot ? documentBusinessRoot.children : result.nodes).length > 0,
+      parentNode,
+      existingNode: rootNode,
+      nodeById,
+      byParent
+    });
+    if (rootDocumentationProperties) {
+      Object.assign(baseRootProperties, rootDocumentationProperties);
+    }
     if (odeCreation.createAs !== "generic") {
       Object.assign(
         baseRootProperties,
@@ -16770,7 +20665,11 @@ export default function App() {
       branch: WBSNode[],
       parentKey = "",
       parentOdeLevel: number | null = odeCreation.nextLevel,
-      inheritedNaCode: string | null = odeCreation.naCode
+      inheritedNaCode: string | null = odeCreation.naCode,
+      currentParentNode: AppNode | null = {
+        ...rootNode,
+        properties: baseRootProperties
+      }
     ): Promise<void> => {
       for (let index = 0; index < branch.length; index += 1) {
         const item = branch[index];
@@ -16801,6 +20700,17 @@ export default function App() {
           },
           odeContext
         };
+        const documentationProperties = buildAiGeneratedDocumentationNodeProperties({
+          title: item.title,
+          hasChildren: item.children.length > 0,
+          parentNode: currentParentNode,
+          existingNode: created,
+          nodeById,
+          byParent
+        });
+        if (documentationProperties) {
+          Object.assign(nextProperties, documentationProperties);
+        }
         if (expectedDeliverables.length > 0) {
           nextProperties.odeExpectedDeliverables = expectedDeliverables;
           nextProperties.odeStructuredDeliverables = expectedDeliverables.map((title, deliverableIndex) => ({
@@ -16840,9 +20750,10 @@ export default function App() {
           await updateNodeDescription(created.id, item.description.trim());
         }
         if (item.children.length > 0) {
-          const createdOdeLevel = getODENodeMetadata({ ...created, properties: nextProperties }).level;
-          const createdNaCode = getODENodeMetadata({ ...created, properties: nextProperties }).naCode;
-          await createBranch(created.id, item.children, key, createdOdeLevel, createdNaCode);
+          const materializedNode = { ...created, properties: nextProperties };
+          const createdOdeLevel = getODENodeMetadata(materializedNode).level;
+          const createdNaCode = getODENodeMetadata(materializedNode).naCode;
+          await createBranch(created.id, item.children, key, createdOdeLevel, createdNaCode, materializedNode);
         }
       }
     };
@@ -16885,6 +20796,379 @@ export default function App() {
       naLabel: naEntry?.label ?? null,
       naPathLabel: odeCreation.naCode ? getNAPathLabel(odeCreation.naCode) : null
     };
+  };
+
+  const buildForcedChantierGenerationTarget = (
+    parentNode: AppNode | null,
+    naCode: string
+  ): OdeAwareGenerationTarget => {
+    const normalizedNaCode = naCode.trim();
+    const naEntry = getNAByCode(normalizedNaCode);
+    return {
+      parentNode,
+      odeCreation: {
+        allowed: true,
+        reason: null,
+        createAs: "chantier",
+        nextLevel: 5,
+        naCode: normalizedNaCode
+      },
+      naLabel: naEntry?.label ?? null,
+      naPathLabel: getNAPathLabel(normalizedNaCode)
+    };
+  };
+
+  const sanitizeStructuredDeliverablesForFreshChantier = (
+    value: unknown
+  ): ODEStructuredDeliverable[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    return value
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === "object"))
+      .map((deliverable, deliverableIndex) => ({
+        id:
+          typeof deliverable.id === "string" && deliverable.id.trim().length > 0
+            ? deliverable.id.trim()
+            : `deliverable-${deliverableIndex + 1}`,
+        title:
+          typeof deliverable.title === "string" && deliverable.title.trim().length > 0
+            ? deliverable.title.trim()
+            : `Deliverable ${deliverableIndex + 1}`,
+        tasks: Array.isArray(deliverable.tasks)
+          ? deliverable.tasks
+              .filter((task): task is Record<string, unknown> => Boolean(task && typeof task === "object"))
+              .map((task, taskIndex) => ({
+                id:
+                  typeof task.id === "string" && task.id.trim().length > 0
+                    ? task.id.trim()
+                    : `task-${deliverableIndex + 1}-${taskIndex + 1}`,
+                title:
+                  typeof task.title === "string" && task.title.trim().length > 0
+                    ? task.title.trim()
+                    : `Task ${taskIndex + 1}`,
+                ownerName:
+                  typeof task.ownerName === "string" && task.ownerName.trim().length > 0 ? task.ownerName.trim() : null,
+                dueDate: null,
+                status: "planned",
+                flagged: false,
+                note: typeof task.note === "string" && task.note.trim().length > 0 ? task.note.trim() : null
+              }))
+          : [],
+        notifications: Array.isArray(deliverable.notifications)
+          ? deliverable.notifications.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+          : [],
+        data: Array.isArray(deliverable.data)
+          ? deliverable.data.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+          : []
+      }));
+  };
+
+  const sanitizeChantierModelInstanceProperties = (properties: Record<string, unknown>): Record<string, unknown> => {
+    const nextProperties: Record<string, unknown> = { ...properties };
+    delete nextProperties.wbs;
+    delete nextProperties.wbsMeta;
+    delete nextProperties.odeContext;
+    delete nextProperties.ode_ai_trace;
+    delete nextProperties.timelineSchedule;
+    delete nextProperties.odeExecutionTaskStatus;
+    delete nextProperties.odeExecutionTaskDueDate;
+    delete nextProperties.odeExecutionTaskFlagged;
+
+    const freshDeliverables = sanitizeStructuredDeliverablesForFreshChantier(nextProperties.odeStructuredDeliverables);
+    if (freshDeliverables) {
+      nextProperties.odeStructuredDeliverables = freshDeliverables;
+    }
+    return nextProperties;
+  };
+
+  const parseChantierSeedItemsFromDescription = (description: string | null | undefined): string[] => {
+    const seen = new Set<string>();
+    return (description ?? "")
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => {
+        if (line.length === 0) return false;
+        const normalized = line.toLocaleLowerCase();
+        if (seen.has(normalized)) return false;
+        seen.add(normalized);
+        return true;
+      });
+  };
+
+  const buildChantierRootProperties = useCallback(
+    (
+      properties: Record<string, unknown> | undefined,
+      options?: {
+        naCode?: string | null;
+      }
+    ): Record<string, unknown> => {
+      let nextProperties: Record<string, unknown> = {
+        ...(properties ?? {}),
+        ...buildODENodeProperties({
+          level: options?.naCode ? 5 : null,
+          naCode: options?.naCode ?? null,
+          kind: "chantier"
+        })
+      };
+      nextProperties = applyChantierProfileToProperties(nextProperties, {
+        status: "draft"
+      });
+      nextProperties = toggleNodeMetaCapability(nextProperties, "work", true);
+      nextProperties.odeWorkareaOwner = true;
+      return nextProperties;
+    },
+    [toggleNodeMetaCapability]
+  );
+
+  const openCreateChantierDialog = async (targetNodeId?: string | null) => {
+    const targetNode = targetNodeId ? nodeById.get(targetNodeId) ?? null : null;
+    if (!targetNode || isFileLikeNode(targetNode)) return;
+    if (!canWriteNodeForActiveRole(targetNode.id)) {
+      setProjectNotice(null);
+      setProjectError(t("chantier.create_error_permission"));
+      return;
+    }
+    setCreateChantierDialogState({
+      targetNodeId: targetNode.id,
+      targetNodeName: targetNode.name
+    });
+    setProjectError(null);
+  };
+
+  const createChantierShellAtNode = async (
+    targetNodeId: string,
+    requestedName: string,
+    options?: {
+      naCode?: string | null;
+      autoOpen?: boolean;
+      description?: string | null;
+    }
+  ): Promise<string | null> => {
+    const targetNode = nodeById.get(targetNodeId) ?? (await getNode(targetNodeId)) ?? null;
+    if (!targetNode || isFileLikeNode(targetNode)) return null;
+    if (!ensureStructureMutationAllowed([targetNode.id])) return null;
+
+    const siblings = await getChildren(targetNode.id);
+    const afterId = siblings.length > 0 ? siblings[siblings.length - 1]?.id ?? null : null;
+    const created = await createNode(
+      targetNode.id,
+      requestedName.trim() || t("chantier.create_default_name"),
+      "folder"
+    );
+    await moveNode(created.id, targetNode.id, afterId);
+
+    const nextProperties = buildChantierRootProperties(
+      created.properties as Record<string, unknown> | undefined,
+      { naCode: options?.naCode ?? null }
+    );
+    await updateNodeProperties(created.id, nextProperties);
+    const nextDescription = options?.description?.trim() || null;
+    if (nextDescription !== null) {
+      await updateNodeDescription(created.id, nextDescription);
+    }
+    await refreshTreeAndKeepContext(created.id, [targetNode.id], "grid", targetNode.id);
+    if (options?.autoOpen !== false) {
+      await openNodeInWorkarea(created.id);
+    }
+    return created.id;
+  };
+
+  const createBlankChantierAtNode = async (
+    targetNodeId: string,
+    requestedName: string,
+    options?: {
+      naCode?: string | null;
+      autoOpen?: boolean;
+    }
+  ): Promise<string | null> =>
+    createChantierShellAtNode(targetNodeId, requestedName, {
+      naCode: options?.naCode ?? null,
+      autoOpen: options?.autoOpen ?? true
+    });
+
+  const buildChantierTaskNoteFromWbsNode = (node: WBSNode): string | null => {
+    const lines = [
+      node.description?.trim() || null,
+      node.objective?.trim() || null,
+      node.expected_deliverables && node.expected_deliverables.length > 0
+        ? `Expected deliverables: ${node.expected_deliverables.join(", ")}`
+        : null,
+      node.prerequisites.length > 0 ? `Prerequisites: ${node.prerequisites.join(", ")}` : null,
+      node.children.length > 0 ? `Subtasks: ${node.children.map((child) => child.title.trim()).join(", ")}` : null
+    ].filter((line): line is string => Boolean(line && line.trim().length > 0));
+    return lines.length > 0 ? lines.join("\n") : null;
+  };
+
+  const buildChantierTasksFromWbsBranch = (branch: WBSNode[], pathPrefix: string): ODEExecutionTaskItem[] =>
+    branch.reduce<ODEExecutionTaskItem[]>((tasks, node, index) => {
+      const title = node.title.trim();
+      if (!title) {
+        return tasks;
+      }
+      tasks.push({
+        id: `ode-ai-task-${pathPrefix}-${index + 1}`,
+        title,
+        ownerName: node.suggested_role?.trim() || null,
+        status: "planned",
+        flagged: node.value_milestone === true,
+        note: buildChantierTaskNoteFromWbsNode(node)
+      });
+      return tasks;
+    }, []);
+
+  const buildChantierDeliverablesFromWbsResult = (
+    rootNodeId: string,
+    result: WBSResult
+  ): ODEStructuredDeliverable[] => {
+    const nodes =
+      result.nodes.length > 0
+        ? result.nodes
+        : [
+            {
+              title: result.goal,
+              description: result.value_summary,
+              prerequisites: [],
+              estimated_effort: "M",
+              suggested_role: "Lead",
+              value_milestone: true,
+              children: []
+            } satisfies WBSNode
+          ];
+
+    return nodes.map((node, index) => ({
+      id: `${rootNodeId}-deliverable-ai-${index + 1}`,
+      title: node.title.trim() || `${t("procedure.node_deliverable_default")} ${index + 1}`,
+      tasks: buildChantierTasksFromWbsBranch(node.children, `${index + 1}`),
+      notifications: [],
+      data: []
+    }));
+  };
+
+  const createAiChantierAtNode = async ({
+    targetNodeId,
+    name,
+    brief,
+    autoOpen
+  }: {
+    targetNodeId: string;
+    name: string;
+    brief: string;
+    autoOpen?: boolean;
+  }): Promise<{ id: string | null; source: "llm" | "fallback" | null }> => {
+    const targetNode = nodeById.get(targetNodeId) ?? (await getNode(targetNodeId)) ?? null;
+    if (!targetNode || isFileLikeNode(targetNode)) return { id: null, source: null };
+
+    const apiKey = getSavedMistralApiKey();
+    const matchingModelContext = chantierLibraryModelOptions
+      .slice(0, 3)
+      .map((model) => {
+        const summary = model.summary?.trim();
+        if (!summary) return `- ${model.name}`;
+        const shortenedSummary = summary.length > 220 ? `${summary.slice(0, 217)}...` : summary;
+        return `- ${model.name}: ${shortenedSummary}`;
+      });
+    const siblingSeeds = parseChantierSeedItemsFromDescription(targetNode.description).filter((item) => item !== name);
+    const context = [
+      `Workspace: ${activeProject?.name ?? t("project.none")}`,
+      `Parent node: ${targetNode.name}`,
+      `Chantier to create: ${name}`,
+      brief.trim().length > 0 ? `Brief: ${brief.trim()}` : null,
+      siblingSeeds.length > 0 ? `Other chantier items on this parent: ${siblingSeeds.join(", ")}` : null,
+      matchingModelContext.length > 0 ? "Relevant chantier models:" : null,
+      matchingModelContext.length > 0 ? matchingModelContext.join("\n") : null,
+      "Creation mode: chantier_description_ai"
+    ]
+      .filter((line): line is string => Boolean(line))
+      .join("\n");
+
+    const progressMessages = {
+      understand_goal: t("chantier.create_progress_understand_goal"),
+      build_prompt: t("chantier.create_progress_build_prompt"),
+      request_ai: t("chantier.create_progress_request_ai"),
+      validate_json: t("chantier.create_progress_validate_json"),
+      normalize_tree: t("chantier.create_progress_normalize_tree"),
+      fallback: t("chantier.create_progress_fallback")
+    } as const;
+
+    const createdId = await createChantierShellAtNode(targetNode.id, name, {
+      autoOpen: false
+    });
+    if (!createdId) {
+      return { id: null, source: null };
+    }
+
+    const { result, source } = await generateAiWorkBreakdown({
+      goal: name,
+      context,
+      targetLanguage: language,
+      apiKey: apiKey ?? undefined,
+      aiEngine: apiKey ? "cloud" : "local",
+      promptPreset: "chantier",
+      onProgress: (stage) => {
+        const message = progressMessages[stage];
+        if (message) {
+          setProjectNotice(message);
+        }
+      }
+    });
+
+    const deliverables = buildChantierDeliverablesFromWbsResult(createdId, result);
+    const nextDescription = result.value_summary.trim();
+    if (nextDescription.length > 0) {
+      await updateNodeDescription(createdId, nextDescription);
+    }
+    await applyStructuredDeliverablesToWorkareaTree(createdId, deliverables, {
+      objective: nextDescription || brief.trim() || name
+    });
+    await refreshTreeAndKeepContext(createdId, [targetNode.id], "grid", targetNode.id);
+    if (autoOpen) {
+      await openNodeInWorkarea(createdId);
+    }
+    return { id: createdId, source };
+  };
+
+  const handleCreateChantierDialogSubmit = async (input: {
+    libraryModelId: string | null;
+  }) => {
+    const currentDialog = createChantierDialogState;
+    if (!currentDialog) return;
+
+    setCreateChantierBusy(true);
+    setProjectError(null);
+
+    try {
+      const selectedTemplate =
+        databaseTemplateLibraryItems.find((item) => item.node.id === input.libraryModelId) ?? null;
+      if (!selectedTemplate) {
+        throw new Error(t("chantier.create_error_missing_database_template"));
+      }
+
+      const chantierId = await createBlankChantierAtNode(
+        currentDialog.targetNodeId,
+        t("chantier.create_default_name"),
+        { autoOpen: false }
+      );
+      if (!chantierId) {
+        return;
+      }
+      await createFromReusableLibraryItem(selectedTemplate.node.id, chantierId, {
+        successNotice: null
+      });
+      await openNodeInWorkarea(chantierId);
+      setProjectNotice(
+        t("chantier.create_notice_library_batch", {
+          count: 1,
+          target: currentDialog.targetNodeName
+        })
+      );
+      setCreateChantierDialogState(null);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setProjectNotice(null);
+      setProjectError(reason);
+    } finally {
+      setCreateChantierBusy(false);
+    }
   };
 
   const normalizeScheduleStatusArg = (value: string): ScheduleStatus => {
@@ -16954,15 +21238,112 @@ export default function App() {
     }
     const parentId = resolveCommandParentId();
     if (!ensureStructureMutationAllowed([parentId])) return;
+    const parentNode = parentId ? nodeById.get(parentId) ?? (await getNode(parentId)) ?? null : null;
+    const createsDatabaseFields =
+      Boolean(parentNode) &&
+      Boolean(findDocumentationWorkspaceAncestor(parentNode, nodeById)) &&
+      inferDatabaseTemplateItemType(parentNode, byParent) === "section" &&
+      !isDocumentationWorkspaceRootNode(parentNode) &&
+      !isLegacyDocumentationWorkspaceRootNode(parentNode);
     let firstCreatedId: string | null = null;
     for (const name of names) {
       const created = await createNode(parentId, name, "folder");
+      const alignedProperties = buildAiGeneratedDocumentationNodeProperties({
+        title: name,
+        hasChildren: false,
+        parentNode,
+        existingNode: created,
+        nodeById,
+        byParent
+      });
+      if (alignedProperties) {
+        await updateNodeProperties(created.id, {
+          ...(created.properties ?? {}),
+          ...alignedProperties
+        });
+      }
       if (!firstCreatedId) firstCreatedId = created.id;
     }
     if (firstCreatedId) {
       await refreshTreeAndKeepContext(firstCreatedId, parentId ? [parentId] : []);
-      setProjectNotice(`Created ${names.length} topic(s).`);
+      setProjectNotice(
+        createsDatabaseFields
+          ? `Created ${names.length} database field(s).`
+          : `Created ${names.length} topic(s).`
+      );
     }
+  };
+
+  const createDatabaseSectionFromCommand = async (args?: Record<string, unknown>) => {
+    const requestedSectionName =
+      parseArgsString(args, "section_name") ||
+      parseArgsString(args, "name") ||
+      parseArgsString(args, "title") ||
+      parseArgsString(args, "section");
+    const fieldNames = Array.from(
+      new Set(
+        [...parseArgsList(args, "fields"), ...parseArgsList(args, "columns")]
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      )
+    ).slice(0, 40);
+    const parentId = resolveCommandParentId();
+    const parentNode = parentId ? nodeById.get(parentId) ?? (await getNode(parentId)) ?? null : null;
+    const useExistingSection =
+      !requestedSectionName &&
+      Boolean(parentNode) &&
+      inferDatabaseTemplateItemType(parentNode, byParent) === "section" &&
+      !isDocumentationWorkspaceRootNode(parentNode) &&
+      !isLegacyDocumentationWorkspaceRootNode(parentNode);
+
+    if (!requestedSectionName && !useExistingSection) {
+      throw new Error("Missing database section name.");
+    }
+    if (fieldNames.length === 0 && useExistingSection) {
+      throw new Error("No database field names provided.");
+    }
+    if (!ensureStructureMutationAllowed([parentId])) return;
+
+    let sectionNode = useExistingSection ? parentNode : null;
+    if (!sectionNode) {
+      const createdSection = await createNode(parentId, requestedSectionName || "New Database Section", "folder");
+      const nextSectionProperties: Record<string, unknown> = {
+        ...(createdSection.properties ?? {}),
+        odeProcedureItemType: "section"
+      };
+      await updateNodeProperties(createdSection.id, nextSectionProperties);
+      sectionNode = {
+        ...createdSection,
+        properties: nextSectionProperties
+      };
+    }
+
+    let firstCreatedId: string | null = sectionNode.id;
+    for (const fieldName of fieldNames) {
+      const createdField = await createNode(sectionNode.id, fieldName, "folder");
+      const nextFieldProperties: Record<string, unknown> = {
+        ...(createdField.properties ?? {}),
+        ...buildAiDatabaseFieldProperties(fieldName)
+      };
+      await updateNodeProperties(createdField.id, nextFieldProperties);
+      if (firstCreatedId === sectionNode.id) {
+        firstCreatedId = createdField.id;
+      }
+    }
+
+    await refreshTreeAndKeepContext(
+      firstCreatedId ?? sectionNode.id,
+      Array.from(new Set([parentId ?? ROOT_PARENT_ID, sectionNode.id])),
+      selectionSurface === "grid" ? "grid" : "tree"
+    );
+    setPrimarySelection(sectionNode.id, selectionSurface === "grid" ? "grid" : "tree");
+    setProjectNotice(
+      useExistingSection
+        ? `Added ${fieldNames.length} database field(s) to "${sectionNode.name}".`
+        : fieldNames.length > 0
+          ? `Created database section "${sectionNode.name}" with ${fieldNames.length} field(s).`
+          : `Created database section "${sectionNode.name}".`
+    );
   };
 
   const setTimelineScheduleFromCommand = async (args?: Record<string, unknown>) => {
@@ -17492,7 +21873,8 @@ export default function App() {
         branch: WBSNode[],
         parentKey = "",
         inheritedOdeLevel: number | null = parentMetadata.level,
-        inheritedNaCode: string | null = parentMetadata.naCode
+        inheritedNaCode: string | null = parentMetadata.naCode,
+        currentParentNode: AppNode | null = parentNode
       ): Promise<void> => {
         const existingChildren = await getChildren(targetParentId);
         for (let index = 0; index < branch.length; index += 1) {
@@ -17522,6 +21904,17 @@ export default function App() {
               node_key: key
             }
           };
+          const documentationProperties = buildAiGeneratedDocumentationNodeProperties({
+            title: item.title,
+            hasChildren: item.children.length > 0,
+            parentNode: currentParentNode,
+            existingNode: targetNode,
+            nodeById,
+            byParent
+          });
+          if (documentationProperties) {
+            Object.assign(nextProperties, documentationProperties);
+          }
 
           const expectedDeliverables = Array.from(
             new Set(
@@ -17571,8 +21964,16 @@ export default function App() {
           }
 
           if (item.children.length > 0) {
-            const createdMetadata = getODENodeMetadata({ ...targetNode, properties: nextProperties });
-            await upsertBranch(targetNode.id, item.children, key, createdMetadata.level, createdMetadata.naCode);
+            const materializedNode = { ...targetNode, properties: nextProperties };
+            const createdMetadata = getODENodeMetadata(materializedNode);
+            await upsertBranch(
+              targetNode.id,
+              item.children,
+              key,
+              createdMetadata.level,
+              createdMetadata.naCode,
+              materializedNode
+            );
           }
         }
       };
@@ -17615,20 +22016,20 @@ export default function App() {
     const chantierProgressMessage: Record<string, string> =
       generationTarget.odeCreation.createAs === "chantier"
         ? {
-            understand_goal: "Chantier: understanding goal and target NA...",
-            build_prompt: "Chantier: preparing ODE chantier prompt...",
-            request_ai: "Chantier: generating chantier breakdown...",
-            validate_json: "Chantier: validating structure...",
-            normalize_tree: "Chantier: optimizing execution packages...",
-            fallback: "Chantier: AI unavailable, using chantier fallback..."
+            understand_goal: t("chantier.create_progress_understand_goal"),
+            build_prompt: t("chantier.create_progress_build_prompt"),
+            request_ai: t("chantier.create_progress_request_ai"),
+            validate_json: t("chantier.create_progress_validate_json"),
+            normalize_tree: t("chantier.create_progress_normalize_tree"),
+            fallback: t("chantier.create_progress_fallback")
           }
         : {
-            understand_goal: "Chantier: understanding selected chantier scope...",
-            build_prompt: "Chantier: preparing chantier expansion prompt...",
-            request_ai: "Chantier: generating chantier tasks...",
-            validate_json: "Chantier: validating structure...",
-            normalize_tree: "Chantier: optimizing execution packages...",
-            fallback: "Chantier: AI unavailable, using chantier fallback..."
+            understand_goal: t("chantier.create_progress_understand_goal"),
+            build_prompt: t("chantier.create_progress_build_prompt"),
+            request_ai: t("chantier.progress_request_tasks"),
+            validate_json: t("chantier.create_progress_validate_json"),
+            normalize_tree: t("chantier.create_progress_normalize_tree"),
+            fallback: t("chantier.create_progress_fallback")
           };
 
     const { result, source, warning } =
@@ -17686,11 +22087,11 @@ export default function App() {
           : `WBS created from fallback template for "${result.goal}".`
         : generationTarget.odeCreation.createAs === "chantier"
           ? source === "llm"
-            ? `AI chantier created for "${result.goal}".`
-            : `Chantier created from fallback template for "${result.goal}".`
+            ? t("chantier.create_notice_ai_created", { name: result.goal })
+            : t("chantier.create_notice_ai_fallback", { name: result.goal })
           : source === "llm"
-            ? `AI chantier tasks created for "${result.goal}".`
-            : `Chantier tasks created from fallback template for "${result.goal}".`
+            ? t("chantier.tasks_notice_ai_created", { name: result.goal })
+            : t("chantier.tasks_notice_fallback", { name: result.goal })
     );
   };
 
@@ -17816,41 +22217,24 @@ export default function App() {
       generationTarget.odeCreation.createAs === "chantier"
         ? {
             understand_goal:
-              sourceMode === "selected_section"
-                ? "Chantier: reading selected section and target NA..."
-                : "Chantier: reading document context and target NA...",
-            build_prompt:
-              sourceMode === "selected_section"
-                ? "Chantier: preparing selected-section chantier prompt..."
-                : "Chantier: preparing document-based chantier prompt...",
-            request_ai:
-              sourceMode === "selected_section"
-                ? "Chantier: generating chantier from selected section..."
-                : "Chantier: generating chantier from document...",
-            validate_json: "Chantier: validating structure...",
-            normalize_tree: "Chantier: optimizing execution packages...",
+              t("chantier.create_progress_understand_goal"),
+            build_prompt: t("chantier.create_progress_build_prompt"),
+            request_ai: t("chantier.create_progress_request_ai"),
+            validate_json: t("chantier.create_progress_validate_json"),
+            normalize_tree: t("chantier.create_progress_normalize_tree"),
             fallback: documentGroundedMode
-              ? "Chantier: AI unavailable, keeping document-grounded structure only..."
-              : "Chantier: AI unavailable, using chantier fallback..."
+              ? t("chantier.progress_fallback_document_grounded")
+              : t("chantier.create_progress_fallback")
           }
         : {
-            understand_goal:
-              sourceMode === "selected_section"
-                ? "Chantier: reading selected section for chantier expansion..."
-                : "Chantier: reading document context for chantier expansion...",
-            build_prompt:
-              sourceMode === "selected_section"
-                ? "Chantier: preparing selected-section expansion prompt..."
-                : "Chantier: preparing document-based expansion prompt...",
-            request_ai:
-              sourceMode === "selected_section"
-                ? "Chantier: generating tasks from selected section..."
-                : "Chantier: generating tasks from document...",
-            validate_json: "Chantier: validating structure...",
-            normalize_tree: "Chantier: optimizing execution packages...",
+            understand_goal: t("chantier.create_progress_understand_goal"),
+            build_prompt: t("chantier.create_progress_build_prompt"),
+            request_ai: t("chantier.progress_request_tasks"),
+            validate_json: t("chantier.create_progress_validate_json"),
+            normalize_tree: t("chantier.create_progress_normalize_tree"),
             fallback: documentGroundedMode
-              ? "Chantier: AI unavailable, keeping document-grounded structure only..."
-              : "Chantier: AI unavailable, using chantier fallback..."
+              ? t("chantier.progress_fallback_document_grounded")
+              : t("chantier.create_progress_fallback")
           };
 
     const { result, source, warning, raw } =
@@ -17952,23 +22336,15 @@ export default function App() {
               : `WBS fallback template created from document context for "${materializedResult.goal}".`
         : generationTarget.odeCreation.createAs === "chantier"
           ? materializedSource === "llm"
-            ? sourceMode === "selected_section"
-              ? `AI chantier created from selected section for "${materializedResult.goal}".`
-              : `AI chantier created from document context for "${materializedResult.goal}".`
+            ? t("chantier.create_notice_ai_created", { name: materializedResult.goal })
             : materializedFromDocumentExtraction
               ? materializedDocumentExtractionNotice
-              : sourceMode === "selected_section"
-                ? `Chantier fallback template created from selected section for "${materializedResult.goal}".`
-                : `Chantier fallback template created from document context for "${materializedResult.goal}".`
+              : t("chantier.create_notice_ai_fallback", { name: materializedResult.goal })
           : materializedSource === "llm"
-            ? sourceMode === "selected_section"
-              ? `AI chantier tasks created from selected section for "${materializedResult.goal}".`
-              : `AI chantier tasks created from document context for "${materializedResult.goal}".`
+            ? t("chantier.tasks_notice_ai_created", { name: materializedResult.goal })
             : materializedFromDocumentExtraction
               ? materializedDocumentExtractionNotice
-              : sourceMode === "selected_section"
-                ? `Chantier tasks fallback template created from selected section for "${materializedResult.goal}".`
-                : `Chantier tasks fallback template created from document context for "${materializedResult.goal}".`
+              : t("chantier.tasks_notice_fallback", { name: materializedResult.goal })
     );
     return true;
   };
@@ -18293,12 +22669,12 @@ export default function App() {
         ].join("\n");
         const apiKey = getSavedMistralApiKey();
         const progressMessage: Record<string, string> = {
-          understand_goal: "Chantier: analyzing document and target NA...",
-          build_prompt: "Chantier: preparing ODE chantier prompt...",
-          request_ai: "Chantier: generating execution breakdown...",
-          validate_json: "Chantier: validating structure...",
-          normalize_tree: "Chantier: optimizing dependencies...",
-          fallback: "Chantier: AI unavailable, using chantier fallback..."
+          understand_goal: t("chantier.create_progress_understand_goal"),
+          build_prompt: t("chantier.create_progress_build_prompt"),
+          request_ai: t("chantier.create_progress_request_ai"),
+          validate_json: t("chantier.create_progress_validate_json"),
+          normalize_tree: t("chantier.create_progress_normalize_tree"),
+          fallback: t("chantier.create_progress_fallback")
         };
         const { result, source: generationSource, warning } = await generateChantierWBS({
           goal,
@@ -18422,6 +22798,7 @@ export default function App() {
     planMyDay: runAssistantPlanMyDay,
     wbsGenerate: (args) => generateWbsFromCommand(args),
     wbsFromDocument: (args) => openDocumentTreeReviewFromCommand(args),
+    databaseCreateSection: (args) => createDatabaseSectionFromCommand(args),
     treeCreateTopic: () => createChildFolder(),
     treeRenameSelected: (args) => renameSelectedNodeFromCommand(args),
     treeMoveSelected: (args) => moveSelectedNodeFromCommand(args),
@@ -18591,7 +22968,15 @@ export default function App() {
     }
     try {
       await executeAiCommandAction(normalized, plan.args);
-      if (!(normalized === "wbs_from_document" && DOCUMENT_REVIEW_SURFACE_ENABLED)) {
+      const keepCommandBarOpen =
+        (normalized === "wbs_from_document" && DOCUMENT_REVIEW_SURFACE_ENABLED) ||
+        normalized === "wbs_generate" ||
+        normalized === "database_create_section" ||
+        normalized === "tree_create_topic" ||
+        normalized === "tree_rename_selected" ||
+        normalized === "tree_move_selected" ||
+        normalized === "tree_bulk_create";
+      if (!keepCommandBarOpen) {
         setCommandBarOpen(false);
       }
       recordAiTelemetryEvent({
@@ -19206,8 +23591,15 @@ export default function App() {
   const contextMenuNodeIsFile = Boolean(contextMenuNode && isFileLikeNode(contextMenuNode));
   const contextMenuNodeIsExecutionTask = isHiddenExecutionTaskNode(contextMenuNode);
   const contextMenuNodeStructureLocked = isNodeStructureLockOwner(contextMenuNode);
+  const contextMenuNodeCanOpenAccessPolicy = Boolean(
+    contextMenuNode && canOpenAccessPolicyForCurrentUser(contextMenuNode.id)
+  );
+  const contextMenuNodeCanManageAccess = Boolean(
+    contextMenuNode && canManageNodeForActiveRole(contextMenuNode.id)
+  );
   const contextMenuCanToggleStructureLock = Boolean(
     contextMenuNode &&
+      contextMenuNodeCanManageAccess &&
       !contextMenuNodeIsFile &&
       !contextMenuNodeIsExecutionTask &&
       ((activeProjectRootId && contextMenuNode.id === activeProjectRootId) || contextMenuNodeStructureLocked)
@@ -19216,9 +23608,20 @@ export default function App() {
   const contextMenuNodeIsDeclaredWorkareaOwner = isDeclaredWorkareaOwnerNode(contextMenuNode);
   const contextMenuNodeCanOpenWorkarea = Boolean(
     contextMenuNode &&
+      canReadNodeForActiveRole(contextMenuNode.id) &&
       !isFileLikeNode(contextMenuNode) &&
       !isWorkareaItemNode(contextMenuNode) &&
       resolveWorkareaOwnerNodeId(contextMenuNode.id)
+  );
+  const contextMenuCanCreateChantier = Boolean(
+    contextMenu?.kind === "node" &&
+      contextMenuNode &&
+      !contextMenuNodeIsFile &&
+      !contextMenuNodeIsExecutionTask &&
+      !contextMenuNodeWorkareaKind &&
+      !isLibraryRootNode(contextMenuNode) &&
+      !isNodeInsideLibrary(contextMenuNode, nodeById) &&
+      canWriteNodeForActiveRole(contextMenuNode.id)
   );
   const contextMenuNodeFilePath =
     contextMenuNode && isFileLikeNode(contextMenuNode) ? getNodePreferredFileActionPath(contextMenuNode) : null;
@@ -19249,15 +23652,34 @@ export default function App() {
       contextMenuWorkspaceNAAnchor?.target_project_id &&
       contextMenuWorkspaceNAAnchor.target_node_id
   );
-  const scopedRootDropTargetId = activeProjectRootId ?? ROOT_PARENT_ID;
+  const contextMenuCanSaveAsDatabaseTemplate = Boolean(
+    contextMenu?.kind === "node" &&
+      contextMenuNode &&
+      !contextMenuNodeIsFile &&
+      !contextMenuNodeIsExecutionTask &&
+      !isLibraryRootNode(contextMenuNode) &&
+      !isNodeInsideLibrary(contextMenuNode, nodeById) &&
+      inferDatabaseTemplateItemType(contextMenuNode, byParent)
+  );
+  const contextMenuCanSaveAsOrganisationModel = Boolean(
+    contextMenu?.kind === "node" &&
+      contextMenuNode &&
+      !contextMenuNodeIsFile &&
+      !contextMenuNodeIsExecutionTask &&
+      !isLibraryRootNode(contextMenuNode) &&
+      !isNodeInsideLibrary(contextMenuNode, nodeById) &&
+      !inferDatabaseTemplateItemType(contextMenuNode, byParent) &&
+      inferOrganisationModelItemType(contextMenuNode, byParent)
+  );
+  const scopedRootDropTargetId = activeWorkspaceRootId ?? ROOT_PARENT_ID;
   const desktopScopedRootDropTargetId =
     workspaceMode === "grid" && workspaceFocusMode === "execution"
-      ? desktopWorkareaOwnerNodeId ?? activeProjectRootId ?? ROOT_PARENT_ID
+      ? desktopWorkareaOwnerNodeId ?? activeWorkspaceRootId ?? ROOT_PARENT_ID
       : scopedRootDropTargetId;
   const desktopCurrentFolderDropTargetId =
     workspaceMode === "grid" && workspaceFocusMode === "execution"
-      ? desktopWorkareaBrowseNodeId ?? desktopWorkareaOwnerNodeId ?? activeProjectRootId ?? null
-      : desktopMirrorRootId ?? activeProjectRootId ?? null;
+      ? desktopWorkareaBrowseNodeId ?? desktopWorkareaOwnerNodeId ?? activeWorkspaceRootId ?? null
+      : desktopMirrorRootId ?? activeWorkspaceRootId ?? null;
   const desktopWorkareaOwnerCard =
     workspaceMode === "grid" && workspaceFocusMode === "execution" && desktopWorkareaOwnerNode ? (
       <div className="mt-3 rounded-xl border border-[var(--ode-border)] bg-[rgba(5,25,42,0.72)] px-3 py-3">
@@ -19344,7 +23766,7 @@ export default function App() {
       targetUrl.searchParams.set("lang", language);
       const panelTitle = view === "release" ? t("release.open") : view === "help" ? t("help.open") : t("qa.open");
       const panelWindow = new WebviewWindow(label, {
-        title: `ODETool - ${panelTitle}`,
+        title: `${APP_DISPLAY_NAME} - ${panelTitle}`,
         url: targetUrl.toString(),
         center: true,
         width: 1280,
@@ -19368,6 +23790,7 @@ export default function App() {
   const favoriteGroupModalDrag = useDraggableModalSurface({ open: favoriteGroupModalOpen });
   const favoriteGroupSettingsModalDrag = useDraggableModalSurface({ open: favoriteGroupSettingsModalOpen });
   const favoriteAssignModalDrag = useDraggableModalSurface({ open: favoriteAssignModalOpen });
+  const accessPolicyModalDrag = useDraggableModalSurface({ open: Boolean(accessPolicyEditorNode) });
 
   return (
     <div
@@ -19380,6 +23803,29 @@ export default function App() {
       }}
     >
       <ModalStack>
+        {authGateOpen && authGateMode ? (
+          <AuthGateModal
+            mode={authGateMode}
+            busy={authBusy}
+            error={authError}
+            rememberedUser={authGateMode === "sign_in" ? rememberedAuthUser : null}
+            initialRememberPassword={rememberPasswordPreference}
+            onBootstrap={handleBootstrapUserAccount}
+            onSignIn={handleSignInUserAccount}
+          />
+        ) : null}
+        <UserAccountsModal
+          open={userAccountsModalOpen}
+          users={userAccountState?.users ?? []}
+          currentUserId={currentUserAccount?.userId ?? null}
+          profileOnlyUserId={userAccountsModalMode === "profile" ? currentUserAccount?.userId ?? null : null}
+          saving={userAccountsBusy}
+          error={userAccountsError}
+          onClose={closeUserAccountsManager}
+          onCreate={handleCreateUserAccount}
+          onUpdate={handleUpdateUserAccount}
+          onDelete={handleDeleteUserAccount}
+        />
         {LEGACY_AI_SURFACE_ENABLED ? (
           <>
             <AiSettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} language={language} />
@@ -19476,8 +23922,6 @@ export default function App() {
           onOpenWorkspaceFolderLocation={() => {
             void openSelectedWorkspaceFolderLocation();
           }}
-          workspaceRootNumberingEnabled={workspaceRootNumberingEnabled}
-          onWorkspaceRootNumberingEnabledChange={setWorkspaceRootNumberingEnabled}
           aiRebuildStatus={aiRebuildStatus}
           aiRebuildStatusBusy={aiRebuildStatusBusy}
           aiRebuildWorkflowBusy={aiRebuildWorkflowBusy}
@@ -19526,6 +23970,207 @@ export default function App() {
             void runAiRebuildFinalSolution();
           }}
         />
+        {accessPolicyEditorNode && accessPolicyDraft ? (
+          <div
+            className="ode-overlay-scrim fixed inset-0 z-[120] flex items-center justify-center p-4 backdrop-blur-sm"
+            onMouseDown={(event) => {
+              if (event.target !== event.currentTarget) return;
+              closeNodeAccessPolicyEditor();
+            }}
+          >
+            <div
+              ref={accessPolicyModalDrag.surfaceRef}
+              style={accessPolicyModalDrag.surfaceStyle}
+              className="ode-modal w-full max-w-2xl overflow-hidden rounded-[22px] border border-[var(--ode-border-strong)]"
+            >
+              <div
+                className="ode-modal-drag-handle flex items-center justify-between border-b border-[var(--ode-border)] px-6 py-5"
+                onPointerDown={accessPolicyModalDrag.handlePointerDown}
+              >
+                <div>
+                  <h2 className="text-[1.35rem] font-semibold tracking-tight text-[var(--ode-accent)]">
+                    Access Policy
+                  </h2>
+                  <p className="mt-1 text-[0.92rem] text-[var(--ode-text-muted)]">
+                    {accessPolicyEditorNode.name}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="ode-icon-btn h-10 w-10"
+                  onClick={closeNodeAccessPolicyEditor}
+                  disabled={accessPolicySaving}
+                >
+                  x
+                </button>
+              </div>
+              <div className="space-y-5 px-6 py-5">
+                <p className="text-[0.94rem] leading-7 text-[var(--ode-text-muted)]">
+                  {accessPolicyEditorCanEdit
+                    ? "Choose which ODE roles can read, edit, or manage this node. Set a permission to inherit when you want the parent policy to keep applying."
+                    : "This account can review the applied access policy, but only Administrator accounts can change it from User Accounts."}
+                </p>
+                {!accessPolicyEditorCanEdit ? (
+                  <div className="rounded-[18px] border border-[rgba(95,220,255,0.18)] bg-[rgba(7,39,61,0.46)] px-4 py-3 text-[0.86rem] leading-6 text-[var(--ode-text-muted)]">
+                    View-only mode. Effective roles are still shown below so other users can understand who can read,
+                    write, or manage this node.
+                  </div>
+                ) : null}
+                {(
+                  [
+                    {
+                      key: "read",
+                      title: "Read",
+                      mode: accessPolicyDraft.readMode,
+                      roles: accessPolicyDraft.readRoles,
+                      effective: accessPolicyEditorResolvedPolicy?.readRoles ?? ACCESS_ROLE_VALUES
+                    },
+                    {
+                      key: "write",
+                      title: "Write",
+                      mode: accessPolicyDraft.writeMode,
+                      roles: accessPolicyDraft.writeRoles,
+                      effective: accessPolicyEditorResolvedPolicy?.writeRoles ?? ACCESS_ROLE_VALUES
+                    },
+                    {
+                      key: "manage",
+                      title: "Manage",
+                      mode: accessPolicyDraft.manageMode,
+                      roles: accessPolicyDraft.manageRoles,
+                      effective: accessPolicyEditorResolvedPolicy?.manageRoles ?? ACCESS_ROLE_VALUES
+                    }
+                  ] as const
+                ).map((section) => (
+                  <section
+                    key={section.key}
+                    className="rounded-[20px] border border-[var(--ode-border)] bg-[rgba(5,29,46,0.56)] px-5 py-4"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[1rem] font-semibold text-[var(--ode-text)]">{section.title}</div>
+                        <div className="mt-1 text-[0.84rem] text-[var(--ode-text-muted)]">
+                          Effective: {section.effective.join(", ")}
+                        </div>
+                      </div>
+                      <label className="flex items-center gap-2 text-[0.9rem] text-[var(--ode-text)]">
+                        <input
+                          type="checkbox"
+                          checked={section.mode === "inherit"}
+                          disabled={accessPolicySaving || !accessPolicyEditorCanEdit}
+                          onChange={(event) => {
+                            const nextMode = event.target.checked ? "inherit" : "custom";
+                            setAccessPolicyDraft((current) => {
+                              if (!current) return current;
+                              if (section.key === "read") {
+                                return { ...current, readMode: nextMode };
+                              }
+                              if (section.key === "write") {
+                                return { ...current, writeMode: nextMode };
+                              }
+                              return { ...current, manageMode: nextMode };
+                            });
+                          }}
+                        />
+                        <span>Inherit from parent</span>
+                      </label>
+                    </div>
+                    {section.mode === "custom" ? (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {ACCESS_ROLE_VALUES.map((role) => {
+                          const checked = section.roles.includes(role);
+                          return (
+                            <label
+                              key={`${section.key}-${role}`}
+                              className={`flex items-center gap-2 rounded-full border px-3 py-2 text-[0.88rem] transition ${
+                                checked
+                                  ? "border-[rgba(56,182,255,0.52)] bg-[rgba(16,94,138,0.24)] text-[var(--ode-text)]"
+                                  : "border-[var(--ode-border)] bg-[rgba(7,39,61,0.48)] text-[var(--ode-text-muted)]"
+                              }`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={accessPolicySaving || !accessPolicyEditorCanEdit}
+                                onChange={(event) => {
+                                  setAccessPolicyDraft((current) => {
+                                    if (!current) return current;
+                                    const currentRoles =
+                                      section.key === "read"
+                                        ? current.readRoles
+                                        : section.key === "write"
+                                          ? current.writeRoles
+                                          : current.manageRoles;
+                                    const nextRoles = ACCESS_ROLE_VALUES.filter((candidate) =>
+                                      candidate === role
+                                        ? event.target.checked
+                                        : currentRoles.includes(candidate)
+                                    );
+                                    if (section.key === "read") {
+                                      return { ...current, readRoles: nextRoles };
+                                    }
+                                    if (section.key === "write") {
+                                      return { ...current, writeRoles: nextRoles };
+                                    }
+                                    return { ...current, manageRoles: nextRoles };
+                                  });
+                                }}
+                              />
+                              <span>{role}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </section>
+                ))}
+              </div>
+              <div className="flex items-center justify-between border-t border-[var(--ode-border)] px-6 py-4">
+                {accessPolicyEditorCanEdit ? (
+                  <button
+                    className="ode-text-btn h-11 px-5"
+                    onClick={() => {
+                      setAccessPolicyDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              readMode: "inherit",
+                              writeMode: "inherit",
+                              manageMode: "inherit"
+                            }
+                          : current
+                      );
+                    }}
+                    disabled={accessPolicySaving}
+                  >
+                    Reset to inherited
+                  </button>
+                ) : (
+                  <div className="text-[0.84rem] text-[var(--ode-text-muted)]">Administrator access required to edit</div>
+                )}
+                <div className="flex items-center gap-3">
+                  <button
+                    className="ode-text-btn h-11 px-5"
+                    onClick={closeNodeAccessPolicyEditor}
+                    disabled={accessPolicySaving}
+                  >
+                    {accessPolicyEditorCanEdit ? "Cancel" : "Close"}
+                  </button>
+                  {accessPolicyEditorCanEdit ? (
+                    <button
+                      className="ode-primary-btn h-11 px-7 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={() => {
+                        void saveNodeAccessPolicy();
+                      }}
+                      disabled={accessPolicySaving}
+                    >
+                      Save policy
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
         {naWorkspaceModalOpen ? (
           <div
             className="ode-overlay-scrim fixed inset-0 z-[120] flex items-center justify-center p-4 backdrop-blur-sm"
@@ -20124,6 +24769,7 @@ export default function App() {
           language={language}
           node={scheduleModalNode}
           initialSchedule={scheduleModalNode ? parseNodeTimelineSchedule(scheduleModalNode) : null}
+          canEdit={scheduleModalCanEdit}
           onClose={closeScheduleModal}
           onSave={saveNodeSchedule}
           onClear={clearNodeSchedule}
@@ -20175,7 +24821,7 @@ export default function App() {
           initialSurface={
             documentAdvisorOpen
               ? "organization"
-              : workspaceFocusMode === "execution"
+              : desktopViewMode === "procedure" || workspaceFocusMode === "data" || workspaceFocusMode === "execution"
                 ? "workarea"
                 : "organization"
           }
@@ -20252,6 +24898,7 @@ export default function App() {
           contextMenuNode?.id === activeProjectRootId ? workspaceStructureLocked : contextMenuNodeStructureLocked
         }
         canToggleStructureLock={contextMenuCanToggleStructureLock}
+        canEditAccessPolicy={contextMenuNodeCanOpenAccessPolicy}
         contextMenuNodeWorkareaKind={contextMenuNodeWorkareaKind}
         contextMenuNodeIsDeclaredWorkareaOwner={contextMenuNodeIsDeclaredWorkareaOwner}
         contextMenuNodeCanOpenWorkarea={contextMenuNodeCanOpenWorkarea}
@@ -20262,9 +24909,27 @@ export default function App() {
         canMoveNodeOut={contextMenuCanMoveNodeOut}
         contextMenuGroupCanDelete={contextMenuGroupCanDelete}
         canDistributeToNAWorkspace={contextMenuCanDistributeToNAWorkspace}
+        canCreateChantier={contextMenuCanCreateChantier}
+        canSaveAsOrganisationModel={contextMenuCanSaveAsOrganisationModel}
+        canSaveAsDatabaseTemplate={contextMenuCanSaveAsDatabaseTemplate}
         restrictToFavoriteGroupsOnly={selectedFavoriteGroupFilterIds.length > 0}
         onRunAction={(action) => {
           void runContextMenuAction(action);
+        }}
+      />
+
+      <CreateChantierModal
+        t={t}
+        open={Boolean(createChantierDialogState)}
+        targetNodeLabel={createChantierDialogState?.targetNodeName ?? ""}
+        libraryModels={chantierTemplateLibraryOptions}
+        busy={createChantierBusy}
+        onClose={() => {
+          if (createChantierBusy) return;
+          setCreateChantierDialogState(null);
+        }}
+        onSubmit={(input) => {
+          void handleCreateChantierDialogSubmit(input);
         }}
       />
 
@@ -20290,7 +24955,9 @@ export default function App() {
       <TopBar
         t={t}
         workspaceMode={workspaceMode}
+        workspaceFocusMode={workspaceFocusMode}
         documentationModeActive={documentationModeActive}
+        libraryModeActive={desktopViewMode === "library"}
         workspaceSettingsOpen={workspaceSettingsOpen}
         isDesktopRuntime={isDesktopRuntime}
         isWindowMaximized={isWindowMaximized}
@@ -20309,28 +24976,55 @@ export default function App() {
         onDocumentationTabClick={() => {
           enterDocumentationMode();
         }}
-        onDesktopTabClick={() => {
+        onLibraryTabClick={() => {
           exitDocumentationMode();
           setWorkspaceMode("grid");
-          if (documentationModeActive || desktopViewMode === "procedure") {
-            setDesktopViewMode(desktopBrowseViewModeRef.current === "procedure" ? "grid" : desktopBrowseViewModeRef.current);
+          if (desktopViewMode !== "library") {
+            setDesktopViewMode("library");
           }
           if (workspaceFocusMode === "execution") {
-            void openNodeInWorkarea(resolvePreferredWorkareaTargetNodeId());
+            const ownerNodeId = resolveWorkareaOwnerNodeId();
+            const navigationTargetId = ownerNodeId ?? activeWorkspaceRootId ?? null;
+            setExecutionQuickOpenDeliverableId(null);
+            setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("structure"));
+            clearActiveDesktopNodeTab();
+            if (navigationTargetId) {
+              void store.navigateTo(navigationTargetId);
+              setPrimarySelection(navigationTargetId, "grid");
+            } else {
+              setPrimarySelection(null, "grid");
+            }
+            setSelectionSurface("grid");
+            setKeyboardSurface("grid");
             return;
           }
           setSelectionSurface("grid");
           setKeyboardSurface("grid");
         }}
-        onTimelineTabClick={() => {
+        onDesktopTabClick={() => {
           exitDocumentationMode();
-          if (workspaceFocusMode === "data") {
-            setActiveNodeStateFilters(createAllNodeStateFilters());
+          setWorkspaceMode("grid");
+          if (documentationModeActive || desktopViewMode === "procedure" || desktopViewMode === "library") {
+            setDesktopViewMode(desktopBrowseViewModeRef.current);
           }
-          setWorkspaceMode("timeline");
-          setDesktopViewMode("grid");
-          setSelectionSurface("timeline");
-          setKeyboardSurface("timeline");
+          if (workspaceFocusMode === "execution") {
+            const ownerNodeId = resolveWorkareaOwnerNodeId();
+            const navigationTargetId = ownerNodeId ?? activeWorkspaceRootId ?? null;
+            setExecutionQuickOpenDeliverableId(null);
+            setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("structure"));
+            clearActiveDesktopNodeTab();
+            if (navigationTargetId) {
+              void store.navigateTo(navigationTargetId);
+              setPrimarySelection(navigationTargetId, "grid");
+            } else {
+              setPrimarySelection(null, "grid");
+            }
+            setSelectionSurface("grid");
+            setKeyboardSurface("grid");
+            return;
+          }
+          setSelectionSurface("grid");
+          setKeyboardSurface("grid");
         }}
         onWorkspaceSettingsClick={() =>
           setWorkspaceSettingsOpen((prev) => {
@@ -20360,6 +25054,9 @@ export default function App() {
               t={t}
               language={language}
               workspaceFocusMode={workspaceFocusMode}
+              documentationModeActive={documentationModeActive}
+              libraryModeActive={desktopViewMode === "library"}
+              quickAccessScopeLabel={desktopViewMode === "library" ? t("tabs.library") : quickAccessScopeLabel}
               isLargeLayout={isLargeLayout}
               isSidebarCollapsed={isSidebarCollapsed}
               sidebarWidth={sidebarWidth}
@@ -20367,16 +25064,17 @@ export default function App() {
               searchInputRef={searchInputRef}
               searchQuery={store.searchQuery}
               searchDropdownOpen={searchDropdownOpen}
-              searchResults={desktopSidebarSearchResults}
+              searchResults={desktopViewMode === "library" ? librarySidebarSearchResults : desktopSidebarSearchResults}
               searchActiveIndex={searchActiveIndex}
               displayedTreeRows={displayedTreeRows}
-              selectedNodeId={store.selectedNodeId}
-              selectedNodeIds={selectedNodeIds}
+              treeSelectionRevealRequestKey={treeSelectionRevealRequestKey}
+              selectedNodeId={effectiveTreeSelectedNodeId}
+              selectedNodeIds={effectiveTreeSelectedNodeIds}
               cutPendingNodeIds={cutPendingNodeIds}
               draggingNodeId={draggingNodeId}
               dropIndicator={dropIndicator}
               scopedRootDropTargetId={desktopScopedRootDropTargetId}
-              activeProjectRootId={activeProjectRootId}
+              activeProjectRootId={activeWorkspaceRootId}
               editingNodeId={editingNodeId}
               editingSurface={editingSurface}
               editingValue={editingValue}
@@ -20385,7 +25083,7 @@ export default function App() {
               folderNodeStateById={folderNodeStateById}
               executionOwnerNodeIds={executionOwnerNodeIds}
               scopedNumbering={scopedNumbering}
-              hideTreeNumbering={documentationModeActive}
+              hideTreeNumbering={documentationModeActive || desktopViewMode === "library"}
               editActionInFlightRef={editActionInFlightRef}
               isNodeProvisionalInlineCreate={(nodeId) =>
                 provisionalInlineCreateByNodeIdRef.current.has(nodeId)
@@ -20400,7 +25098,7 @@ export default function App() {
               quickEditNodeDescriptionTargetLabel={tooltipQuickEditTargetNode?.name ?? null}
               canExpandAllTreeNodes={canExpandAllTreeNodes}
               canCollapseAllTreeNodes={canCollapseAllTreeNodes}
-              showEmptyState={showWorkspaceEmptyState}
+              showEmptyState={desktopViewMode === "library" ? false : showWorkspaceEmptyState}
               onSelectFavoriteGroup={(groupId, options) => {
                 void handleFavoriteGroupClick(groupId, undefined, options);
               }}
@@ -20463,12 +25161,16 @@ export default function App() {
               onCloseContextMenu={closeContextMenu}
               onApplyTreeSelection={applyTreeSelection}
               onBrowseTreeNode={(nodeId) => {
+                if (desktopViewMode === "library") {
+                  selectReusableLibraryItem(nodeId, { surface: "tree" });
+                  return;
+                }
                 if (documentationModeActive) {
                   setSelectionSurface("tree");
                   setKeyboardSurface("procedure");
                   return;
                 }
-                void browseTreeNodeInGrid(nodeId);
+                void browseTreeNodeInGrid(nodeId, { preserveTreeSurface: true });
               }}
               onOpenNodeContextMenu={(event, nodeId, surface) =>
                 openNodeContextMenu(event, nodeId, surface, {
@@ -20513,7 +25215,7 @@ export default function App() {
                 }
                 await openNodeInDesktopTab(nodeId);
               }}
-              onReviewFile={setMindMapReviewNodeId}
+              onReviewFile={openFilePreview}
             />
 
             {!isSidebarCollapsed ? (
@@ -20562,51 +25264,40 @@ export default function App() {
         ) : null}
 
         <main className="ode-pane relative flex min-h-0 flex-col overflow-hidden lg:min-w-0 lg:flex-1">
-          {workspaceMode === "grid" ? (
+          {!documentationModeActive ? (
             <MainPaneHeader
               t={t}
-              breadcrumbNodes={breadcrumbNodes}
+              breadcrumbNodes={mainPaneBreadcrumbNodes}
+              getBreadcrumbLabel={getTransientNodeDisplayLabel}
               workspaceMode={workspaceMode}
               desktopViewMode={desktopViewMode}
               workspaceFocusMode={workspaceFocusMode}
               documentationModeActive={documentationModeActive}
               workspaceStructureLocked={workspaceStructureLocked}
+              currentFolderNode={store.currentNode}
               uploadInputRef={uploadInputRef}
               onUploadInputChange={onUploadInputChange}
-              onTriggerDesktopUpload={() => {
-                void triggerDesktopUpload();
-              }}
               onSelectBreadcrumbNode={(nodeId) => {
                 void (async () => {
-                  clearActiveDesktopNodeTab();
-                  if (workspaceFocusMode === "execution") {
-                    await openNodeInWorkarea(nodeId);
+                  if (workspaceMode === "timeline") {
+                    await openNodeTimelineView(nodeId);
                     return;
                   }
-                  if (desktopViewMode === "mindmap") {
-                    activateDesktopGridBrowseSurface();
-                  }
-                  await store.navigateTo(nodeId);
-                  if (documentationModeActive) {
-                    setPrimarySelection(nodeId, "tree");
-                    setSelectionSurface("tree");
-                    setKeyboardSurface("procedure");
+                  if (workspaceFocusMode === "execution" && desktopViewMode !== "dashboard") {
+                    await openNodeExecutionView(nodeId);
                     return;
                   }
-                  setPrimarySelection(nodeId, "grid");
-                  setSelectionSurface("grid");
-                  setKeyboardSurface("grid");
+                  await openNodeHomeView(nodeId);
                 })();
               }}
-              onSetDesktopViewMode={(mode) => {
-                exitDocumentationMode();
-                setDesktopViewMode(mode);
-                if (mode === "mindmap") {
-                  setMindMapContentMode("node_tree");
-                  setMindMapOrientation("horizontal");
-                }
-                setSelectionSurface(mode === "procedure" ? "tree" : "grid");
-                setKeyboardSurface(mode === "procedure" ? "procedure" : "grid");
+              onOpenNodeHome={() => {
+                void openNodeHomeView();
+              }}
+              onOpenNodeExecution={() => {
+                void openNodeExecutionView();
+              }}
+              onOpenNodeTimeline={() => {
+                void openNodeTimelineView();
               }}
             />
           ) : null}
@@ -20614,23 +25305,21 @@ export default function App() {
           {workspaceMode === "grid" ? (
             documentationModeActive ? (
               <ProcedureBuilderPanel
+                language={language}
                 workspaceName={activeProject?.name ?? null}
                 rootNode={procedureRootNode}
                 selectedNode={procedureSelectedNode}
+                canReadNode={(nodeId) => canReadNodeForActiveRole(nodeId)}
+                canWriteNode={(nodeId) => canWriteNodeForActiveRole(nodeId)}
+                getNodeDisplayLabel={getTransientNodeDisplayLabel}
                 byParent={byParent}
-                scopedNumbering={scopedNumbering}
-                allNodes={store.allNodes}
-                projects={projects}
-                activeProjectRootId={activeProjectRootId}
-                onSelectNode={(nodeId) => {
-                  setPrimarySelection(nodeId, "tree");
-                  setSelectionSurface("tree");
-                  setKeyboardSurface("procedure");
-                }}
+              scopedNumbering={scopedNumbering}
+              allNodes={store.allNodes}
+              projects={projects}
+              activeProjectRootId={activeWorkspaceRootId}
+              onSelectNode={handleProcedureNodeSelection}
                 onOpenLinkedNode={async (nodeId) => {
-                  await openNodeInDesktopTab(nodeId, {
-                    selectedNodeId: nodeId
-                  });
+                  await openNodeInDedicatedWindow(nodeId);
                 }}
                 onOpenLinkedFile={async (nodeId) => {
                   await openFileNode(nodeId);
@@ -20641,17 +25330,28 @@ export default function App() {
                 onLaunchLinkedApp={async (item) => {
                   await launchQuickApp(item);
                 }}
+                onOpenFieldOrderWindow={async (nodeId) => {
+                  await openProcedureFieldOrderWindow(nodeId);
+                }}
+                onCloseFieldOrderWindow={
+                  isDedicatedFieldOrderWindow
+                    ? async () => {
+                        await getCurrentWindow().close().catch(() => {});
+                      }
+                    : undefined
+                }
                 onCreateProcedureItem={createProcedureDocumentItem}
                 onAttachImagesToNode={attachImagesToProcedureNode}
                 onAttachFilesToNode={attachFilesToProcedureNode}
                 onDeleteProcedureNode={deleteProcedureDocumentNode}
                 onRenameNodeTitle={renameProcedureNodeTitle}
                 onReviewNodeFile={(nodeId) => {
-                  setMindMapReviewNodeId(nodeId);
+                  openFilePreview(nodeId);
                 }}
                 onSaveNodeContent={saveProcedureNodeContent}
                 onSaveNodeDescription={saveProcedureNodeDescription}
                 onSaveNodeProperties={saveProcedureNodeProperties}
+                onMoveProcedureNode={moveProcedureNodeWithinParent}
                 onActivateProcedureSurface={() => {
                   setSelectionSurface("tree");
                   setKeyboardSurface("procedure");
@@ -20665,7 +25365,16 @@ export default function App() {
                   })
                 }
                 requestedFieldEditorNodeId={procedureFieldEditorTargetNodeId}
-                onFieldEditorRequestHandled={() => setProcedureFieldEditorTargetNodeId(null)}
+                requestedFieldOrderNodeId={procedureFieldOrderTargetNodeId}
+                requestedBlankSectionEditorNodeId={procedureBlankSectionEditorTargetNodeId}
+                onFieldEditorRequestHandled={() => {
+                  setProcedureFieldEditorTargetNodeId(null);
+                  setProcedureBlankSectionEditorTargetNodeId(null);
+                }}
+                onFieldOrderRequestHandled={() => {
+                  setProcedureFieldOrderTargetNodeId(null);
+                }}
+                isDedicatedFieldOrderWindow={isDedicatedFieldOrderWindow}
               />
             ) : (
               <DesktopContentPanel
@@ -20684,6 +25393,9 @@ export default function App() {
                 quickAccessMindMapGroups={quickAccessMindMapGroups}
                 quickAccessMindMapDirectFavorites={quickAccessMindMapDirectFavorites}
                 activeFavoriteGroupId={activeFavoriteGroupId}
+                currentFolderNode={store.currentNode}
+                allNodes={store.allNodes}
+                byParent={byParent}
                 gridNodes={desktopGridNodes}
                 chantierStatusCounts={desktopChantierPortfolioCounts}
                 chantierNodeCount={desktopChantierNodes.length}
@@ -20779,7 +25491,7 @@ export default function App() {
                 onJumpToWorkspaceChantier={(nodeId) => {
                   void jumpToWorkspaceChantierNode(nodeId);
                 }}
-                onReviewMindMapFile={setMindMapReviewNodeId}
+                onReviewMindMapFile={openFilePreview}
                 onSelectQuickAccessGroup={(groupId) => {
                   void handleFavoriteGroupClick(groupId);
                 }}
@@ -20794,6 +25506,59 @@ export default function App() {
                 onFormatBytes={formatBytes}
                 onGetNodeSizeBytes={getNodeSizeBytes}
                 onFormatNodeModified={formatNodeModified}
+                onCreateDashboardWidget={createDashboardWidgetNode}
+                onRenameDashboardWidget={renameProcedureNodeTitle}
+                onSaveDashboardWidgetProperties={saveDashboardWidgetProperties}
+                onMoveDashboardWidget={moveDashboardWidgetNode}
+                onDeleteDashboardWidget={deleteDashboardWidgetNode}
+                organisationModels={organisationModelLibraryItems}
+                databaseTemplates={databaseTemplateLibraryItems}
+                canCreateFromReusableLibraryIntoCurrentNode={canCreateFromReusableLibraryIntoCurrentNode}
+                canSaveCurrentAsOrganisationModel={canSaveCurrentDashboardNodeAsOrganisationModel}
+                canSaveCurrentAsDatabaseTemplate={canSaveCurrentDashboardNodeAsDatabaseTemplate}
+                onSaveCurrentAsOrganisationModel={() => {
+                  if (!dashboardLibraryTargetNode) return;
+                  void saveNodeAsReusableLibraryItem(dashboardLibraryTargetNode.id, "organisation_model");
+                }}
+                onSaveCurrentAsDatabaseTemplate={() => {
+                  if (!dashboardLibraryTargetNode) return;
+                  void saveNodeAsReusableLibraryItem(dashboardLibraryTargetNode.id, "database_template");
+                }}
+                onCreateFromReusableLibraryItem={(itemId) => {
+                  void createFromReusableLibraryItem(itemId, dashboardLibraryTargetNode?.id ?? null);
+                }}
+                onExportReusableLibraryItem={(itemId) => {
+                  void exportReusableLibraryItem(itemId);
+                }}
+                onImportReusableLibraryJson={async (kind, file) => {
+                  const text = await file.text();
+                  const payload = parseReusableLibraryImportPayload(text);
+                  if (!payload) {
+                    setProjectNotice(null);
+                    setProjectError("The selected JSON file is not a valid ODE reusable library export.");
+                    return;
+                  }
+                  if (payload.odeLibraryKind !== kind) {
+                    setProjectNotice(null);
+                    setProjectError(
+                      `This JSON file is a ${payload.odeLibraryKind === "database_template" ? "Database Template" : "Organisation Model"} export and cannot be imported into the other library.`
+                    );
+                    return;
+                  }
+                  await importReusableLibraryPayload(payload);
+                }}
+                onSelectReusableLibraryItem={(itemId, options) => {
+                  applyTreeSelection(itemId, {
+                    range: options?.range ?? false,
+                    toggle: options?.toggle ?? false
+                  });
+                }}
+                onOpenReusableLibraryItem={(itemId) => {
+                  void openReusableLibraryItemForReview(itemId);
+                }}
+                onOpenReusableLibraryItemContextMenu={(event, itemId) => {
+                  openNodeContextMenu(event, itemId, "tree");
+                }}
                 onSetEditingValue={setEditingValue}
                 onOpenInlineEditContextMenu={(event) => {
                   void openTextEditContextMenu(event, "grid");
@@ -20803,7 +25568,9 @@ export default function App() {
                 }}
                 onCancelInlineEdit={cancelInlineEdit}
                 onCreateFirstNode={() => {
-                  void createSurfaceDefaultTopic("grid");
+                  void createSurfaceDefaultTopic("grid", undefined, {
+                    inlineEditSurface: workspaceFocusMode === "execution" ? undefined : "tree"
+                  });
                 }}
                 onTriggerUpload={() => {
                   void triggerDesktopUpload();
@@ -20812,23 +25579,21 @@ export default function App() {
             )
           ) : documentationModeActive ? (
             <ProcedureBuilderPanel
+              language={language}
               workspaceName={activeProject?.name ?? null}
               rootNode={procedureRootNode}
               selectedNode={procedureSelectedNode}
+              canReadNode={(nodeId) => canReadNodeForActiveRole(nodeId)}
+              canWriteNode={(nodeId) => canWriteNodeForActiveRole(nodeId)}
+              getNodeDisplayLabel={getTransientNodeDisplayLabel}
               byParent={byParent}
               scopedNumbering={scopedNumbering}
               allNodes={store.allNodes}
               projects={projects}
-              activeProjectRootId={activeProjectRootId}
-              onSelectNode={(nodeId) => {
-                setPrimarySelection(nodeId, "tree");
-                setSelectionSurface("tree");
-                setKeyboardSurface("procedure");
-              }}
+              activeProjectRootId={activeWorkspaceRootId}
+              onSelectNode={handleProcedureNodeSelection}
               onOpenLinkedNode={async (nodeId) => {
-                await openNodeInDesktopTab(nodeId, {
-                  selectedNodeId: nodeId
-                });
+                await openNodeInDedicatedWindow(nodeId);
               }}
               onOpenLinkedFile={async (nodeId) => {
                 await openFileNode(nodeId);
@@ -20839,20 +25604,31 @@ export default function App() {
               onLaunchLinkedApp={async (item) => {
                 await launchQuickApp(item);
               }}
+              onOpenFieldOrderWindow={async (nodeId) => {
+                await openProcedureFieldOrderWindow(nodeId);
+              }}
+              onCloseFieldOrderWindow={
+                isDedicatedFieldOrderWindow
+                  ? async () => {
+                      await getCurrentWindow().close().catch(() => {});
+                    }
+                  : undefined
+              }
               onCreateProcedureItem={createProcedureDocumentItem}
               onAttachImagesToNode={attachImagesToProcedureNode}
               onAttachFilesToNode={attachFilesToProcedureNode}
               onDeleteProcedureNode={deleteProcedureDocumentNode}
               onRenameNodeTitle={renameProcedureNodeTitle}
               onReviewNodeFile={(nodeId) => {
-                setMindMapReviewNodeId(nodeId);
+                openFilePreview(nodeId);
               }}
               onSaveNodeContent={saveProcedureNodeContent}
-              onSaveNodeDescription={saveProcedureNodeDescription}
-              onSaveNodeProperties={saveProcedureNodeProperties}
-              onActivateProcedureSurface={() => {
-                setSelectionSurface("tree");
-                setKeyboardSurface("procedure");
+                onSaveNodeDescription={saveProcedureNodeDescription}
+                onSaveNodeProperties={saveProcedureNodeProperties}
+                onMoveProcedureNode={moveProcedureNodeWithinParent}
+                onActivateProcedureSurface={() => {
+                  setSelectionSurface("tree");
+                  setKeyboardSurface("procedure");
               }}
               onOpenSurfaceContextMenu={(event) =>
                 openSurfaceContextMenu(event, "tree", {
@@ -20863,7 +25639,16 @@ export default function App() {
                 })
               }
               requestedFieldEditorNodeId={procedureFieldEditorTargetNodeId}
-              onFieldEditorRequestHandled={() => setProcedureFieldEditorTargetNodeId(null)}
+              requestedFieldOrderNodeId={procedureFieldOrderTargetNodeId}
+              requestedBlankSectionEditorNodeId={procedureBlankSectionEditorTargetNodeId}
+              onFieldEditorRequestHandled={() => {
+                setProcedureFieldEditorTargetNodeId(null);
+                setProcedureBlankSectionEditorTargetNodeId(null);
+              }}
+              onFieldOrderRequestHandled={() => {
+                setProcedureFieldOrderTargetNodeId(null);
+              }}
+              isDedicatedFieldOrderWindow={isDedicatedFieldOrderWindow}
             />
           ) : (
             <TimelineView>
@@ -20979,7 +25764,7 @@ export default function App() {
                 onCreateFirstNode={() => {
                   void handleCreateFirstNodeRequest("timeline");
                 }}
-                onReviewFile={setMindMapReviewNodeId}
+                onReviewFile={openFilePreview}
                 prioritizeFlaggedTimelineTasks={prioritizeFlaggedTimelineTasks}
                 isTimelineNodeFlagged={isTimelineNodeFlagged}
                 onTogglePrioritizeFlaggedTimelineTasks={() => {
@@ -20994,6 +25779,7 @@ export default function App() {
               tabs={desktopOpenNodeTabs}
               activeTabId={activeWorkspaceNodeTabSession.activeTabId}
               isSidebarCollapsed={isSidebarCollapsed}
+              showUploadAction={desktopViewMode === "dashboard"}
               onActivateTab={(nodeId) => {
                 const tabEntry =
                   activeWorkspaceNodeTabSession.openTabs.find((entry) => entry.nodeId === nodeId) ?? null;
@@ -21003,6 +25789,9 @@ export default function App() {
               }}
               onCloseTab={(nodeId) => {
                 void closeDesktopNodeTab(nodeId);
+              }}
+              onTriggerUpload={() => {
+                void triggerDesktopUpload(store.currentNode?.id ?? activeWorkspaceNodeTabSession.activeTabId ?? null);
               }}
             />
           ) : null}
@@ -21046,6 +25835,17 @@ export default function App() {
         onOpenQaChecklist={() => {
           void openUtilityPanel("qa");
         }}
+        currentUserLabel={currentUserAccount?.displayName ?? null}
+        currentUserPhotoDataUrl={currentUserAccount?.profilePhotoDataUrl ?? null}
+        currentUserRole={currentUserAccount?.role ?? null}
+        currentUserIsAdmin={currentUserAccount?.isAdmin ?? false}
+        onOpenUserProfile={() => {
+          void openCurrentUserProfile();
+        }}
+        onOpenUserAccounts={() => {
+          void openUserAccountsManager();
+        }}
+        onSignOut={currentUserAccount ? handleSignOutUserAccount : undefined}
       />
     </div>
   );

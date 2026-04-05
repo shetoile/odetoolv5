@@ -1,7 +1,8 @@
 {
-  "reportFile": "qa-report-20260310-120936.json",
-  "reportPath": "quality/reports/qa-report-20260310-120936.json",
-  "generatedAt": "2026-03-10T12:09:36.367Z",
-  "gitHead": "e5daf9d9",
-  "result": "pass"
+  "reportFile": "qa-report-20260404-142723.json",
+  "reportPath": "quality/reports/qa-report-20260404-142723.json",
+  "generatedAt": "2026-04-04T14:27:23.487Z",
+  "gitHead": "e6377e1",
+  "result": "pass",
+  "consistencyReportPath": "quality/reports/consistency-latest.json"
 }

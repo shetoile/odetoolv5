@@ -4,8 +4,9 @@ import type {
   ScheduleStatus
 } from "@/lib/types";
 import type { LanguageCode } from "@/lib/i18n";
+import { buildAppStorageKey } from "@/lib/appIdentity";
 
-const APPROVED_INTEGRATED_PLAN_MEMORY_KEY = "odetool.ai.memory.integrated-plans.v1";
+const APPROVED_INTEGRATED_PLAN_MEMORY_KEY = buildAppStorageKey("ai.memory.integrated-plans.v1");
 const MAX_APPROVED_INTEGRATED_PLAN_MEMORIES = 48;
 
 export interface ApprovedIntegratedPlanMemoryTask {

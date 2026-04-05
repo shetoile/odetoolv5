@@ -1,3 +1,6 @@
+use argon2::password_hash::rand_core::OsRng;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -31,6 +34,7 @@ use windows::Win32::{
     UI::Input::KeyboardAndMouse::GetKeyboardLayout,
     UI::WindowsAndMessaging::{
         GetWindowRect, GetWindowThreadProcessId, PostMessageW, SetWindowPos, ShowWindow,
+        ShowWindowAsync,
         SWP_NOACTIVATE,
         SWP_NOOWNERZORDER, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
     },
@@ -42,12 +46,13 @@ pub mod ticket_ai;
 
 const ROOT_PARENT_ID: &str = "__ROOT__";
 const SCHEMA_SQL: &str = include_str!("../surreal-schema.surql");
-const MIRROR_FOLDER_NAME: &str = "ODETool_Mirror";
-const LEGACY_MIRROR_FOLDER_NAMES: [&str; 2] = ["ODETool Business Management", "ODETool Box"];
+const MIRROR_FOLDER_NAME: &str = "ODETool_Pro_Mirror";
+const LEGACY_MIRROR_FOLDER_NAMES: [&str; 0] = [];
 const INTERNAL_STATE_DIR_NAME: &str = "mirror_state";
 const MIRROR_NODE_FILES_DIR_NAME: &str = "node_files";
 const MIRROR_SHARE_PACKAGES_DIR_NAME: &str = "share_packages";
 const POWERPOINT_PREVIEW_DIR_NAME: &str = "powerpoint_previews";
+const USER_ACCOUNT_STORE_FILE: &str = "user_accounts.json";
 const ODE_CONTEXT_FILE_NAME: &str = ".ode-context";
 const MIRROR_PROJECTION_INDEX_FILE: &str = ".ode_projection_index.json";
 const PROJECT_PROJECTION_INDEX_FILE: &str = "project_projection_index.json";
@@ -59,6 +64,9 @@ const UPDATE_NODE_DESCRIPTION_QUERY: &str =
     "UPDATE node SET description = $description, updatedAt = $updated_at WHERE nodeId = $node_id OR node_id = $node_id;";
 pub(crate) const AI_REBUILD_DISABLED_MESSAGE: &str =
     "Legacy AI is disabled while ODETool AI is being rebuilt.";
+const USER_ACCOUNT_STORE_VERSION: u32 = 2;
+const USER_ACCOUNT_REMEMBER_SESSION_MIN_MS: i64 = 60 * 60 * 1000;
+const USER_ACCOUNT_REMEMBER_SESSION_MAX_MS: i64 = 5 * 365 * 24 * 60 * 60 * 1000;
 
 static DB: OnceCell<Arc<Surreal<Db>>> = OnceCell::const_new();
 static WINDOWS_ICON_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
@@ -363,7 +371,9 @@ fn fit_windows_window_to_work_area(
 #[cfg(target_os = "windows")]
 fn minimize_windows_window(hwnd: HWND) {
     unsafe {
-        let _ = ShowWindow(hwnd, SW_MINIMIZE);
+        if !ShowWindowAsync(hwnd, SW_MINIMIZE).as_bool() {
+            let _ = ShowWindow(hwnd, SW_MINIMIZE);
+        }
     }
 }
 
@@ -582,6 +592,264 @@ fn ensure_internal_state_root_exists(app: &tauri::AppHandle) -> Result<PathBuf, 
     fs::create_dir_all(&path)
         .map_err(|err| format!("failed to create internal state dir {:?}: {err}", path))?;
     Ok(path)
+}
+
+fn get_user_account_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(ensure_internal_state_root_exists(app)?.join(USER_ACCOUNT_STORE_FILE))
+}
+
+fn read_user_account_store(app: &tauri::AppHandle) -> Result<UserAccountStore, String> {
+    let path = get_user_account_store_path(app)?;
+    if !path.exists() {
+        return Ok(UserAccountStore::default());
+    }
+
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read user account store {:?}: {err}", path))?;
+    if raw.trim().is_empty() {
+        return Ok(UserAccountStore::default());
+    }
+
+    let mut store: UserAccountStore = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to decode user account store {:?}: {err}", path))?;
+    if store.version == 0 {
+        store.version = USER_ACCOUNT_STORE_VERSION;
+    }
+    Ok(store)
+}
+
+fn write_user_account_store(app: &tauri::AppHandle, store: &UserAccountStore) -> Result<(), String> {
+    let path = get_user_account_store_path(app)?;
+    let payload = serde_json::to_string_pretty(store)
+        .map_err(|err| format!("failed to encode user account store: {err}"))?;
+    fs::write(&path, payload)
+        .map_err(|err| format!("failed to write user account store {:?}: {err}", path))
+}
+
+fn sanitize_display_name(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("display name is required".to_string());
+    }
+    if trimmed.chars().count() > 80 {
+        return Err("display name must be 80 characters or fewer".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn sanitize_username(value: &str) -> Result<String, String> {
+    let trimmed = value.trim().to_lowercase();
+    if trimmed.len() < 3 {
+        return Err("username must be at least 3 characters".to_string());
+    }
+    if trimmed.len() > 40 {
+        return Err("username must be 40 characters or fewer".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-')
+    {
+        return Err("username may only contain letters, numbers, dot, underscore, and dash".to_string());
+    }
+    Ok(trimmed)
+}
+
+fn sanitize_profile_photo_data_url(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(raw) = value else {
+        return Ok(None);
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    if !trimmed.starts_with("data:image/") {
+        return Err("profile photo must be an image".to_string());
+    }
+    if trimmed.len() > 500_000 {
+        return Err("profile photo is too large".to_string());
+    }
+    Ok(Some(trimmed.to_string()))
+}
+
+fn sanitize_access_role(value: &str) -> Result<String, String> {
+    let trimmed = value.trim().to_uppercase();
+    match trimmed.as_str() {
+        "R0" | "R1" | "R2" | "R3" | "R4" | "R5" | "R6" => Ok(trimmed),
+        _ => Err("invalid access role".to_string()),
+    }
+}
+
+fn sanitize_user_account_license_plan(value: &str) -> Result<String, String> {
+    let trimmed = value.trim().to_lowercase();
+    match trimmed.as_str() {
+        "unlimited" | "daily" | "weekly" | "monthly" | "yearly" => Ok(trimmed),
+        _ => Err("invalid license plan".to_string()),
+    }
+}
+
+fn validate_user_account_password(password: &str) -> Result<(), String> {
+    if password.chars().count() < 8 {
+        return Err("password must be at least 8 characters".to_string());
+    }
+    Ok(())
+}
+
+fn hash_user_account_password(password: &str) -> Result<String, String> {
+    validate_user_account_password(password)?;
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|err| format!("failed to hash password: {err}"))
+}
+
+fn verify_user_account_password(password_hash: &str, password: &str) -> Result<bool, String> {
+    let parsed = PasswordHash::new(password_hash)
+        .map_err(|err| format!("failed to parse stored password hash: {err}"))?;
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .is_ok())
+}
+
+fn validate_user_account_remember_session_duration_ms(duration_ms: i64) -> Result<i64, String> {
+    if duration_ms < USER_ACCOUNT_REMEMBER_SESSION_MIN_MS {
+        return Err("remembered sign-in must last at least one hour".to_string());
+    }
+    if duration_ms > USER_ACCOUNT_REMEMBER_SESSION_MAX_MS {
+        return Err("remembered sign-in is too long".to_string());
+    }
+    Ok(duration_ms)
+}
+
+fn resolve_user_account_license_duration_ms(plan: &str) -> Option<i64> {
+    match plan {
+        "daily" => Some(24 * 60 * 60 * 1000),
+        "weekly" => Some(7 * 24 * 60 * 60 * 1000),
+        "monthly" => Some(30 * 24 * 60 * 60 * 1000),
+        "yearly" => Some(365 * 24 * 60 * 60 * 1000),
+        _ => None,
+    }
+}
+
+fn resolve_user_account_license_expires_at(user: &UserAccountRecord) -> Option<i64> {
+    let duration_ms = resolve_user_account_license_duration_ms(&user.license_plan)?;
+    let started_at = user.license_started_at?;
+    started_at.checked_add(duration_ms)
+}
+
+fn resolve_user_account_license_status(user: &UserAccountRecord) -> &'static str {
+    if user.license_plan == "unlimited" {
+        return "unlimited";
+    }
+    match resolve_user_account_license_expires_at(user) {
+        Some(expires_at) if expires_at < now_ms() => "expired",
+        _ => "active",
+    }
+}
+
+fn is_user_account_license_active(user: &UserAccountRecord) -> bool {
+    resolve_user_account_license_status(user) != "expired"
+}
+
+fn count_enabled_admin_accounts(users: &[UserAccountRecord], exclude_user_id: Option<&str>) -> usize {
+    users.iter()
+        .filter(|user| {
+            if let Some(excluded) = exclude_user_id {
+                if user.user_id == excluded {
+                    return false;
+                }
+            }
+            user.is_admin && !user.disabled
+        })
+        .count()
+}
+
+fn sort_user_accounts(users: &mut [UserAccountRecord]) {
+    users.sort_by(|left, right| left.username.cmp(&right.username));
+}
+
+fn prune_user_account_store(store: &mut UserAccountStore) {
+    let now = now_ms();
+    let valid_user_ids = store
+        .users
+        .iter()
+        .map(|user| user.user_id.as_str())
+        .collect::<HashSet<_>>();
+    store.remembered_sessions.retain(|session| {
+        session.expires_at > now && valid_user_ids.contains(session.user_id.as_str())
+    });
+}
+
+fn create_user_account_remembered_session(
+    store: &mut UserAccountStore,
+    user_id: &str,
+    duration_ms: i64,
+) -> Result<RememberedUserAccountSessionRecord, String> {
+    let duration_ms = validate_user_account_remember_session_duration_ms(duration_ms)?;
+    let now = now_ms();
+    let expires_at = now
+        .checked_add(duration_ms)
+        .ok_or_else(|| "remembered sign-in duration is invalid".to_string())?;
+    store.remembered_sessions.retain(|session| session.user_id != user_id);
+    let session = RememberedUserAccountSessionRecord {
+        session_id: uuid::Uuid::new_v4().to_string(),
+        user_id: user_id.to_string(),
+        token: uuid::Uuid::new_v4().to_string(),
+        created_at: now,
+        expires_at,
+    };
+    store.remembered_sessions.push(session.clone());
+    Ok(session)
+}
+
+fn clear_user_account_remembered_sessions_for_user(store: &mut UserAccountStore, user_id: &str) {
+    store.remembered_sessions.retain(|session| session.user_id != user_id);
+}
+
+fn build_user_account_auth_result(
+    user: &UserAccountRecord,
+    remembered_session: Option<&RememberedUserAccountSessionRecord>,
+) -> UserAccountAuthResult {
+    UserAccountAuthResult {
+        user: UserAccountSummary::from(user),
+        remembered_session_token: remembered_session.map(|session| session.token.clone()),
+        remembered_session_expires_at: remembered_session.map(|session| session.expires_at),
+    }
+}
+
+fn find_user_account_index_by_id(users: &[UserAccountRecord], user_id: &str) -> Option<usize> {
+    users.iter().position(|user| user.user_id == user_id)
+}
+
+fn ensure_username_available(
+    users: &[UserAccountRecord],
+    username: &str,
+    exclude_user_id: Option<&str>,
+) -> Result<(), String> {
+    if users.iter().any(|user| {
+        if let Some(excluded) = exclude_user_id {
+            if user.user_id == excluded {
+                return false;
+            }
+        }
+        user.username.eq_ignore_ascii_case(username)
+    }) {
+        return Err(format!("username already exists: {username}"));
+    }
+    Ok(())
+}
+
+fn build_user_account_state(store: &UserAccountStore) -> UserAccountState {
+    let mut users = store
+        .users
+        .iter()
+        .map(UserAccountSummary::from)
+        .collect::<Vec<_>>();
+    users.sort_by(|left, right| left.username.cmp(&right.username));
+    UserAccountState {
+        has_users: !users.is_empty(),
+        users,
+    }
 }
 
 fn ensure_node_files_dir(app: &tauri::AppHandle, node_key: &str) -> Result<PathBuf, String> {
@@ -1152,21 +1420,6 @@ fn read_projection_index(app: &tauri::AppHandle, mirror_root: &Path) -> HashSet<
     read_projection_index_from_path(&legacy_index_path)
 }
 
-fn write_projection_index(app: &tauri::AppHandle, entries: &HashSet<String>) -> Result<(), String> {
-    let state_root = ensure_internal_state_root_exists(app)?;
-    let index_path = state_root.join(MIRROR_PROJECTION_INDEX_FILE);
-    let mut sorted_entries: Vec<String> = entries.iter().cloned().collect();
-    sorted_entries.sort();
-    let payload = serde_json::to_string_pretty(&sorted_entries)
-        .map_err(|err| format!("failed to encode mirror projection index: {err}"))?;
-    fs::write(&index_path, payload).map_err(|err| {
-        format!(
-            "failed to write mirror projection index {:?}: {err}",
-            index_path
-        )
-    })
-}
-
 fn read_project_projection_index(app: &tauri::AppHandle) -> HashMap<String, Vec<String>> {
     let Ok(state_root) = ensure_internal_state_root_exists(app) else {
         return HashMap::new();
@@ -1334,39 +1587,6 @@ fn sync_project_workspace_projection(
     write_project_projection_index(app, &next_entries_by_path)
 }
 
-fn cleanup_legacy_mirror_artifacts(mirror_root: &Path) -> Result<(), String> {
-    let legacy_node_files = mirror_root.join(MIRROR_NODE_FILES_DIR_NAME);
-    if legacy_node_files.exists() {
-        if legacy_node_files.is_dir() {
-            fs::remove_dir_all(&legacy_node_files).map_err(|err| {
-                format!(
-                    "failed to remove legacy node files directory {:?}: {err}",
-                    legacy_node_files
-                )
-            })?;
-        } else {
-            fs::remove_file(&legacy_node_files).map_err(|err| {
-                format!(
-                    "failed to remove legacy node files file {:?}: {err}",
-                    legacy_node_files
-                )
-            })?;
-        }
-    }
-
-    let legacy_index = mirror_root.join(MIRROR_PROJECTION_INDEX_FILE);
-    if legacy_index.exists() {
-        fs::remove_file(&legacy_index).map_err(|err| {
-            format!(
-                "failed to remove legacy projection index {:?}: {err}",
-                legacy_index
-            )
-        })?;
-    }
-
-    #[allow(unreachable_code)]
-    Err("opening urls/paths is not supported on this platform".to_string())
-}
 
 fn sync_desktop_projection_recursive(
     children_map: &HashMap<String, Vec<NodeRecord>>,
@@ -1499,34 +1719,6 @@ fn sync_desktop_projection_recursive(
     }
 
     Ok(created_entry_names)
-}
-
-fn sync_desktop_projection(app: &tauri::AppHandle, all_nodes: &[NodeRecord]) -> Result<(), String> {
-    let mirror_root = ensure_mirror_root_exists(app)?;
-    cleanup_legacy_mirror_artifacts(&mirror_root)?;
-
-    let previous_entries = read_projection_index(app, &mirror_root);
-    let children_map = build_children_map(all_nodes);
-    let created_entries =
-        sync_desktop_projection_recursive(&children_map, ROOT_PARENT_ID, &mirror_root, "", false)?;
-    let created_set: HashSet<String> = created_entries.into_iter().collect();
-    let created_keys: HashSet<String> = created_set
-        .iter()
-        .map(|entry| entry.to_lowercase())
-        .collect();
-    for previous_entry in previous_entries {
-        if is_reserved_mirror_entry(&previous_entry) {
-            continue;
-        }
-        if created_keys.contains(&previous_entry.to_lowercase()) {
-            continue;
-        }
-        let stale_path = mirror_root.join(previous_entry);
-        remove_projected_entry(&stale_path)?;
-    }
-    write_projection_index(app, &created_set)?;
-    #[allow(unreachable_code)]
-    Err("opening urls/paths is not supported on this platform".to_string())
 }
 
 fn expected_projected_entry_keys_for_parent(
@@ -3032,6 +3224,56 @@ fn extract_windows_file_icon_data_url(
     Ok(None)
 }
 
+#[tauri::command]
+async fn get_windows_installed_font_families() -> Result<Vec<String>, String> {
+    #[cfg(target_os = "windows")]
+    {
+        let script = r#"
+Add-Type -AssemblyName PresentationCore
+[System.Windows.Media.Fonts]::SystemFontFamilies |
+  ForEach-Object { $_.Source } |
+  Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
+  Sort-Object -Unique
+"#;
+
+        let output = windows_powershell_command()
+            .arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-Sta")
+            .arg("-Command")
+            .arg(script)
+            .output()
+            .map_err(|err| format!("failed to read installed fonts: {err}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                return Ok(Vec::new());
+            }
+            return Err(format!("font enumeration failed: {stderr}"));
+        }
+
+        let mut families = Vec::new();
+        let mut seen = HashSet::new();
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let normalized_key = trimmed.to_ascii_lowercase();
+            if seen.insert(normalized_key) {
+                families.push(trimmed.to_string());
+            }
+        }
+        return Ok(families);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Ok(Vec::new())
+    }
+}
+
 fn open_path_with_system_default(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -3259,6 +3501,177 @@ impl From<ProjectRecord> for ProjectSummary {
             updated_at: value.updated_at,
         }
     }
+}
+
+fn default_user_account_store_version() -> u32 {
+    USER_ACCOUNT_STORE_VERSION
+}
+
+fn default_user_account_license_plan() -> String {
+    "unlimited".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserAccountRecord {
+    user_id: String,
+    username: String,
+    display_name: String,
+    #[serde(default)]
+    profile_photo_data_url: Option<String>,
+    password_hash: String,
+    role: String,
+    is_admin: bool,
+    disabled: bool,
+    #[serde(default = "default_user_account_license_plan")]
+    license_plan: String,
+    #[serde(default)]
+    license_started_at: Option<i64>,
+    created_at: i64,
+    updated_at: i64,
+    last_login_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RememberedUserAccountSessionRecord {
+    session_id: String,
+    user_id: String,
+    token: String,
+    created_at: i64,
+    expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UserAccountStore {
+    #[serde(default = "default_user_account_store_version")]
+    version: u32,
+    #[serde(default)]
+    users: Vec<UserAccountRecord>,
+    #[serde(default)]
+    remembered_sessions: Vec<RememberedUserAccountSessionRecord>,
+}
+
+impl Default for UserAccountStore {
+    fn default() -> Self {
+        Self {
+            version: USER_ACCOUNT_STORE_VERSION,
+            users: Vec::new(),
+            remembered_sessions: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserAccountSummary {
+    user_id: String,
+    username: String,
+    display_name: String,
+    profile_photo_data_url: Option<String>,
+    role: String,
+    is_admin: bool,
+    disabled: bool,
+    license_plan: String,
+    license_started_at: Option<i64>,
+    license_expires_at: Option<i64>,
+    license_status: String,
+    created_at: i64,
+    updated_at: i64,
+    last_login_at: Option<i64>,
+}
+
+impl From<&UserAccountRecord> for UserAccountSummary {
+    fn from(value: &UserAccountRecord) -> Self {
+        let license_expires_at = resolve_user_account_license_expires_at(value);
+        Self {
+            user_id: value.user_id.clone(),
+            username: value.username.clone(),
+            display_name: value.display_name.clone(),
+            profile_photo_data_url: value.profile_photo_data_url.clone(),
+            role: value.role.clone(),
+            is_admin: value.is_admin,
+            disabled: value.disabled,
+            license_plan: value.license_plan.clone(),
+            license_started_at: value.license_started_at,
+            license_expires_at,
+            license_status: resolve_user_account_license_status(value).to_string(),
+            created_at: value.created_at,
+            updated_at: value.updated_at,
+            last_login_at: value.last_login_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserAccountAuthResult {
+    user: UserAccountSummary,
+    remembered_session_token: Option<String>,
+    remembered_session_expires_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserAccountState {
+    has_users: bool,
+    users: Vec<UserAccountSummary>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BootstrapUserAccountInput {
+    username: String,
+    display_name: String,
+    password: String,
+    #[serde(default)]
+    remember_session: Option<RememberedUserAccountSessionInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SignInUserAccountInput {
+    username: String,
+    password: String,
+    #[serde(default)]
+    remember_session: Option<RememberedUserAccountSessionInput>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RememberedUserAccountSessionInput {
+    duration_ms: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CreateUserAccountInput {
+    username: String,
+    display_name: String,
+    password: String,
+    role: String,
+    is_admin: bool,
+    profile_photo_data_url: Option<String>,
+    #[serde(default = "default_user_account_license_plan")]
+    license_plan: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateUserAccountInput {
+    user_id: String,
+    username: String,
+    display_name: String,
+    role: String,
+    is_admin: bool,
+    disabled: bool,
+    profile_photo_data_url: Option<String>,
+    next_password: Option<String>,
+    #[serde(default = "default_user_account_license_plan")]
+    license_plan: String,
+    #[serde(default)]
+    restart_license_from_now: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3608,12 +4021,12 @@ async fn init_db(app: &tauri::AppHandle) -> Result<Arc<Surreal<Db>>, String> {
     fs::create_dir_all(&app_data_dir)
         .map_err(|err| format!("failed to create app data dir {:?}: {err}", app_data_dir))?;
 
-    let db_path = app_data_dir.join("odetool_rebuild.db");
+    let db_path = app_data_dir.join("odetool_pro.db");
     let db: Surreal<Db> = Surreal::new::<SurrealKv>(db_path.to_string_lossy().to_string())
         .await
         .map_err(db_err)?;
 
-    db.use_ns("odetool").use_db("main").await.map_err(db_err)?;
+    db.use_ns("odetool_pro").use_db("main").await.map_err(db_err)?;
     match db.query(SCHEMA_SQL).await {
         Ok(_) => eprintln!("SurrealDB: Schema applied successfully"),
         Err(err) => eprintln!("SurrealDB: Schema application error: {}", err),
@@ -5427,34 +5840,6 @@ async fn import_missing_workspace_entries_from_source(
     Ok(imported_count)
 }
 
-fn count_importable_external_root_entries(
-    source_root: &Path,
-    managed_root_entries: &HashSet<String>,
-) -> Result<i64, String> {
-    let mut pending_count = 0i64;
-    let entries = fs::read_dir(source_root)
-        .map_err(|err| format!("failed to read source directory {:?}: {err}", source_root))?;
-
-    for entry in entries.flatten() {
-        let raw_name = entry.file_name().to_string_lossy().to_string();
-        if should_ignore_external_entry_name(&raw_name) {
-            continue;
-        }
-        if managed_root_entries.contains(&raw_name.to_lowercase()) {
-            continue;
-        }
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if !file_type.is_dir() && !file_type.is_file() {
-            continue;
-        }
-        pending_count += 1;
-    }
-
-    Ok(pending_count)
-}
-
 #[tauri::command]
 async fn sync_external_mirror_entries(
     app: tauri::AppHandle,
@@ -6506,6 +6891,29 @@ struct TreeSpreadsheetPayload {
     rows: Vec<TreeSpreadsheetRowPayload>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcedureTableSpreadsheetMetaEntryPayload {
+    label: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcedureTableSpreadsheetSheetPayload {
+    name: String,
+    headers: Vec<String>,
+    rows: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProcedureTableSpreadsheetPayload {
+    table_name: String,
+    meta: Vec<ProcedureTableSpreadsheetMetaEntryPayload>,
+    sheets: Vec<ProcedureTableSpreadsheetSheetPayload>,
+}
+
 fn normalize_spreadsheet_text(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -6521,13 +6929,6 @@ fn normalize_spreadsheet_header(value: &str) -> String {
         .to_lowercase()
         .replace('_', " ")
         .replace('-', " ")
-}
-
-fn normalize_spreadsheet_bool(value: &str) -> bool {
-    matches!(
-        value.trim().to_lowercase().as_str(),
-        "true" | "1" | "yes" | "oui" | "x"
-    )
 }
 
 fn normalize_spreadsheet_deliverables(value: &str) -> Vec<String> {
@@ -6593,46 +6994,155 @@ fn tree_spreadsheet_cell_text<T: ToString>(row: &[T], index: usize) -> String {
         .to_string()
 }
 
-fn tree_spreadsheet_save_dialog(
-    dialog_title: String,
-    default_file_name: String,
-) -> Result<Option<PathBuf>, String> {
-    let default_dir = dirs::download_dir().or_else(dirs::desktop_dir);
-    let normalized_title = if dialog_title.trim().is_empty() {
-        "Save tree structure".to_string()
-    } else {
-        dialog_title.trim().to_string()
-    };
-    let normalized_name = if default_file_name.trim().is_empty() {
-        "tree-structure.xlsx".to_string()
-    } else {
-        let trimmed = default_file_name.trim();
-        let without_xlsx = trimmed
-            .strip_suffix(".xlsx")
-            .or_else(|| trimmed.strip_suffix(".XLSX"))
-            .unwrap_or(trimmed)
-            .trim();
-        let safe_stem = sanitize_file_name_component(without_xlsx);
-        if safe_stem.to_ascii_lowercase().ends_with(".xlsx") {
-            safe_stem
-        } else {
-            format!("{safe_stem}.xlsx")
-        }
-    };
-    let mut dialog = rfd::FileDialog::new()
-        .set_title(&normalized_title)
-        .add_filter("Excel Workbook", &["xlsx"])
-        .set_file_name(&normalized_name);
-    if let Some(dir) = default_dir {
-        dialog = dialog.set_directory(dir);
+fn trim_spreadsheet_row(mut values: Vec<String>) -> Vec<String> {
+    while values.last().map(|value| value.trim().is_empty()).unwrap_or(false) {
+        values.pop();
     }
-    let Some(selected) = dialog.save_file() else {
-        return Ok(None);
+    values
+}
+
+fn spreadsheet_row_has_content(row: &[String]) -> bool {
+    row.iter().any(|value| !value.trim().is_empty())
+}
+
+fn spreadsheet_row_to_strings<T: ToString>(row: &[T]) -> Vec<String> {
+    trim_spreadsheet_row(
+        row.iter()
+            .map(|cell| cell.to_string().trim().to_string())
+            .collect(),
+    )
+}
+
+fn sanitize_workbook_sheet_name(value: &str, fallback: &str) -> String {
+    let cleaned = value
+        .trim()
+        .chars()
+        .map(|ch| match ch {
+            '[' | ']' | ':' | '*' | '?' | '/' | '\\' => ' ',
+            _ => ch,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let normalized = if cleaned.is_empty() {
+        fallback.trim().to_string()
+    } else {
+        cleaned
     };
-    Ok(Some(ensure_file_extension(
-        normalize_windows_extended_path(selected),
-        "xlsx",
-    )))
+    let mut limited = normalized.chars().take(31).collect::<String>();
+    if limited.trim().is_empty() {
+        limited = fallback.chars().take(31).collect::<String>();
+    }
+    limited
+}
+
+fn dedupe_workbook_sheet_name(base: &str, used_names: &mut HashSet<String>) -> String {
+    let normalized_base = sanitize_workbook_sheet_name(base, "Sheet");
+    let normalized_key = normalized_base.to_lowercase();
+    if !used_names.contains(&normalized_key) {
+        used_names.insert(normalized_key);
+        return normalized_base;
+    }
+
+    for index in 2..=999 {
+        let suffix = format!(" {index}");
+        let max_base_length = 31usize.saturating_sub(suffix.len());
+        let truncated = normalized_base.chars().take(max_base_length).collect::<String>();
+        let candidate = format!("{truncated}{suffix}");
+        let candidate_key = candidate.to_lowercase();
+        if !used_names.contains(&candidate_key) {
+            used_names.insert(candidate_key);
+            return candidate;
+        }
+    }
+
+    let fallback = format!("Sheet {}", used_names.len() + 1);
+    let candidate = sanitize_workbook_sheet_name(&fallback, "Sheet");
+    used_names.insert(candidate.to_lowercase());
+    candidate
+}
+
+fn write_generic_spreadsheet_sheet(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    headers: &[String],
+    rows: &[Vec<String>],
+) -> Result<(), String> {
+    for (column_index, header) in headers.iter().enumerate() {
+        worksheet
+            .write_string(0, column_index as u16, header)
+            .map_err(|err| format!("failed to write worksheet header {header}: {err}"))?;
+    }
+
+    for (row_index, row) in rows.iter().enumerate() {
+        let sheet_row = (row_index + 1) as u32;
+        for (column_index, value) in row.iter().enumerate() {
+            if value.trim().is_empty() {
+                continue;
+            }
+            worksheet
+                .write_string(sheet_row, column_index as u16, value)
+                .map_err(|err| format!("failed to write worksheet cell ({sheet_row}, {column_index}): {err}"))?;
+        }
+    }
+
+    worksheet
+        .set_freeze_panes(1, 0)
+        .map_err(|err| format!("failed to freeze worksheet panes: {err}"))?;
+    Ok(())
+}
+
+fn write_procedure_table_spreadsheet_workbook(
+    file_path: &Path,
+    payload: &ProcedureTableSpreadsheetPayload,
+) -> Result<(), String> {
+    let mut workbook = Workbook::new();
+    let mut used_sheet_names = HashSet::<String>::new();
+
+    for sheet_payload in &payload.sheets {
+        let sheet_name = dedupe_workbook_sheet_name(&sheet_payload.name, &mut used_sheet_names);
+        let worksheet = workbook.add_worksheet();
+        worksheet
+            .set_name(&sheet_name)
+            .map_err(|err| format!("failed to name worksheet {sheet_name}: {err}"))?;
+        write_generic_spreadsheet_sheet(worksheet, &sheet_payload.headers, &sheet_payload.rows)?;
+    }
+
+    if !payload.meta.is_empty() {
+        let meta_sheet_name = dedupe_workbook_sheet_name("Meta", &mut used_sheet_names);
+        let meta_sheet = workbook.add_worksheet();
+        meta_sheet
+            .set_name(&meta_sheet_name)
+            .map_err(|err| format!("failed to name worksheet {meta_sheet_name}: {err}"))?;
+        meta_sheet
+            .write_string(0, 0, "Label")
+            .map_err(|err| format!("failed to write meta header label: {err}"))?;
+        meta_sheet
+            .write_string(0, 1, "Value")
+            .map_err(|err| format!("failed to write meta header value: {err}"))?;
+
+        for (row_index, entry) in payload.meta.iter().enumerate() {
+            let sheet_row = (row_index + 1) as u32;
+            if let Some(label) = normalize_spreadsheet_text(&entry.label) {
+                meta_sheet
+                    .write_string(sheet_row, 0, &label)
+                    .map_err(|err| format!("failed to write meta label: {err}"))?;
+            }
+            if let Some(value) = normalize_spreadsheet_text(&entry.value) {
+                meta_sheet
+                    .write_string(sheet_row, 1, &value)
+                    .map_err(|err| format!("failed to write meta value: {err}"))?;
+            }
+        }
+
+        meta_sheet
+            .set_freeze_panes(1, 0)
+            .map_err(|err| format!("failed to freeze meta worksheet panes: {err}"))?;
+    }
+
+    workbook
+        .save(file_path)
+        .map_err(|err| format!("failed to save workbook {:?}: {err}", file_path))
 }
 
 fn write_tree_spreadsheet_workbook(
@@ -6830,6 +7340,117 @@ fn read_tree_spreadsheet_payload_from_path(file_path: &Path) -> Result<TreeSprea
     Ok(TreeSpreadsheetPayload { meta, rows })
 }
 
+fn read_procedure_table_spreadsheet_payload_from_path(
+    file_path: &Path,
+) -> Result<ProcedureTableSpreadsheetPayload, String> {
+    use calamine::{open_workbook_auto, Reader};
+
+    let mut workbook = open_workbook_auto(file_path)
+        .map_err(|err| format!("failed to open workbook {:?}: {err}", file_path))?;
+
+    let sheet_names = workbook.sheet_names().to_vec();
+    let mut meta = Vec::<ProcedureTableSpreadsheetMetaEntryPayload>::new();
+    let mut sheets = Vec::<ProcedureTableSpreadsheetSheetPayload>::new();
+
+    for sheet_name in sheet_names {
+        let range = match workbook.worksheet_range(&sheet_name) {
+            Some(Ok(range)) => range,
+            Some(Err(err)) => {
+                return Err(format!(
+                    "failed to read worksheet {:?} from {:?}: {err}",
+                    sheet_name, file_path
+                ))
+            }
+            None => continue,
+        };
+
+        let rows = range
+            .rows()
+            .map(spreadsheet_row_to_strings)
+            .collect::<Vec<_>>();
+        if rows.iter().all(|row| !spreadsheet_row_has_content(row)) {
+            continue;
+        }
+
+        if normalize_spreadsheet_header(&sheet_name) == "meta" {
+            for (index, row) in rows.iter().enumerate() {
+                if !spreadsheet_row_has_content(row) {
+                    continue;
+                }
+                let label = row.get(0).cloned().unwrap_or_default();
+                let value = row.get(1).cloned().unwrap_or_default();
+                if index == 0
+                    && normalize_spreadsheet_header(&label) == "label"
+                    && normalize_spreadsheet_header(&value) == "value"
+                {
+                    continue;
+                }
+                let Some(normalized_label) = normalize_spreadsheet_text(&label) else {
+                    continue;
+                };
+                meta.push(ProcedureTableSpreadsheetMetaEntryPayload {
+                    label: normalized_label,
+                    value: value.trim().to_string(),
+                });
+            }
+            continue;
+        }
+
+        let Some(header_row_index) = rows.iter().position(|row| spreadsheet_row_has_content(row)) else {
+            continue;
+        };
+        let headers = rows
+            .get(header_row_index)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|value| value.trim().to_string())
+            .collect::<Vec<_>>();
+        if headers.is_empty() {
+            continue;
+        }
+
+        let body_rows = rows
+            .into_iter()
+            .skip(header_row_index + 1)
+            .filter(|row| spreadsheet_row_has_content(row))
+            .map(|mut row| {
+                row.resize(headers.len(), String::new());
+                row.truncate(headers.len());
+                row
+            })
+            .collect::<Vec<_>>();
+
+        sheets.push(ProcedureTableSpreadsheetSheetPayload {
+            name: sheet_name,
+            headers,
+            rows: body_rows,
+        });
+    }
+
+    if sheets.is_empty() {
+        return Err("procedure table workbook has no readable sheets".to_string());
+    }
+
+    let table_name = meta
+        .iter()
+        .find(|entry| normalize_spreadsheet_header(&entry.label) == "table")
+        .and_then(|entry| normalize_spreadsheet_text(&entry.value))
+        .or_else(|| {
+            file_path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .and_then(normalize_spreadsheet_text)
+        })
+        .unwrap_or_else(|| "Imported Table".to_string());
+
+    Ok(ProcedureTableSpreadsheetPayload {
+        table_name,
+        meta,
+        sheets,
+    })
+}
+
 #[tauri::command]
 async fn export_tree_structure_excel(
     dialog_title: String,
@@ -6851,6 +7472,40 @@ async fn export_tree_structure_excel(
 }
 
 #[tauri::command]
+async fn export_procedure_table_excel(
+    dialog_title: String,
+    default_file_name: String,
+    payload: ProcedureTableSpreadsheetPayload,
+) -> Result<Option<String>, String> {
+    let default_dir = dirs::download_dir().or_else(dirs::desktop_dir);
+    let saved_path =
+        tauri::async_runtime::spawn_blocking(move || -> Result<Option<String>, String> {
+            let normalized_title = if dialog_title.trim().is_empty() {
+                format!("Export {}", payload.table_name.trim())
+            } else {
+                dialog_title.trim().to_string()
+            };
+
+            let mut dialog = rfd::FileDialog::new()
+                .set_title(&normalized_title)
+                .add_filter("Excel Workbook", &["xlsx"])
+                .set_file_name(&default_file_name);
+            if let Some(dir) = default_dir {
+                dialog = dialog.set_directory(dir);
+            }
+            let Some(selected) = dialog.save_file() else {
+                return Ok(None);
+            };
+            let file_path = ensure_file_extension(normalize_windows_extended_path(selected), "xlsx");
+            write_procedure_table_spreadsheet_workbook(&file_path, &payload)?;
+            Ok(Some(file_path.to_string_lossy().to_string()))
+        })
+        .await
+        .map_err(|err| format!("failed to open procedure table export dialog: {err}"))??;
+    Ok(saved_path)
+}
+
+#[tauri::command]
 async fn pick_windows_tree_spreadsheet_file() -> Result<Option<String>, String> {
     let picked = tauri::async_runtime::spawn_blocking(move || {
         rfd::FileDialog::new()
@@ -6862,6 +7517,21 @@ async fn pick_windows_tree_spreadsheet_file() -> Result<Option<String>, String> 
     })
     .await
     .map_err(|err| format!("failed to open tree spreadsheet picker: {err}"))?;
+    Ok(picked)
+}
+
+#[tauri::command]
+async fn pick_windows_procedure_table_spreadsheet_file() -> Result<Option<String>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .set_title("Select procedure table workbook")
+            .add_filter("Excel Workbook", &["xlsx", "xls"])
+            .pick_file()
+            .map(normalize_windows_extended_path)
+            .map(|path| path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|err| format!("failed to open procedure table spreadsheet picker: {err}"))?;
     Ok(picked)
 }
 
@@ -6880,6 +7550,25 @@ async fn read_tree_structure_excel(file_path: String) -> Result<TreeSpreadsheetP
     })
     .await
     .map_err(|err| format!("failed to read tree spreadsheet: {err}"))?
+}
+
+#[tauri::command]
+async fn read_procedure_table_excel(
+    file_path: String,
+) -> Result<ProcedureTableSpreadsheetPayload, String> {
+    let trimmed = file_path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err("procedure table workbook path is empty".to_string());
+    }
+    let normalized_path = PathBuf::from(trimmed);
+    if !normalized_path.exists() || !normalized_path.is_file() {
+        return Err(format!("procedure table workbook not found: {:?}", normalized_path));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        read_procedure_table_spreadsheet_payload_from_path(&normalized_path)
+    })
+    .await
+    .map_err(|err| format!("failed to read procedure table spreadsheet: {err}"))?
 }
 
 #[tauri::command]
@@ -7388,6 +8077,323 @@ async fn delete_project_workspace(
         }
     }
 
+    Ok(())
+}
+
+#[tauri::command]
+fn get_user_account_state(app: tauri::AppHandle) -> Result<UserAccountState, String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    write_user_account_store(&app, &store)?;
+    Ok(build_user_account_state(&store))
+}
+
+#[tauri::command]
+fn bootstrap_user_account(
+    app: tauri::AppHandle,
+    input: BootstrapUserAccountInput,
+) -> Result<UserAccountAuthResult, String> {
+    let mut store = read_user_account_store(&app)?;
+    if !store.users.is_empty() {
+        return Err("user accounts already exist".to_string());
+    }
+
+    let now = now_ms();
+    let username = sanitize_username(&input.username)?;
+    let display_name = sanitize_display_name(&input.display_name)?;
+    let password_hash = hash_user_account_password(&input.password)?;
+    let user_id = uuid::Uuid::new_v4().to_string();
+    let user = UserAccountRecord {
+        user_id: user_id.clone(),
+        username,
+        display_name,
+        profile_photo_data_url: None,
+        password_hash,
+        role: "R6".to_string(),
+        is_admin: true,
+        disabled: false,
+        license_plan: "unlimited".to_string(),
+        license_started_at: None,
+        created_at: now,
+        updated_at: now,
+        last_login_at: Some(now),
+    };
+    store.version = USER_ACCOUNT_STORE_VERSION;
+    store.users.push(user);
+    sort_user_accounts(&mut store.users);
+    let remembered_session = match input.remember_session {
+        Some(remember_session) => Some(create_user_account_remembered_session(
+            &mut store,
+            &user_id,
+            remember_session.duration_ms,
+        )?),
+        None => None,
+    };
+    let created = store
+        .users
+        .iter()
+        .find(|candidate| candidate.user_id == user_id)
+        .ok_or_else(|| "failed to create bootstrap user".to_string())?;
+    write_user_account_store(&app, &store)?;
+    Ok(build_user_account_auth_result(created, remembered_session.as_ref()))
+}
+
+#[tauri::command]
+fn sign_in_user_account(
+    app: tauri::AppHandle,
+    input: SignInUserAccountInput,
+) -> Result<UserAccountAuthResult, String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    let username = sanitize_username(&input.username)?;
+    let Some(user_index) = store
+        .users
+        .iter()
+        .position(|entry| entry.username.eq_ignore_ascii_case(&username))
+    else {
+        return Err("invalid username or password".to_string());
+    };
+    let user_id = {
+        let user = store
+            .users
+            .get_mut(user_index)
+            .ok_or_else(|| "invalid username or password".to_string())?;
+
+        if user.disabled {
+            return Err("this account is disabled".to_string());
+        }
+        if !is_user_account_license_active(user) {
+            return Err("this licence has expired".to_string());
+        }
+
+        if !verify_user_account_password(&user.password_hash, &input.password)? {
+            return Err("invalid username or password".to_string());
+        }
+
+        let now = now_ms();
+        user.last_login_at = Some(now);
+        user.updated_at = now;
+        user.user_id.clone()
+    };
+    let remembered_session = match input.remember_session {
+        Some(remember_session) => Some(create_user_account_remembered_session(
+            &mut store,
+            &user_id,
+            remember_session.duration_ms,
+        )?),
+        None => None,
+    };
+    let user = store
+        .users
+        .get(user_index)
+        .ok_or_else(|| "invalid username or password".to_string())?;
+    let summary = build_user_account_auth_result(user, remembered_session.as_ref());
+    write_user_account_store(&app, &store)?;
+    Ok(summary)
+}
+
+#[tauri::command]
+fn resume_user_account_session(
+    app: tauri::AppHandle,
+    session_token: String,
+) -> Result<UserAccountAuthResult, String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    let trimmed_token = session_token.trim();
+    if trimmed_token.is_empty() {
+        write_user_account_store(&app, &store)?;
+        return Err("remembered sign-in is invalid".to_string());
+    }
+
+    let Some(session_index) = store
+        .remembered_sessions
+        .iter()
+        .position(|session| session.token == trimmed_token)
+    else {
+        write_user_account_store(&app, &store)?;
+        return Err("remembered sign-in expired".to_string());
+    };
+
+    let session = store
+        .remembered_sessions
+        .get(session_index)
+        .cloned()
+        .ok_or_else(|| "remembered sign-in expired".to_string())?;
+    let Some(user_index) = store
+        .users
+        .iter()
+        .position(|entry| entry.user_id == session.user_id)
+    else {
+        store.remembered_sessions.remove(session_index);
+        write_user_account_store(&app, &store)?;
+        return Err("remembered sign-in expired".to_string());
+    };
+
+    let user_id = store.users[user_index].user_id.clone();
+    if store.users[user_index].disabled {
+        clear_user_account_remembered_sessions_for_user(&mut store, &user_id);
+        write_user_account_store(&app, &store)?;
+        return Err("this account is disabled".to_string());
+    }
+    if !is_user_account_license_active(&store.users[user_index]) {
+        clear_user_account_remembered_sessions_for_user(&mut store, &user_id);
+        write_user_account_store(&app, &store)?;
+        return Err("this licence has expired".to_string());
+    }
+
+    let now = now_ms();
+    if let Some(user) = store.users.get_mut(user_index) {
+        user.last_login_at = Some(now);
+        user.updated_at = now;
+    }
+    let result = build_user_account_auth_result(&store.users[user_index], Some(&session));
+    write_user_account_store(&app, &store)?;
+    Ok(result)
+}
+
+#[tauri::command]
+fn create_user_account(
+    app: tauri::AppHandle,
+    input: CreateUserAccountInput,
+) -> Result<UserAccountSummary, String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    let username = sanitize_username(&input.username)?;
+    ensure_username_available(&store.users, &username, None)?;
+    let display_name = sanitize_display_name(&input.display_name)?;
+    let role = sanitize_access_role(&input.role)?;
+    let license_plan = sanitize_user_account_license_plan(&input.license_plan)?;
+    let profile_photo_data_url = sanitize_profile_photo_data_url(input.profile_photo_data_url.as_deref())?;
+    let password_hash = hash_user_account_password(&input.password)?;
+    let now = now_ms();
+
+    let user = UserAccountRecord {
+        user_id: uuid::Uuid::new_v4().to_string(),
+        username,
+        display_name,
+        profile_photo_data_url,
+        password_hash,
+        role,
+        is_admin: input.is_admin,
+        disabled: false,
+        license_plan: license_plan.clone(),
+        license_started_at: if license_plan == "unlimited" { None } else { Some(now) },
+        created_at: now,
+        updated_at: now,
+        last_login_at: None,
+    };
+    let summary = UserAccountSummary::from(&user);
+    store.version = USER_ACCOUNT_STORE_VERSION;
+    store.users.push(user);
+    sort_user_accounts(&mut store.users);
+    write_user_account_store(&app, &store)?;
+    Ok(summary)
+}
+
+#[tauri::command]
+fn update_user_account(
+    app: tauri::AppHandle,
+    input: UpdateUserAccountInput,
+) -> Result<UserAccountSummary, String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    let user_index = find_user_account_index_by_id(&store.users, &input.user_id)
+        .ok_or_else(|| format!("user account not found: {}", input.user_id))?;
+
+    let username = sanitize_username(&input.username)?;
+    ensure_username_available(&store.users, &username, Some(&input.user_id))?;
+    let display_name = sanitize_display_name(&input.display_name)?;
+    let role = sanitize_access_role(&input.role)?;
+    let license_plan = sanitize_user_account_license_plan(&input.license_plan)?;
+    let profile_photo_data_url = sanitize_profile_photo_data_url(input.profile_photo_data_url.as_deref())?;
+    let next_password = input
+        .next_password
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+
+    if (store.users[user_index].is_admin && (!input.is_admin || input.disabled))
+        && count_enabled_admin_accounts(&store.users, Some(&input.user_id)) == 0
+    {
+        return Err("at least one enabled admin account is required".to_string());
+    }
+
+    let now = now_ms();
+    let existing_license_plan = store.users[user_index].license_plan.clone();
+    let should_restart_license =
+        input.restart_license_from_now || existing_license_plan != license_plan;
+    let clear_sessions =
+        input.disabled || next_password.is_some() || should_restart_license || store.users[user_index].disabled != input.disabled;
+    {
+        let user = store
+            .users
+            .get_mut(user_index)
+            .ok_or_else(|| format!("user account not found: {}", input.user_id))?;
+        user.username = username;
+        user.display_name = display_name;
+        user.profile_photo_data_url = profile_photo_data_url;
+        user.role = role;
+        user.is_admin = input.is_admin;
+        user.disabled = input.disabled;
+        user.license_plan = license_plan.clone();
+        if license_plan == "unlimited" {
+            user.license_started_at = None;
+        } else if should_restart_license || user.license_started_at.is_none() {
+            user.license_started_at = Some(now);
+        }
+        user.updated_at = now;
+        if let Some(password) = next_password.as_deref() {
+            user.password_hash = hash_user_account_password(password)?;
+        }
+    }
+
+    if clear_sessions {
+        clear_user_account_remembered_sessions_for_user(&mut store, &input.user_id);
+    }
+    let summary = UserAccountSummary::from(
+        store
+            .users
+            .get(user_index)
+            .ok_or_else(|| format!("user account not found: {}", input.user_id))?,
+    );
+    sort_user_accounts(&mut store.users);
+    write_user_account_store(&app, &store)?;
+    Ok(summary)
+}
+
+#[tauri::command]
+fn revoke_user_account_session(app: tauri::AppHandle, session_token: String) -> Result<(), String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    let trimmed_token = session_token.trim();
+    if !trimmed_token.is_empty() {
+        store
+            .remembered_sessions
+            .retain(|session| session.token != trimmed_token);
+    }
+    write_user_account_store(&app, &store)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_user_account(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
+    let mut store = read_user_account_store(&app)?;
+    prune_user_account_store(&mut store);
+    let user_index = find_user_account_index_by_id(&store.users, &user_id)
+        .ok_or_else(|| format!("user account not found: {user_id}"))?;
+    let user = store
+        .users
+        .get(user_index)
+        .cloned()
+        .ok_or_else(|| format!("user account not found: {user_id}"))?;
+    if user.is_admin && !user.disabled && count_enabled_admin_accounts(&store.users, Some(&user_id)) == 0 {
+        return Err("at least one enabled admin account is required".to_string());
+    }
+
+    store.users.remove(user_index);
+    clear_user_account_remembered_sessions_for_user(&mut store, &user_id);
+    write_user_account_store(&app, &store)?;
     Ok(())
 }
 
@@ -8153,6 +9159,7 @@ pub fn run() {
             open_node_file_with,
             open_node_file_location,
             get_windows_file_icon,
+            get_windows_installed_font_families,
             get_windows_primary_window_layout_state,
             set_windows_primary_window_bounds,
             fit_windows_primary_window_to_work_area,
@@ -8167,8 +9174,11 @@ pub fn run() {
             get_windows_language_snapshot,
             open_local_path,
             export_tree_structure_excel,
+            export_procedure_table_excel,
             pick_windows_tree_spreadsheet_file,
+            pick_windows_procedure_table_spreadsheet_file,
             read_tree_structure_excel,
+            read_procedure_table_excel,
             save_export_file,
             read_local_image_data_url,
             read_local_file_data_url,
@@ -8185,6 +9195,14 @@ pub fn run() {
             create_workspace,
             set_project_workspace_path,
             delete_project_workspace,
+            get_user_account_state,
+            bootstrap_user_account,
+            sign_in_user_account,
+            resume_user_account_session,
+            create_user_account,
+            update_user_account,
+            revoke_user_account_session,
+            delete_user_account,
             get_ai_rebuild_status,
             run_mistral_tree_analysis,
             analyze_ticket,

@@ -25,6 +25,7 @@ import {
 } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { getLocaleForLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
+import { getNodeDisplayName } from "@/lib/nodeDisplay";
 import { getNodeTooltipLabel } from "@/lib/nodeTooltipCatalog";
 import { isNodeStructureLockOwner } from "@/features/workspace/structureLock";
 import { ROOT_PARENT_ID, isFileLikeNode, type AppNode, type FolderNodeState } from "@/lib/types";
@@ -53,15 +54,34 @@ type SearchResultItem = {
 };
 
 type DropIndicator = { targetId: string; position: DropPosition } | null;
-const TREE_VIRTUAL_ROW_HEIGHT = 40;
+const TREE_VIRTUAL_ROW_HEIGHT = 54;
 const TREE_VIRTUAL_OVERSCAN = 10;
 const TREE_VIRTUALIZE_MIN_ROWS = 180;
 const FAVORITE_GROUP_DRAG_MIME = "application/x-odetool-favorite-group-id";
+const SIDEBAR_SURFACE_PANEL_CLASS =
+  "rounded-[24px] border border-[rgba(99,198,244,0.14)] bg-[linear-gradient(180deg,rgba(4,24,39,0.92),rgba(3,18,30,0.98))] shadow-[inset_0_1px_0_rgba(125,221,255,0.05)]";
+const TREE_ROW_LABEL_CLAMP_STYLE = {
+  display: "-webkit-box",
+  WebkitBoxOrient: "vertical" as const,
+  WebkitLineClamp: 2,
+  overflow: "hidden"
+};
+
+function resolveSidebarTreeIndent(level: number): number {
+  if (level <= 0) return 12;
+  if (level === 1) return 30;
+  if (level === 2) return 48;
+  if (level === 3) return 62;
+  return 62 + (level - 3) * 8;
+}
 
 interface SidebarPanelProps {
   t: TranslateFn;
   language: LanguageCode;
   workspaceFocusMode: "structure" | "data" | "execution";
+  documentationModeActive: boolean;
+  libraryModeActive: boolean;
+  quickAccessScopeLabel: string;
   isLargeLayout: boolean;
   isSidebarCollapsed: boolean;
   sidebarWidth: number;
@@ -72,6 +92,7 @@ interface SidebarPanelProps {
   searchResults: SearchResultItem[];
   searchActiveIndex: number;
   displayedTreeRows: TreeRow[];
+  treeSelectionRevealRequestKey?: number;
   selectedNodeId: string | null;
   selectedNodeIds: Set<string>;
   cutPendingNodeIds: Set<string>;
@@ -156,6 +177,8 @@ export function SidebarPanel({
   t,
   language,
   workspaceFocusMode,
+  libraryModeActive,
+  quickAccessScopeLabel,
   isLargeLayout,
   isSidebarCollapsed,
   sidebarWidth,
@@ -166,6 +189,7 @@ export function SidebarPanel({
   searchResults,
   searchActiveIndex,
   displayedTreeRows,
+  treeSelectionRevealRequestKey = 0,
   selectedNodeId,
   selectedNodeIds,
   cutPendingNodeIds,
@@ -268,7 +292,7 @@ export function SidebarPanel({
   const quickEditNodeDescriptionLabel = quickEditNodeDescriptionTargetLabel
     ? t("sidebar.edit_node_description_for", { node: quickEditNodeDescriptionTargetLabel })
     : t("sidebar.edit_node_description");
-  const showFavoriteQuickAccess = workspaceFocusMode !== "execution";
+  const showFavoriteQuickAccess = true;
   const effectiveFavoriteTreeFilterEnabled =
     showFavoriteQuickAccess && favoriteTreeFilterEnabled;
   const effectiveFavoriteGroups = showFavoriteQuickAccess ? favoriteGroups : [];
@@ -283,14 +307,13 @@ export function SidebarPanel({
     if (editingNodeId === node.id) {
       return editingValue.length > 0 ? editingValue : "\u00A0";
     }
-    return isNodeProvisionalInlineCreate(node.id) ? "\u00A0" : node.name;
+    return isNodeProvisionalInlineCreate(node.id) ? "\u00A0" : getNodeDisplayName(node);
   };
   const getNodeDisplayText = (node: AppNode) => {
     const label = getNodeDisplayLabel(node);
     return label === "\u00A0" ? "" : label;
   };
-  const quickAccessSurfaceLabel =
-    workspaceFocusMode === "execution" ? t("footer.mode_execution") : t("footer.mode_structure");
+  const quickAccessSurfaceLabel = quickAccessScopeLabel;
   const deleteTargetFavoriteGroupId =
     effectiveSelectedFavoriteGroupIds[effectiveSelectedFavoriteGroupIds.length - 1] ??
     (effectiveFavoriteGroups.some((group) => group.id === activeFavoriteGroupId)
@@ -433,6 +456,31 @@ export function SidebarPanel({
     treeViewportHeight
   ]);
 
+  useEffect(() => {
+    if (!shouldVirtualizeTree || !selectedNodeId || treeViewportHeight <= 0 || treeSelectionRevealRequestKey <= 0) {
+      return;
+    }
+    const selectedIndex = treeRowIndexById.get(selectedNodeId);
+    if (selectedIndex === undefined) return;
+    const centeredScrollTop =
+      selectedIndex * TREE_VIRTUAL_ROW_HEIGHT - Math.max(0, (treeViewportHeight - TREE_VIRTUAL_ROW_HEIGHT) / 2);
+    const maxScrollTop = Math.max(
+      0,
+      displayedTreeRows.length * TREE_VIRTUAL_ROW_HEIGHT - treeViewportHeight
+    );
+    const clamped = Math.min(Math.max(0, centeredScrollTop), maxScrollTop);
+    const treeEl = treeScrollRef.current;
+    if (treeEl) treeEl.scrollTop = clamped;
+    setTreeScrollTop((prev) => (prev === clamped ? prev : clamped));
+  }, [
+    displayedTreeRows.length,
+    selectedNodeId,
+    shouldVirtualizeTree,
+    treeRowIndexById,
+    treeSelectionRevealRequestKey,
+    treeViewportHeight
+  ]);
+
   const handleFavoriteUiKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
     if (event.key === "Enter" || event.key === "Tab" || event.key === " ") {
       event.stopPropagation();
@@ -504,7 +552,7 @@ export function SidebarPanel({
 
   return (
     <aside
-      className="ode-pane flex flex-col border-b border-[var(--ode-border)] lg:border-b-0 lg:shrink-0"
+      className="ode-pane flex min-h-0 flex-col border-b border-[rgba(94,188,235,0.18)] bg-[linear-gradient(180deg,rgba(3,20,33,0.98),rgba(2,15,26,1))] lg:border-b-0 lg:shrink-0"
       style={{
         width: isLargeLayout ? `${isSidebarCollapsed ? sidebarCollapsedWidth : sidebarWidth}px` : undefined
       }}
@@ -541,7 +589,7 @@ export function SidebarPanel({
         </div>
       ) : (
         <>
-          <div className="border-b border-[var(--ode-border)] px-3 py-3">
+          <div className="border-b border-[rgba(94,188,235,0.16)] px-3 py-3">
             <div className="relative">
               {isLargeLayout ? (
                 <OdeTooltip label={t("sidebar.collapse")} side="bottom" align="end">
@@ -554,30 +602,41 @@ export function SidebarPanel({
                   </button>
                 </OdeTooltip>
               ) : null}
-              <div className="flex items-center gap-2 rounded-xl border border-[var(--ode-border-strong)] bg-[rgba(5,25,42,0.82)] pl-3 pr-10 py-2">
-                <span className="text-[0.95rem] text-[var(--ode-text-muted)]">
-                  <SearchGlyph />
-                </span>
-                <input
-                  ref={searchInputRef}
-                  value={searchQuery}
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  data-gramm="false"
-                  onFocus={() => {
-                    if (searchQuery.trim().length > 0) onSearchDropdownOpenChange(true);
-                  }}
-                  onChange={(event) => onSearchQueryChange(event.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                  className="ode-search-input"
-                  placeholder={t("search.placeholder")}
-                />
+              <div className={`${SIDEBAR_SURFACE_PANEL_CLASS} px-3 py-3`}>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div className="text-[0.68rem] uppercase tracking-[0.18em] text-[var(--ode-text-dim)]">
+                    {libraryModeActive
+                      ? t("tabs.library")
+                      : workspaceFocusMode === "data"
+                        ? t("desktop.view_database")
+                        : quickAccessScopeLabel}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 rounded-[18px] border border-[rgba(108,211,255,0.24)] bg-[rgba(4,23,38,0.84)] pl-3 pr-10 py-2.5 shadow-[inset_0_1px_0_rgba(139,226,255,0.05)]">
+                  <span className="text-[0.95rem] text-[var(--ode-text-muted)]">
+                    <SearchGlyph />
+                  </span>
+                  <input
+                    ref={searchInputRef}
+                    value={searchQuery}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    data-gramm="false"
+                    onFocus={() => {
+                      if (searchQuery.trim().length > 0) onSearchDropdownOpenChange(true);
+                    }}
+                    onChange={(event) => onSearchQueryChange(event.target.value)}
+                    onKeyDown={handleSearchKeyDown}
+                    className="ode-search-input"
+                    placeholder={t("search.placeholder")}
+                  />
+                </div>
               </div>
 
               <div
-                className="mt-2 flex items-center gap-2"
+                className="mt-3 flex items-center gap-2"
                 data-ode-ignore-shortcuts="true"
                 onKeyDownCapture={handleFavoriteUiKeyDownCapture}
               >
@@ -611,28 +670,33 @@ export function SidebarPanel({
               </div>
 
               {showFavoriteQuickAccess ? (
-                <div className="mt-2 overflow-hidden rounded-xl border border-[var(--ode-border)] bg-[rgba(4,25,42,0.62)]">
+                <div className={`mt-3 overflow-hidden ${SIDEBAR_SURFACE_PANEL_CLASS}`}>
                     <div
                       className="px-3 py-3"
                       data-ode-ignore-shortcuts="true"
                       onKeyDownCapture={handleFavoriteUiKeyDownCapture}
                     >
                     <div className="flex items-center gap-2">
-                      <OdeTooltip label={quickAccessSurfaceLabel} side="bottom" align="start">
-                        <button
-                          type="button"
-                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-[var(--ode-text)] transition hover:border-[var(--ode-border-accent)] ${
-                            effectiveFavoriteTreeFilterEnabled
-                              ? "border-[var(--ode-border)]"
-                              : "border-[var(--ode-border-accent)] bg-[rgba(31,129,188,0.22)]"
-                          }`}
-                          onClick={onToggleFavoriteTreeFilter}
-                          aria-label={quickAccessSurfaceLabel}
-                          aria-pressed={!effectiveFavoriteTreeFilterEnabled}
-                        >
-                          <QuickAccessGlyphSmall />
-                        </button>
-                      </OdeTooltip>
+                      {!libraryModeActive ? (
+                        <OdeTooltip label={quickAccessSurfaceLabel} side="bottom" align="start">
+                          <button
+                            type="button"
+                            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-[var(--ode-text)] transition hover:border-[var(--ode-border-accent)] ${
+                              effectiveFavoriteTreeFilterEnabled
+                                ? "border-[var(--ode-border)]"
+                                : "border-[var(--ode-border-accent)] bg-[rgba(31,129,188,0.22)]"
+                            }`}
+                            onClick={onToggleFavoriteTreeFilter}
+                            aria-label={quickAccessSurfaceLabel}
+                            aria-pressed={!effectiveFavoriteTreeFilterEnabled}
+                          >
+                            <FolderGlyph
+                              state="filled"
+                              active={!effectiveFavoriteTreeFilterEnabled}
+                            />
+                          </button>
+                        </OdeTooltip>
+                      ) : null}
                       <OdeTooltip label={treeToggleLabel} side="bottom">
                         <button
                           type="button"
@@ -657,80 +721,84 @@ export function SidebarPanel({
                         </button>
                       </OdeTooltip>
                       {renderTooltipControlButtons()}
-                      <OdeTooltip label={t("favorites.group_new")} side="bottom">
-                        <button
-                          type="button"
-                          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--ode-border)] text-[0.95rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
-                          onClick={onCreateFavoriteGroup}
-                          onKeyDown={handleFavoriteUiKeyDown}
-                          aria-label={t("favorites.group_new")}
-                        >
-                          +
-                        </button>
-                      </OdeTooltip>
-                      <OdeTooltip label={t("context.assign_favorite_group")} side="bottom">
-                        <button
-                          type="button"
-                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
-                            hasSelectedNodes
-                              ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
-                              : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
-                          }`}
-                          onClick={() => {
-                            if (!hasSelectedNodes) return;
-                            onOpenFavoriteGroupAssign();
-                          }}
-                          onKeyDown={handleFavoriteUiKeyDown}
-                          aria-label={t("context.assign_favorite_group")}
-                          aria-disabled={!hasSelectedNodes}
-                        >
-                          <QuickAccessGlyphSmall />
-                        </button>
-                      </OdeTooltip>
-                      {effectiveFavoriteGroups.length > 0 ? (
-                        <OdeTooltip label={t("favorites.group_delete")} side="bottom">
-                          <button
-                            type="button"
-                            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
-                              draggingFavoriteGroupId
-                                ? "border-[var(--ode-danger)] bg-[rgba(118,29,36,0.35)] text-[var(--ode-danger)]"
-                                : hasSelectedFavoriteGroup
-                                ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-danger)] hover:text-[var(--ode-danger)]"
-                                : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
-                            }`}
-                            onClick={() => {
-                              if (draggingFavoriteGroupId) {
-                                onDeleteFavoriteGroup(draggingFavoriteGroupId);
-                                draggingFavoriteGroupIdRef.current = null;
-                                setDraggingFavoriteGroupId(null);
-                                return;
-                              }
-                              if (!deleteTargetFavoriteGroupId) return;
-                              onDeleteFavoriteGroup(deleteTargetFavoriteGroupId);
-                            }}
-                            onKeyDown={handleFavoriteUiKeyDown}
-                            onDragOver={(event) => {
-                              if (!resolveDraggedFavoriteGroupId(event)) return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              event.dataTransfer.dropEffect = "move";
-                            }}
-                            onDrop={(event) => {
-                              const groupId = resolveDraggedFavoriteGroupId(event);
-                              if (!groupId) return;
-                              event.preventDefault();
-                              event.stopPropagation();
-                              onDeleteFavoriteGroup(groupId);
-                              draggingFavoriteGroupIdRef.current = null;
-                              setDraggingFavoriteGroupId(null);
-                              setFavoriteGroupDropTargetId(null);
-                            }}
-                            aria-label={t("favorites.group_delete")}
-                            aria-disabled={!draggingFavoriteGroupId && !deleteTargetFavoriteGroupId}
-                          >
-                            <TrashGlyphSmall />
-                          </button>
-                        </OdeTooltip>
+                      {!libraryModeActive ? (
+                        <>
+                          <OdeTooltip label={t("favorites.group_new")} side="bottom">
+                            <button
+                              type="button"
+                              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-[var(--ode-border)] text-[0.95rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+                              onClick={onCreateFavoriteGroup}
+                              onKeyDown={handleFavoriteUiKeyDown}
+                              aria-label={t("favorites.group_new")}
+                            >
+                              +
+                            </button>
+                          </OdeTooltip>
+                          <OdeTooltip label={t("context.assign_favorite_group")} side="bottom">
+                            <button
+                              type="button"
+                              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
+                                hasSelectedNodes
+                                  ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+                                  : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
+                              }`}
+                              onClick={() => {
+                                if (!hasSelectedNodes) return;
+                                onOpenFavoriteGroupAssign();
+                              }}
+                              onKeyDown={handleFavoriteUiKeyDown}
+                              aria-label={t("context.assign_favorite_group")}
+                              aria-disabled={!hasSelectedNodes}
+                            >
+                              <QuickAccessGlyphSmall />
+                            </button>
+                          </OdeTooltip>
+                          {effectiveFavoriteGroups.length > 0 ? (
+                            <OdeTooltip label={t("favorites.group_delete")} side="bottom">
+                              <button
+                                type="button"
+                                className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
+                                  draggingFavoriteGroupId
+                                    ? "border-[var(--ode-danger)] bg-[rgba(118,29,36,0.35)] text-[var(--ode-danger)]"
+                                    : hasSelectedFavoriteGroup
+                                    ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-danger)] hover:text-[var(--ode-danger)]"
+                                    : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
+                                }`}
+                                onClick={() => {
+                                  if (draggingFavoriteGroupId) {
+                                    onDeleteFavoriteGroup(draggingFavoriteGroupId);
+                                    draggingFavoriteGroupIdRef.current = null;
+                                    setDraggingFavoriteGroupId(null);
+                                    return;
+                                  }
+                                  if (!deleteTargetFavoriteGroupId) return;
+                                  onDeleteFavoriteGroup(deleteTargetFavoriteGroupId);
+                                }}
+                                onKeyDown={handleFavoriteUiKeyDown}
+                                onDragOver={(event) => {
+                                  if (!resolveDraggedFavoriteGroupId(event)) return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  event.dataTransfer.dropEffect = "move";
+                                }}
+                                onDrop={(event) => {
+                                  const groupId = resolveDraggedFavoriteGroupId(event);
+                                  if (!groupId) return;
+                                  event.preventDefault();
+                                  event.stopPropagation();
+                                  onDeleteFavoriteGroup(groupId);
+                                  draggingFavoriteGroupIdRef.current = null;
+                                  setDraggingFavoriteGroupId(null);
+                                  setFavoriteGroupDropTargetId(null);
+                                }}
+                                aria-label={t("favorites.group_delete")}
+                                aria-disabled={!draggingFavoriteGroupId && !deleteTargetFavoriteGroupId}
+                              >
+                                <TrashGlyphSmall />
+                              </button>
+                            </OdeTooltip>
+                          ) : null}
+                        </>
                       ) : null}
                     </div>
                     {effectiveFavoriteGroups.length > 0 ? (
@@ -820,7 +888,6 @@ export function SidebarPanel({
                             : undefined
                         }
                       >
-                        <QuickAccessGlyphSmall />
                         {group.name}
                       </button>
                     ))}
@@ -831,16 +898,16 @@ export function SidebarPanel({
                 </div>
               ) : null}
 
-              {workspaceManageCard ?? null}
+              {workspaceFocusMode === "execution" ? null : workspaceManageCard ?? null}
 
               {searchDropdownOpen && searchResults.length > 0 ? (
-                <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-72 overflow-auto rounded-xl border border-[var(--ode-border-strong)] bg-[rgba(5,25,42,0.97)] p-1 shadow-[0_14px_28px_rgba(0,0,0,0.42)]">
+                <div className="absolute left-0 right-0 top-[calc(100%+10px)] z-30 max-h-80 overflow-auto rounded-[22px] border border-[rgba(108,211,255,0.26)] bg-[linear-gradient(180deg,rgba(4,25,42,0.98),rgba(2,17,29,0.98))] p-2 shadow-[0_24px_48px_rgba(0,0,0,0.46)]">
                   {searchResults.map((result, idx) => (
                     <button
                       key={`search-${result.node.id}`}
-                      className={`flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left ${idx === searchActiveIndex
-                        ? "bg-[rgba(26,121,182,0.35)] text-white"
-                        : "text-[var(--ode-text-dim)] hover:bg-[rgba(15,75,117,0.28)]"
+                      className={`flex w-full items-start gap-2 rounded-[16px] border px-3 py-3 text-left transition ${idx === searchActiveIndex
+                        ? "border-[rgba(108,211,255,0.3)] bg-[rgba(19,82,122,0.34)] text-white"
+                        : "border-transparent text-[var(--ode-text-dim)] hover:border-[rgba(108,211,255,0.16)] hover:bg-[rgba(8,42,65,0.52)]"
                         }`}
                       onMouseEnter={() => onSearchActiveIndexChange(idx)}
                       onClick={() => onSelectFromSearch(result.node.id)}
@@ -877,7 +944,7 @@ export function SidebarPanel({
 
           <div
             ref={treeScrollRef}
-            className="flex-1 overflow-auto px-2 py-2"
+            className="flex-1 overflow-auto px-3 pb-4 pt-3"
             data-ode-surface="tree"
             onMouseDownCapture={onActivateTreeSurface}
             onScroll={(event) => {
@@ -927,7 +994,9 @@ export function SidebarPanel({
             }}
           >
             {dropIndicator?.targetId === scopedRootDropTargetId ? (
-              <div className="ode-root-drop-hint">{t("tree.drop_to_root")}</div>
+              <div className="mb-3 rounded-[18px] border border-dashed border-[rgba(108,211,255,0.26)] bg-[rgba(7,35,55,0.58)] px-4 py-3 text-[0.8rem] uppercase tracking-[0.14em] text-[var(--ode-text-dim)]">
+                {t("tree.drop_to_root")}
+              </div>
             ) : null}
             {shouldVirtualizeTree && virtualTreeWindow.topSpacer > 0 ? (
               <div style={{ height: `${virtualTreeWindow.topSpacer}px` }} />
@@ -939,8 +1008,10 @@ export function SidebarPanel({
                 const isEditingHere = editingNodeId === row.id && editingSurface === "tree";
                 const selected = selectedNodeIds.has(row.id);
                 const focused = selectedNodeId === row.id;
+                const isFileNode = isFileLikeNode(row.node);
+                const isMajorNode = !isFileNode && row.level <= 1;
                 const nodeTooltipLabel =
-                  nodeTooltipsEnabled && editingNodeId !== row.id && !isFileLikeNode(row.node)
+                  nodeTooltipsEnabled && editingNodeId !== row.id && !isFileNode
                     ? getNodeTooltipLabel({
                         title: getNodeDisplayText(row.node),
                         description: row.node.description,
@@ -952,8 +1023,8 @@ export function SidebarPanel({
               <div
                 key={row.id}
                 data-ode-node-id={row.id}
-                className={`ode-tree-row ${selected ? "ode-tree-row-selected" : ""} ${focused ? "ode-tree-row-active" : ""} ${cutPendingNodeIds.has(row.id) ? "ode-cut-pending" : ""
-                  } ${draggingNodeId === row.id ? "ode-tree-row-dragging" : ""
+                className={`ode-tree-row group relative mb-1.5 flex items-start gap-2 overflow-hidden rounded-[22px] border border-transparent pr-2 transition-[background,border-color,box-shadow,transform] duration-150 ${selected ? "ode-tree-row-selected border-[rgba(108,211,255,0.36)] bg-[linear-gradient(135deg,rgba(13,61,92,0.68),rgba(6,31,49,0.92))] shadow-[0_12px_32px_rgba(0,0,0,0.2)]" : "bg-[rgba(4,23,37,0.16)] hover:border-[rgba(108,211,255,0.16)] hover:bg-[rgba(7,34,53,0.52)]"} ${focused ? "ode-tree-row-active shadow-[0_0_0_1px_rgba(122,224,255,0.24),0_16px_36px_rgba(0,0,0,0.24)]" : ""} ${cutPendingNodeIds.has(row.id) ? "ode-cut-pending" : ""
+                  } ${draggingNodeId === row.id ? "ode-tree-row-dragging opacity-70" : ""
                   } ${dropIndicator?.targetId === row.id
                     ? dropIndicator.position === "before"
                       ? "ode-drop-before"
@@ -962,7 +1033,7 @@ export function SidebarPanel({
                         : "ode-drop-inside"
                     : ""
                   }`}
-                style={{ paddingLeft: `${10 + row.level * 18}px` }}
+                style={{ paddingLeft: `${resolveSidebarTreeIndent(row.level)}px` }}
                 draggable={editingNodeId !== row.id}
                 onClick={(event) => {
                   if (editingNodeId === row.id) return;
@@ -1021,15 +1092,26 @@ export function SidebarPanel({
                   const target = event.target as HTMLElement;
                   if (target.closest("input")) return;
                   if (target.closest(".ode-caret-btn")) return;
-                  if (isFileLikeNode(row.node)) {
+                  if (isFileNode) {
                     onReviewFile(row.id);
                   } else {
                     void onOpenNodeTab(row.id);
                   }
                 }}
               >
+                {row.level > 0 ? (
+                  <span
+                    aria-hidden="true"
+                    className="pointer-events-none absolute bottom-2 top-2 w-px rounded-full bg-[linear-gradient(180deg,rgba(117,224,255,0),rgba(117,224,255,0.22),rgba(117,224,255,0))]"
+                    style={{ left: `${15 + (row.level - 1) * 18}px` }}
+                  />
+                ) : null}
                 <button
-                  className="ode-caret-btn"
+                  className={`ode-caret-btn mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] border border-transparent text-[0.82rem] transition ${
+                    row.hasChildren
+                      ? "text-[var(--ode-text-muted)] hover:border-[rgba(108,211,255,0.16)] hover:bg-[rgba(10,41,63,0.72)] hover:text-[var(--ode-text)]"
+                      : "text-[var(--ode-text-subtle)] opacity-60"
+                  }`}
                   onClick={(event) => {
                     event.preventDefault();
                     event.stopPropagation();
@@ -1039,124 +1121,116 @@ export function SidebarPanel({
                   {row.hasChildren ? (expandedIds.has(row.id) ? "v" : ">") : ""}
                 </button>
 
-                <div className="ode-tree-row-main">
+                <div className="ode-tree-row-main min-w-0 flex-1 items-start gap-3 rounded-[18px] px-2.5 py-2.5">
                   <NodeGlyph
                     node={row.node}
                     active={selected || focused}
                     folderState={!isFileLikeNode(row.node) ? folderNodeStateById.get(row.id) : undefined}
                     showExecutionOwnerGlyph={executionOwnerNodeIds.has(row.id)}
                   />
-                  {!hideTreeNumbering && !isFileLikeNode(row.node) && row.indexLabel ? (
-                    <span className="rounded-sm bg-[rgba(36,133,202,0.16)] px-1.5 py-[1px] text-[0.7rem] text-[var(--ode-text-dim)]">
-                      {row.indexLabel}
-                    </span>
-                  ) : null}
-                  {nodeHasStructureLock ? (
-                    <OdeTooltip label={t("structure_lock.locked_badge")} side="bottom">
-                      <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border border-[rgba(223,198,119,0.42)] bg-[rgba(108,88,34,0.28)] text-[#f3d98a]">
-                        <LockGlyphSmall />
-                      </span>
-                    </OdeTooltip>
-                  ) : null}
-                  {isEditingHere ? (
-                    <input
-                      ref={inlineEditInputRef as RefObject<HTMLInputElement | null>}
-                      autoFocus
-                      value={editingValue}
-                      spellCheck
-                      autoCorrect="on"
-                      autoCapitalize="off"
-                      lang={getLocaleForLanguage(language)}
-                      onChange={(event) => onSetEditingValue(event.target.value)}
-                      onContextMenu={onOpenInlineEditContextMenu}
-                      onBlur={() => {
-                        if (editActionInFlightRef.current) return;
-                        void onCommitInlineEdit();
-                      }}
-                      onKeyDown={(event) => {
-                        // Keep inline edit keyboard handling local to the input.
-                        // This prevents global shortcuts from firing while renaming.
-                        event.stopPropagation();
-                        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-                          event.preventDefault();
-                          void onCommitInlineEdit();
-                          return;
-                        }
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          onCancelInlineEdit();
-                          return;
-                        }
-
-                        if (event.key === "Backspace" && editingValue.length === 0) {
-                          event.preventDefault();
-                          const deletedNodeId = row.id;
-                          const parentForSelection =
-                            row.node.parentId === ROOT_PARENT_ID ? null : row.node.parentId;
-                          const provisionalInlineCreate = isNodeProvisionalInlineCreate(deletedNodeId);
-
-                          editActionInFlightRef.current = true;
-                          void (async () => {
-                            onCancelInlineEdit();
-                            if (!provisionalInlineCreate) {
-                              await onDeleteNode(deletedNodeId);
-                              await onRefreshTreeAndKeepContext(parentForSelection ?? undefined, [row.node.parentId]);
-                              if (parentForSelection) {
-                                onSetPrimarySelection(parentForSelection, "tree");
-                              } else {
-                                onSetPrimarySelection(null, "tree");
-                              }
+                  <div className="min-w-0 flex-1">
+                    <div className="flex min-w-0 items-start gap-2">
+                      {isEditingHere ? (
+                        <input
+                          ref={inlineEditInputRef as RefObject<HTMLInputElement | null>}
+                          autoFocus
+                          value={editingValue}
+                          spellCheck
+                          autoCorrect="on"
+                          autoCapitalize="off"
+                          lang={getLocaleForLanguage(language)}
+                          onChange={(event) => onSetEditingValue(event.target.value)}
+                          onContextMenu={onOpenInlineEditContextMenu}
+                          onBlur={() => {
+                            if (editActionInFlightRef.current) return;
+                            void onCommitInlineEdit();
+                          }}
+                          onKeyDown={(event) => {
+                            // Keep inline edit keyboard handling local to the input.
+                            // This prevents global shortcuts from firing while renaming.
+                            event.stopPropagation();
+                            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+                              event.preventDefault();
+                              void onCommitInlineEdit();
+                              return;
                             }
-                          })().finally(() => {
-                            editActionInFlightRef.current = false;
-                          });
-                          return;
-                        }
-
-                        const createParent = event.key === "Enter" && (event.ctrlKey || event.metaKey);
-                        const createBefore = event.key === "Enter" && event.shiftKey;
-                        const createChild = event.key === "Tab";
-                        const shouldCreateAfterSave = createParent || createBefore || createChild;
-
-                        if (shouldCreateAfterSave) {
-                          event.preventDefault();
-                          const sourceNodeId = row.id;
-
-                          editActionInFlightRef.current = true;
-                          void (async () => {
-                            await onCommitInlineEdit();
-                            if (createParent) {
-                              await onCreateParentNode(sourceNodeId);
-                            } else if (createBefore) {
-                              await onCreateSiblingNode(sourceNodeId, true);
-                            } else if (createChild) {
-                              await onCreateChildNode(sourceNodeId);
-                            } else {
-                              await onCreateSiblingNode(sourceNodeId, false);
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              onCancelInlineEdit();
+                              return;
                             }
-                          })().finally(() => {
-                            editActionInFlightRef.current = false;
-                          });
-                          return;
-                        }
 
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          editActionInFlightRef.current = true;
-                          void (async () => {
-                            await onCommitInlineEdit();
-                          })().finally(() => {
-                            editActionInFlightRef.current = false;
-                          });
-                        }
-                      }}
-                      className="ode-input h-7 w-full rounded px-2 text-[1rem]"
-                    />
-                  ) : (
-                    <span className="ode-node-label text-[1.02rem]">
-                      {getNodeDisplayLabel(row.node)}
-                    </span>
-                  )}
+                            const createParent = event.key === "Enter" && (event.ctrlKey || event.metaKey);
+                            const createBefore = event.key === "Enter" && event.shiftKey;
+                            const createChild = event.key === "Tab";
+                            const shouldCreateAfterSave = createParent || createBefore || createChild;
+
+                            if (shouldCreateAfterSave) {
+                              event.preventDefault();
+                              const sourceNodeId = row.id;
+
+                              editActionInFlightRef.current = true;
+                              void (async () => {
+                                await onCommitInlineEdit();
+                                if (createParent) {
+                                  await onCreateParentNode(sourceNodeId);
+                                } else if (createBefore) {
+                                  await onCreateSiblingNode(sourceNodeId, true);
+                                } else if (createChild) {
+                                  await onCreateChildNode(sourceNodeId);
+                                } else {
+                                  await onCreateSiblingNode(sourceNodeId, false);
+                                }
+                              })().finally(() => {
+                                editActionInFlightRef.current = false;
+                              });
+                              return;
+                            }
+
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              editActionInFlightRef.current = true;
+                              void (async () => {
+                                await onCommitInlineEdit();
+                              })().finally(() => {
+                                editActionInFlightRef.current = false;
+                              });
+                            }
+                          }}
+                          className="ode-input h-9 w-full rounded-[12px] border-[rgba(122,224,255,0.22)] bg-[rgba(3,18,30,0.86)] px-3 text-[0.98rem]"
+                        />
+                      ) : (
+                        <span
+                          className={`ode-node-label min-w-0 flex-1 whitespace-normal break-words leading-[1.24] ${
+                            isMajorNode
+                              ? "text-[1.01rem] font-semibold tracking-[-0.02em] text-[var(--ode-text)]"
+                              : "text-[0.96rem] font-medium text-[var(--ode-text-dim)]"
+                          }`}
+                          style={TREE_ROW_LABEL_CLAMP_STYLE}
+                        >
+                          {getNodeDisplayLabel(row.node)}
+                        </span>
+                      )}
+                      <div className="flex shrink-0 items-start gap-2">
+                        {!hideTreeNumbering && !isFileNode && row.indexLabel ? (
+                          <span className={`rounded-full border px-2.5 py-1 text-[0.68rem] font-medium tracking-[0.12em] ${
+                            selected || focused
+                              ? "border-[rgba(130,229,255,0.34)] bg-[rgba(23,90,132,0.34)] text-[var(--ode-text)]"
+                              : "border-[rgba(83,181,223,0.18)] bg-[rgba(18,65,95,0.22)] text-[var(--ode-text-muted)]"
+                          }`}>
+                            {row.indexLabel}
+                          </span>
+                        ) : null}
+                        {nodeHasStructureLock ? (
+                          <OdeTooltip label={t("structure_lock.locked_badge")} side="bottom">
+                            <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-[rgba(223,198,119,0.42)] bg-[rgba(108,88,34,0.28)] text-[#f3d98a]">
+                              <LockGlyphSmall />
+                            </span>
+                          </OdeTooltip>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
                 );

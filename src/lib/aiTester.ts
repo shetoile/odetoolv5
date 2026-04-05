@@ -3,6 +3,7 @@ import type {
   QaTesterPriority,
   RegressionChecklistItem
 } from "@/lib/regressionChecklist";
+import { buildAppStorageKey } from "@/lib/appIdentity";
 
 export type QaChecklistPlanStatus = "pending" | "passed" | "failed";
 export type AiQaLearningSource = "manual" | "automation";
@@ -147,8 +148,8 @@ export interface AiQaAutoRunState {
   latestTrigger: AiQaRunTrigger | null;
 }
 
-const AI_QA_LEARNING_STORAGE_KEY = "odetool.ai.qa.learning.v1";
-const AI_QA_AUTORUN_STORAGE_KEY = "odetool.ai.qa.autorun.v1";
+const AI_QA_LEARNING_STORAGE_KEY = buildAppStorageKey("ai.qa.learning.v1");
+const AI_QA_AUTORUN_STORAGE_KEY = buildAppStorageKey("ai.qa.autorun.v1");
 const MAX_LEARNING_RUNS = 600;
 const SEARCH_STOPWORDS = new Set([
   "a",

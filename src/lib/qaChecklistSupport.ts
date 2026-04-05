@@ -2,9 +2,10 @@ import { type LanguageCode } from "@/lib/i18n";
 import { REGRESSION_CHECKLIST_ITEMS, type RegressionChecklistItem } from "@/lib/regressionChecklist";
 import { getLocalizedRegressionChecklistItem } from "@/lib/regressionChecklistLocalization";
 import type { AiQaExecutionItemReport, AiQaFeedbackEntry, QaInputCategory } from "@/lib/aiTester";
+import { buildAppStorageKey } from "@/lib/appIdentity";
 
-const QA_CHECKLIST_STORAGE_KEY = "odetool.qaChecklist.v1";
-const QA_CHECKLIST_PROGRESS_STORAGE_KEY = "odetool.qaChecklist.progress.v1";
+const QA_CHECKLIST_STORAGE_KEY = buildAppStorageKey("qaChecklist.v1");
+const QA_CHECKLIST_PROGRESS_STORAGE_KEY = buildAppStorageKey("qaChecklist.progress.v1");
 const QA_CHECKLIST_AREA_ORDER: RegressionChecklistItem["area"][] = [
   "Tree",
   "Desktop",

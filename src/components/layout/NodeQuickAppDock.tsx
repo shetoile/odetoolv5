@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent as ReactDragEvent, type ReactNode } from "react";
 import { EditGlyphSmall, PlusGlyphSmall } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { QuickAppIcon } from "@/components/quick-apps/QuickAppIcon";
@@ -14,6 +14,7 @@ interface NodeQuickAppDockProps {
   onLaunchQuickApp: (item: NodeQuickAppItem) => void;
   onReorderQuickApps: (quickApps: NodeQuickAppItem[]) => void;
   onManageQuickApps: () => void;
+  leadingSlot?: ReactNode;
 }
 
 type QuickAppDropPlacement = "before" | "after";
@@ -113,7 +114,8 @@ export function NodeQuickAppDock({
   quickApps,
   onLaunchQuickApp,
   onReorderQuickApps,
-  onManageQuickApps
+  onManageQuickApps,
+  leadingSlot
 }: NodeQuickAppDockProps) {
   const [orderedQuickApps, setOrderedQuickApps] = useState<NodeQuickAppItem[]>(quickApps);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -126,7 +128,8 @@ export function NodeQuickAppDock({
   const suppressLaunchRef = useRef(false);
   const hasNode = Boolean(nodeLabel);
   const showManageButton = hasNode;
-  const showDock = quickApps.length > 0 || showManageButton;
+  const hasLeadingSlot = Boolean(leadingSlot);
+  const showDock = quickApps.length > 0 || showManageButton || hasLeadingSlot;
   const canDragQuickApps = orderedQuickApps.length > 1;
   const handleOpenQuickApp = useCallback(
     (item: NodeQuickAppItem) => {
@@ -206,12 +209,18 @@ export function NodeQuickAppDock({
   };
 
   if (!showDock) {
-    return <div className="flex min-w-0 flex-[1.15] items-center justify-center px-2" />;
+    return <div className="flex min-w-0 flex-[1.15] items-center justify-start px-2" />;
   }
 
   return (
-    <div className="flex min-w-0 flex-[1.15] items-center justify-center px-2">
+    <div className="flex min-w-0 flex-[1.15] items-center justify-start px-2">
       <div className="flex min-w-0 max-w-[760px] items-center gap-1.5 rounded-[15px] border border-[rgba(61,146,194,0.18)] bg-[linear-gradient(180deg,rgba(7,30,47,0.68),rgba(2,15,26,0.86))] px-1.5 py-1 shadow-[0_14px_32px_rgba(0,0,0,0.22)] backdrop-blur-[10px]">
+        {hasLeadingSlot ? (
+          <div className="mr-1 flex shrink-0 items-center border-r border-[rgba(79,154,194,0.14)] pr-1.5">
+            {leadingSlot}
+          </div>
+        ) : null}
+
         <div className="flex min-w-0 items-center gap-1.5 overflow-x-auto">
           {orderedQuickApps.map((item) => (
             <QuickAppDockButton

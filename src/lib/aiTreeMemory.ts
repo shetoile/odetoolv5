@@ -1,7 +1,8 @@
 import type { WBSNode } from "@/lib/aiService";
 import type { LanguageCode } from "@/lib/i18n";
+import { buildAppStorageKey } from "@/lib/appIdentity";
 
-const APPROVED_DOCUMENT_TREE_MEMORY_KEY = "odetool.ai.memory.document-trees.v1";
+const APPROVED_DOCUMENT_TREE_MEMORY_KEY = buildAppStorageKey("ai.memory.document-trees.v1");
 const MAX_APPROVED_DOCUMENT_TREE_MEMORIES = 48;
 
 export interface ApprovedDocumentTreeMemoryEntry {

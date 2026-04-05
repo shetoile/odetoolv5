@@ -1,3 +1,9 @@
+import {
+  createNodeNumberingLevelState,
+  readNodeNumberHidden,
+  readNodeNumberSeparator,
+  resolveNodeTreeNumbering
+} from "@/lib/nodeNumbering";
 import type { AppNode, ProjectSummary } from "@/lib/types";
 
 export const INTERNAL_WORKSPACE_ROOT_PREFIX = "workspace://internal/";
@@ -75,6 +81,7 @@ type BuildScopedNumberingParams = {
   byParent: Map<string, AppNode[]>;
   workspaceRootNumberingEnabled: boolean;
   consumesTreeNumbering: (node: AppNode) => boolean;
+  numberingMode?: "legacy" | "tree_headings";
 };
 
 export function buildScopedNumbering({
@@ -83,35 +90,90 @@ export function buildScopedNumbering({
   nodeById,
   byParent,
   workspaceRootNumberingEnabled,
-  consumesTreeNumbering
+  consumesTreeNumbering,
+  numberingMode = "legacy"
 }: BuildScopedNumberingParams): Map<string, string> {
   if (!activeProjectRootId) return numbering;
 
   const rootNode = nodeById.get(activeProjectRootId);
   if (!rootNode) return new Map<string, string>();
 
-  const map = new Map<string, string>();
-  const rootPrefix = workspaceRootNumberingEnabled ? "1" : "";
-  if (workspaceRootNumberingEnabled) {
-    map.set(rootNode.id, "1");
+  if (numberingMode === "tree_headings") {
+    const map = new Map<string, string>();
+    const resolvedRoot = resolveNodeTreeNumbering(rootNode, {
+      parentLabel: "",
+      siblingState: createNodeNumberingLevelState(),
+      ignoreLabelOverride: true,
+      ignoreFormatOverride: true,
+      ignoreSeparatorOverride: true
+    });
+
+    if (!readNodeNumberHidden(rootNode)) {
+      map.set(rootNode.id, resolvedRoot.label);
+    }
+
+    const walk = (parentId: string, parentLabel: string, inheritedSeparator: "." | "-" = ".") => {
+      const children = byParent.get(parentId) ?? [];
+      let siblingState = createNodeNumberingLevelState({ separator: inheritedSeparator });
+
+      children.forEach((child) => {
+        if (consumesTreeNumbering(child)) {
+          const resolved = resolveNodeTreeNumbering(child, {
+            parentLabel,
+            siblingState,
+            ignoreLabelOverride: true,
+            ignoreFormatOverride: true,
+            ignoreSeparatorOverride: true
+          });
+          siblingState = resolved.nextLevelState;
+          if (!readNodeNumberHidden(child)) {
+            map.set(child.id, resolved.label);
+          }
+          walk(child.id, resolved.descendantPrefix, resolved.childSeparator);
+          return;
+        }
+
+        walk(child.id, parentLabel, siblingState.separator);
+      });
+    };
+
+    walk(rootNode.id, resolvedRoot.descendantPrefix, resolvedRoot.childSeparator);
+    return map;
   }
 
-  const walk = (parentId: string, prefix: string) => {
+  const map = new Map<string, string>();
+  let rootPrefix = "";
+  let rootSeparator = readNodeNumberSeparator(rootNode) ?? ".";
+  if (workspaceRootNumberingEnabled) {
+    const resolvedRoot = resolveNodeTreeNumbering(rootNode, {
+      parentLabel: "",
+      siblingState: createNodeNumberingLevelState()
+    });
+    rootPrefix = resolvedRoot.label;
+    rootSeparator = resolvedRoot.childSeparator;
+    map.set(rootNode.id, rootPrefix);
+  }
+
+  const walk = (parentId: string, prefix: string, inheritedSeparator?: "." | "-") => {
     const children = byParent.get(parentId) ?? [];
-    let numberedIndex = 0;
+    let siblingState = createNodeNumberingLevelState(
+      inheritedSeparator ? { separator: inheritedSeparator } : undefined
+    );
     children.forEach((child) => {
-      const nextPrefix = consumesTreeNumbering(child)
-        ? (() => {
-            numberedIndex += 1;
-            const label = prefix ? `${prefix}.${numberedIndex}` : `${numberedIndex}`;
-            map.set(child.id, label);
-            return label;
-          })()
-        : prefix;
-      walk(child.id, nextPrefix);
+      if (consumesTreeNumbering(child)) {
+        const resolved = resolveNodeTreeNumbering(child, {
+          parentLabel: prefix,
+          siblingState
+        });
+        siblingState = resolved.nextLevelState;
+        map.set(child.id, resolved.label);
+        walk(child.id, resolved.descendantPrefix, resolved.childSeparator);
+      } else {
+        walk(child.id, prefix, siblingState.separator);
+      }
     });
   };
 
-  walk(rootNode.id, rootPrefix);
+  walk(rootNode.id, rootPrefix, rootSeparator);
   return map;
 }

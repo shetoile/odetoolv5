@@ -159,11 +159,27 @@ export function TicketGlyph({ active = true }: { active?: boolean }) {
 }
 
 type WorkareaItemGlyphKind = "deliverable" | "task" | "subtask";
+type ProcedureItemGlyphKind = "section" | "text" | "field" | "attachment";
 
 function readWorkareaItemKind(node: AppNode): WorkareaItemGlyphKind | null {
   const kind = node.properties?.odeWorkareaItemKind;
   if (kind === "deliverable" || kind === "task" || kind === "subtask") {
     return kind;
+  }
+  return null;
+}
+
+function isDocumentationWorkspaceRootNode(node: AppNode): boolean {
+  return node.properties?.odeWorkspaceScopeKind === "documentation_root";
+}
+
+function readProcedureItemGlyphKind(node: AppNode): ProcedureItemGlyphKind | null {
+  const itemType = node.properties?.odeProcedureItemType;
+  if (itemType === "section" || itemType === "text" || itemType === "field" || itemType === "attachment") {
+    return itemType;
+  }
+  if (typeof node.properties?.odeProcedureFieldType === "string" && node.properties.odeProcedureFieldType.trim().length > 0) {
+    return "field";
   }
   return null;
 }
@@ -290,6 +306,102 @@ export function WorkareaSubtaskGlyph({
   );
 }
 
+export function DatabaseRootGlyph({ active = true }: { active?: boolean }) {
+  const stroke = active ? "#3cd2f2" : "#7aa5b6";
+  const fill = active ? "rgba(18,93,121,0.24)" : "rgba(21,49,63,0.18)";
+  const accent = active ? "#d8f8ff" : "#b6d2dc";
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+      <ellipse cx="12" cy="6.1" rx="6.8" ry="2.8" fill={fill} stroke={stroke} strokeWidth="1.5" />
+      <path d="M5.2 6.1v8.7c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9V6.1" fill="none" stroke={stroke} strokeWidth="1.5" />
+      <path d="M5.2 10.2c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9" fill="none" stroke={accent} strokeWidth="1.45" strokeLinecap="round" />
+      <path d="M5.2 14.2c0 1.6 3 2.9 6.8 2.9s6.8-1.3 6.8-2.9" fill="none" stroke={accent} strokeWidth="1.45" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function DatabaseSectionGlyph({ active = true }: { active?: boolean }) {
+  const stroke = active ? "#58d7ff" : "#87a7b8";
+  const fill = active ? "rgba(31,96,129,0.24)" : "rgba(21,45,58,0.18)";
+  const accent = active ? "#dff7ff" : "#b7cfda";
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+      <path
+        d="M6.1 4.3h8.2l3.6 3.6v11.5a1.8 1.8 0 0 1-1.8 1.8H6.1a1.8 1.8 0 0 1-1.8-1.8V6.1a1.8 1.8 0 0 1 1.8-1.8Z"
+        fill={fill}
+        stroke={stroke}
+        strokeWidth="1.55"
+        strokeLinejoin="round"
+      />
+      <path d="M14.3 4.3v3.8h3.6" fill="none" stroke={stroke} strokeWidth="1.45" strokeLinejoin="round" />
+      <path d="M8.2 10.4h7.2M8.2 13.5h6.1M8.2 16.6h4.1" fill="none" stroke={accent} strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function DatabaseFieldGlyph({
+  active = true,
+  fieldType = "short_text"
+}: {
+  active?: boolean;
+  fieldType?: string;
+}) {
+  const isTableField = fieldType === "table";
+  const stroke = active ? (isTableField ? "#ffb454" : "#62d88f") : "#87a7b8";
+  const fill = active
+    ? (isTableField ? "rgba(184,111,28,0.26)" : "rgba(25,112,61,0.26)")
+    : "rgba(22,45,58,0.18)";
+  const accent = active ? (isTableField ? "#fff1d6" : "#e6ffef") : "#bfd5de";
+
+  if (isTableField) {
+    return (
+      <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+        <rect x="4.6" y="5.4" width="14.8" height="13.2" rx="2" fill={fill} stroke={stroke} strokeWidth="1.55" />
+        <path d="M4.8 10h14.4M9.6 5.6v12.8M14.4 5.6v12.8" fill="none" stroke={accent} strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+      <rect x="4.8" y="6" width="14.4" height="12" rx="2.2" fill={fill} stroke={stroke} strokeWidth="1.55" />
+      <path d="M7.8 10h8.4M7.8 14h4.8" fill="none" stroke={accent} strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="7.2" cy="14" r="1" fill={stroke} />
+    </svg>
+  );
+}
+
+export function ExecutionRootGlyph({
+  active = true,
+  status = "planned"
+}: {
+  active?: boolean;
+  status?: ScheduleStatus;
+}) {
+  const palette = getWorkareaPalette(status, active);
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+      <rect x="4.2" y="5.2" width="15.6" height="13.6" rx="2.4" fill={palette.fill} stroke={palette.stroke} strokeWidth="1.55" />
+      <path d="M8 9.1h8M8 12.1h5.3M8 15.1h3.8" fill="none" stroke={palette.accent} strokeWidth="1.45" strokeLinecap="round" />
+      <path d="M15.6 13.8 18.4 16.6" fill="none" stroke={palette.accent} strokeWidth="1.45" strokeLinecap="round" />
+      <circle cx="15.4" cy="13.6" r="2.4" fill="none" stroke={palette.accent} strokeWidth="1.45" />
+    </svg>
+  );
+}
+
+export function DashboardGlyph({ active = true }: { active?: boolean }) {
+  const stroke = active ? "#5fd3ff" : "#87a7b8";
+  const fill = active ? "rgba(25,109,150,0.22)" : "rgba(20,45,58,0.18)";
+  const accent = active ? "#dff7ff" : "#bed5df";
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden>
+      <rect x="4.6" y="5" width="14.8" height="14" rx="2.6" fill={fill} stroke={stroke} strokeWidth="1.55" />
+      <path d="M8.1 14.8V11M12 14.8V8.7M15.9 14.8V10.2" fill="none" stroke={accent} strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M7.5 8.2h9" fill="none" stroke={stroke} strokeWidth="1.35" strokeLinecap="round" opacity="0.8" />
+    </svg>
+  );
+}
+
 export function NodeGlyph({
   node,
   active = true,
@@ -362,6 +474,10 @@ export function NodeGlyph({
     );
   }
   const workareaKind = readWorkareaItemKind(node);
+  const procedureItemKind = readProcedureItemGlyphKind(node);
+  const fieldType =
+    typeof node.properties?.odeProcedureFieldType === "string" ? node.properties.odeProcedureFieldType.trim() : "";
+  const isExecutionOwner = showExecutionOwnerGlyph || node.properties?.odeWorkareaOwner === true;
   if (workareaKind) {
     const status = readWorkareaStatus(node);
     return (
@@ -376,6 +492,31 @@ export function NodeGlyph({
       </span>
     );
   }
+  if (isDocumentationWorkspaceRootNode(node)) {
+    return (
+      <span className="ode-node-glyph" aria-hidden>
+        <DatabaseRootGlyph active={active} />
+      </span>
+    );
+  }
+  if (node.properties?.odeDashboardWidget === true || node.properties?.odeDashboard === true) {
+    return (
+      <span className="ode-node-glyph" aria-hidden>
+        <DashboardGlyph active={active} />
+      </span>
+    );
+  }
+  if (procedureItemKind) {
+    return (
+      <span className="ode-node-glyph" aria-hidden>
+        {procedureItemKind === "field" ? (
+          <DatabaseFieldGlyph active={active} fieldType={fieldType} />
+        ) : (
+          <DatabaseSectionGlyph active={active} />
+        )}
+      </span>
+    );
+  }
   if (node.type === "ticket") {
     return (
       <span className="ode-node-glyph" aria-hidden>
@@ -383,10 +524,17 @@ export function NodeGlyph({
       </span>
     );
   }
-  if (isExecutionTask || showExecutionOwnerGlyph) {
+  if (isExecutionTask) {
     return (
       <span className="ode-node-glyph" aria-hidden>
         <ExecutionTaskGlyph active={active} />
+      </span>
+    );
+  }
+  if (isExecutionOwner) {
+    return (
+      <span className="ode-node-glyph" aria-hidden>
+        <ExecutionRootGlyph active={active} status={readWorkareaStatus(node)} />
       </span>
     );
   }
@@ -554,6 +702,58 @@ export function DataFolderGlyphSmall() {
         fill="none"
         stroke="currentColor"
         strokeWidth="1.6"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function WorkspaceRootGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" aria-hidden>
+      <path
+        d="M4.6 8.2V7a1.9 1.9 0 0 1 1.9-1.9h2.5l1.4 1.7h7a1.9 1.9 0 0 1 1.9 1.9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.65"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M4.15 9.35h15.7l-1.02 6.32a1.92 1.92 0 0 1-1.92 1.6H7.12a1.92 1.92 0 0 1-1.92-1.6Z"
+        fill="currentColor"
+        fillOpacity="0.08"
+        stroke="currentColor"
+        strokeWidth="1.65"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx="12"
+        cy="12.45"
+        r="2.35"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M13.95 10.95a2.35 2.35 0 0 0-3.55-.15"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="8.85" r="1.05" fill="currentColor" />
+      <circle cx="8.25" cy="15.35" r="1.05" fill="currentColor" />
+      <circle cx="15.75" cy="15.35" r="1.05" fill="currentColor" />
+      <path
+        d="M12 10.25v-0.3M10.08 13.7l-1.1 0.95M13.92 13.7l1.1 0.95"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
         strokeLinejoin="round"
       />
     </svg>
@@ -850,6 +1050,36 @@ export function ArrowUpGlyphSmall() {
   );
 }
 
+export function ArrowLeftGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path
+        d="M18 12H6.2M10.4 7.8 6.2 12l4.2 4.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function ArrowRightGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path
+        d="M6 12h11.8M13.6 7.8 17.8 12l-4.2 4.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function ArrowDownGlyphSmall() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
@@ -865,10 +1095,153 @@ export function ArrowDownGlyphSmall() {
   );
 }
 
+export function TextAlignLeftGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path d="M5.5 7.2h12.8M5.5 10.8h9.6M5.5 14.4h12.8M5.5 18h8.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TextAlignCenterGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path d="M5.9 7.2h12.2M7.4 10.8h9.2M5.9 14.4h12.2M7.9 18h8.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TextAlignRightGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path d="M5.7 7.2h12.8M8.9 10.8h9.6M5.7 14.4h12.8M10.3 18h8.2" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TextAlignJustifyGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path d="M5.5 7.2h13M5.5 10.8h13M5.5 14.4h13M5.5 18h13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function IndentDecreaseGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path
+        d="M9.6 7.2h8.8M9.6 10.8h6.4M9.6 14.4h8.8M9.6 18h6.4"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M5.4 12h3.5M5.4 12l1.8-1.8M5.4 12l1.8 1.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function IndentIncreaseGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path
+        d="M5.6 7.2h8.8M5.6 10.8H12M5.6 14.4h8.8M5.6 18H12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M18.6 12h-3.5M18.6 12l-1.8-1.8M18.6 12l-1.8 1.8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function LineSpacingGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path
+        d="M10.2 7.2h8M10.2 12h8M10.2 16.8h8"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <path
+        d="M5.8 5.2v13.6M5.8 5.2L4.2 6.8M5.8 5.2l1.6 1.6M5.8 18.8l-1.6-1.6M5.8 18.8l1.6-1.6"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function TableGridGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="4.8" y="5.4" width="14.4" height="13.2" rx="1.8" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M4.8 10h14.4M4.8 14.6h14.4M9.6 5.4v13.2M14.4 5.4v13.2" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function PageBreakGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path d="M5.2 7.2h13.6M5.2 16.8h13.6" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path
+        d="M12 9.2v5.6M9.8 12.6 12 14.8l2.2-2.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function PlusGlyphSmall() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
       <path d="M12 5.2v13.6M5.2 12h13.6" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function DashboardGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="4.8" y="5.8" width="14.4" height="12.8" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.65" />
+      <path d="M8.1 14.6v-3.4M12 14.6V8.9M15.9 14.6v-4.8" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      <path d="M7.4 8.1h9.2" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" opacity="0.74" />
+    </svg>
+  );
+}
+
+export function DashboardOffGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="4.8" y="5.8" width="14.4" height="12.8" rx="2.2" fill="none" stroke="currentColor" strokeWidth="1.65" />
+      <path d="M8.1 14.6v-3.4M12 14.6V8.9M15.9 14.6v-4.8" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" opacity="0.8" />
+      <path d="M6.2 17.8 17.8 6.2" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
@@ -956,11 +1329,8 @@ export function TextBoldGlyphSmall() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
       <path
-        d="M8 5.2h5.9a3.1 3.1 0 0 1 0 6.2H8Zm0 6.2h6.8a3.3 3.3 0 0 1 0 6.6H8Z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinejoin="round"
+        d="M7.4 4.8h6.3c2.55 0 4.2 1.37 4.2 3.46 0 1.4-.72 2.45-2.02 2.97 1.59.45 2.53 1.62 2.53 3.35 0 2.67-1.93 4.22-5.07 4.22H7.4Zm2.56 2.04v3.23h3.1c1.39 0 2.2-.59 2.2-1.66 0-1.04-.78-1.57-2.32-1.57Zm0 5.15v3.09h3.44c1.51 0 2.38-.58 2.38-1.68 0-1.08-.84-1.41-2.5-1.41Z"
+        fill="currentColor"
       />
     </svg>
   );
@@ -969,7 +1339,32 @@ export function TextBoldGlyphSmall() {
 export function TextItalicGlyphSmall() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
-      <path d="M14.8 5.4h-5.6M14.8 18.6H9.2M13.5 5.4 10.5 18.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path
+        d="M9.1 4.9h8.1v1.95h-2.47l-2.7 10.3h2.47v1.95H6.8v-1.95h2.49l2.69-10.3H9.1Z"
+        fill="currentColor"
+      />
+    </svg>
+  );
+}
+
+export function HeadingStyleGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <path
+        d="M5.6 6.2v11.6M10.1 6.2v11.6M5.6 12h4.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M14.4 7h4.2M14.4 12h3.4M14.4 17h4.2"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+      />
     </svg>
   );
 }

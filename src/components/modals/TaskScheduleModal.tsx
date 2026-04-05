@@ -20,6 +20,7 @@ interface TaskScheduleModalProps {
   language: LanguageCode;
   node: AppNode | null;
   initialSchedule: NodeTimelineSchedule | null;
+  canEdit?: boolean;
   onClose: () => void;
   onSave: (schedule: NodeTimelineSchedule) => Promise<void> | void;
   onClear: () => Promise<void> | void;
@@ -30,6 +31,7 @@ export function TaskScheduleModal({
   language,
   node,
   initialSchedule,
+  canEdit = true,
   onClose,
   onSave,
   onClear
@@ -102,7 +104,7 @@ export function TaskScheduleModal({
   );
 
   const save = async () => {
-    if (!normalizedStart || !normalizedEnd) return;
+    if (!canEdit || !normalizedStart || !normalizedEnd) return;
     setIsSaving(true);
     try {
       await onSave({
@@ -122,6 +124,7 @@ export function TaskScheduleModal({
   };
 
   const clear = async () => {
+    if (!canEdit) return;
     setIsSaving(true);
     try {
       await onClear();
@@ -150,17 +153,22 @@ export function TaskScheduleModal({
           </h2>
           <div className="flex items-center gap-4">
             <OdeTooltip label={t("timeline.flagged")} side="bottom">
-              <label className="flex cursor-pointer items-center gap-2 text-[var(--ode-text-dim)]" aria-label={t("timeline.flagged")}>
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-[var(--ode-accent)]"
-                  checked={flagged}
-                  onChange={(event) => setFlagged(event.target.checked)}
-                />
+              <button
+                type="button"
+                className={`flex h-9 w-9 items-center justify-center rounded-full border transition ${
+                  flagged
+                    ? "border-[rgba(255,177,60,0.65)] bg-[rgba(255,122,35,0.16)] text-[var(--ode-accent)]"
+                    : "border-[var(--ode-border)] bg-[rgba(6,24,40,0.72)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                }`}
+                aria-label={t("timeline.flagged")}
+                aria-pressed={flagged}
+                disabled={isSaving || !canEdit}
+                onClick={() => setFlagged((current) => !current)}
+              >
                 <span className={flagged ? "text-[var(--ode-accent)]" : "text-[var(--ode-text-dim)]"} aria-hidden="true">
                   <FlagGlyphSmall active={flagged} />
                 </span>
-              </label>
+              </button>
             </OdeTooltip>
             <button
               className="ode-icon-btn h-9 w-9 text-[1.3rem]"
@@ -172,6 +180,11 @@ export function TaskScheduleModal({
             </button>
           </div>
         </div>
+        {!canEdit ? (
+          <div className="border-b border-[var(--ode-border)] px-6 py-3 text-[0.92rem] text-[var(--ode-text-muted)]">
+            Read-only access for the active role.
+          </div>
+        ) : null}
         <div className="space-y-5 px-6 py-5">
           <div>
             <p className="mb-2 text-[1rem] text-[var(--ode-text-dim)]">{t("timeline.modal_task_title")}</p>
@@ -183,6 +196,7 @@ export function TaskScheduleModal({
                 className="ode-input h-12 w-full rounded-xl pl-11 pr-4"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
+                disabled={isSaving || !canEdit}
               />
             </div>
           </div>
@@ -194,6 +208,7 @@ export function TaskScheduleModal({
                   className="ode-input h-12 w-full appearance-none rounded-xl px-4 pr-10"
                   value={status}
                   onChange={(event) => setStatus(event.target.value as ScheduleStatus)}
+                  disabled={isSaving || !canEdit}
                 >
                   <option value="planned">{t("timeline.status.planned")}</option>
                   <option value="active">{t("timeline.status.active")}</option>
@@ -208,11 +223,21 @@ export function TaskScheduleModal({
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
               <div>
                 <p className="mb-2 text-[1rem] text-[var(--ode-text-dim)]">{t("timeline.modal_start_date")}</p>
-                <ThemedDatePickerInput value={startDate} onChange={setStartDate} language={language} disabled={isSaving} />
+                <ThemedDatePickerInput
+                  value={startDate}
+                  onChange={setStartDate}
+                  language={language}
+                  disabled={isSaving || !canEdit}
+                />
               </div>
               <div>
                 <p className="mb-2 text-[1rem] text-[var(--ode-text-dim)]">{t("timeline.modal_end_date")}</p>
-                <ThemedDatePickerInput value={endDate} onChange={setEndDate} language={language} disabled={isSaving} />
+                <ThemedDatePickerInput
+                  value={endDate}
+                  onChange={setEndDate}
+                  language={language}
+                  disabled={isSaving || !canEdit}
+                />
               </div>
             </div>
             <div>
@@ -222,6 +247,7 @@ export function TaskScheduleModal({
                 value={assigneesInput}
                 onChange={(event) => setAssigneesInput(event.target.value)}
                 placeholder={t("timeline.modal_assignees_placeholder")}
+                disabled={isSaving || !canEdit}
               />
             </div>
           </div>
@@ -236,7 +262,11 @@ export function TaskScheduleModal({
         </div>
         <div className="flex items-center justify-between border-t border-[var(--ode-border)] px-6 py-4">
           {hasExistingSchedule ? (
-            <button className="ode-text-btn h-11 px-4 text-[var(--ode-text-muted)]" onClick={clear} disabled={isSaving}>
+            <button
+              className="ode-text-btn h-11 px-4 text-[var(--ode-text-muted)]"
+              onClick={clear}
+              disabled={isSaving || !canEdit}
+            >
               {t("timeline.modal_clear")}
             </button>
           ) : (
@@ -249,7 +279,7 @@ export function TaskScheduleModal({
             <button
               className="ode-primary-btn h-11 px-7"
               onClick={() => void save()}
-              disabled={isSaving || !normalizedStart || !normalizedEnd}
+              disabled={isSaving || !canEdit || !normalizedStart || !normalizedEnd}
             >
               {t("timeline.modal_save")}
             </button>

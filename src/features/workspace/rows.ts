@@ -61,6 +61,7 @@ export function buildFilteredWorkspaceTreeRows(params: {
   isHiddenExecutionTaskNode: (node: AppNode) => boolean;
   shouldHideNode?: (node: AppNode) => boolean;
   forceTaskFilterParents: boolean;
+  hideProjectRootRow?: boolean;
 }): WorkspaceTreeRow[] {
   const visitNode = (nodeId: string, level: number): { branchVisible: boolean; rows: WorkspaceTreeRow[] } => {
     const node = params.nodeById.get(nodeId);
@@ -121,6 +122,9 @@ export function buildFilteredWorkspaceTreeRows(params: {
 
   if (params.activeProjectRootId) {
     const rootResult = visitNode(params.activeProjectRootId, 0);
+    if (params.hideProjectRootRow) {
+      return visitChildren(params.activeProjectRootId, 0);
+    }
     if (rootResult.rows.length > 0 && rootResult.rows[0]?.id === params.activeProjectRootId) {
       return rootResult.rows;
     }

@@ -8,6 +8,78 @@ import {
 
 export type WorkareaItemKind = "deliverable" | "task" | "subtask";
 
+export function isWorkareaRootNode(node: AppNode | null | undefined): boolean {
+  return Boolean(node && node.properties?.odeWorkareaRoot === true);
+}
+
+export function getWorkareaRootOwnerNodeId(
+  node: AppNode | null | undefined,
+  nodeById: Map<string, AppNode>
+): string | null {
+  if (!node || !isWorkareaRootNode(node)) return null;
+
+  let current: AppNode | null = node;
+  let safety = 0;
+  while (current && safety < 200) {
+    const parentId: string | null = current.parentId;
+    if (!parentId || parentId === ROOT_PARENT_ID) return null;
+    const parentNode: AppNode | null = nodeById.get(parentId) ?? null;
+    if (!parentNode) return parentId;
+    if (!isWorkareaRootNode(parentNode)) return parentNode.id;
+    current = parentNode;
+    safety += 1;
+  }
+
+  return null;
+}
+
+export function findWorkareaContainerNode(
+  ownerNodeId: string,
+  byParent: Map<string, AppNode[]>
+): AppNode | null {
+  return (byParent.get(ownerNodeId) ?? []).find((child) => isWorkareaRootNode(child)) ?? null;
+}
+
+export function getWorkareaContainerNodeId(
+  ownerNodeId: string,
+  byParent: Map<string, AppNode[]>
+): string {
+  return findWorkareaContainerNode(ownerNodeId, byParent)?.id ?? ownerNodeId;
+}
+
+export function getVisibleWorkareaChildNodes(params: {
+  parentNode: AppNode | null | undefined;
+  byParent: Map<string, AppNode[]>;
+}): AppNode[] {
+  const parentNode = params.parentNode;
+  if (!parentNode) return [];
+
+  const sourceParentId =
+    isWorkareaItemNode(parentNode) || isWorkareaRootNode(parentNode)
+      ? parentNode.id
+      : getWorkareaContainerNodeId(parentNode.id, params.byParent);
+
+  const results: AppNode[] = [];
+  const visited = new Set<string>();
+
+  const collectChildren = (nodeId: string) => {
+    for (const child of params.byParent.get(nodeId) ?? []) {
+      if (visited.has(child.id)) continue;
+      visited.add(child.id);
+      if (isWorkareaRootNode(child)) {
+        collectChildren(child.id);
+        continue;
+      }
+      if (isWorkareaItemNode(child)) {
+        results.push(child);
+      }
+    }
+  };
+
+  collectChildren(sourceParentId);
+  return results;
+}
+
 function readTimelineScheduleRecord(node: AppNode): Record<string, unknown> | null {
   const record =
     node.properties?.timelineSchedule && typeof node.properties.timelineSchedule === "object"
@@ -63,6 +135,9 @@ export function getWorkareaOwnerNodeId(
     if (!parentId || parentId === ROOT_PARENT_ID) return null;
     const parentNode: AppNode | null = nodeById.get(parentId) ?? null;
     if (!parentNode) return parentId;
+    if (isWorkareaRootNode(parentNode)) {
+      return parentNode.parentId && parentNode.parentId !== ROOT_PARENT_ID ? parentNode.parentId : null;
+    }
     if (!isWorkareaItemNode(parentNode)) return parentNode.id;
     current = parentNode;
     safety += 1;
@@ -125,6 +200,11 @@ export function collectWorkareaOwnerNodeIds(params: {
   for (const candidate of params.candidates) {
     if (params.visibleScope && !params.visibleScope.has(candidate.id)) continue;
     if (isFileLikeNode(candidate)) continue;
+    if (isWorkareaRootNode(candidate)) {
+      const ownerNodeId = getWorkareaRootOwnerNodeId(candidate, params.nodeById);
+      if (ownerNodeId) ownerIds.add(ownerNodeId);
+      continue;
+    }
     if (isDeclaredWorkareaOwnerNode(candidate)) {
       ownerIds.add(candidate.id);
     }
@@ -136,7 +216,7 @@ export function collectWorkareaOwnerNodeIds(params: {
       continue;
     }
     const children = params.byParent.get(candidate.id) ?? [];
-    if (children.some((child) => isWorkareaItemNode(child))) {
+    if (children.some((child) => isWorkareaRootNode(child) || isWorkareaItemNode(child))) {
       ownerIds.add(candidate.id);
     }
   }
@@ -148,7 +228,8 @@ export function buildStructuredDeliverablesFromWorkareaNodes(params: {
   byParent: Map<string, AppNode[]>;
   nodeById: Map<string, AppNode>;
 }): ODEStructuredDeliverable[] {
-  const deliverableNodes = (params.byParent.get(params.ownerNodeId) ?? []).filter((child) =>
+  const containerNodeId = getWorkareaContainerNodeId(params.ownerNodeId, params.byParent);
+  const deliverableNodes = (params.byParent.get(containerNodeId) ?? []).filter((child) =>
     isWorkareaItemNode(child)
   );
   return deliverableNodes.map((deliverableNode, deliverableIndex) => {

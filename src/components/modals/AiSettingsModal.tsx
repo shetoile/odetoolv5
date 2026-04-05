@@ -1,6 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { OdeAiMark } from "@/components/OdeAiMark";
 import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
+import { AI_KEYS_STORAGE_KEY } from "@/lib/appIdentity";
 import { callNative } from "@/lib/tauriApi";
 import { translate, type LanguageCode, type TranslationParams } from "@/lib/i18n";
 
@@ -24,7 +25,7 @@ export function AiSettingsModal({
 
   useEffect(() => {
     if (!open) return;
-    const raw = localStorage.getItem("odetool.ai.keys.v1");
+    const raw = localStorage.getItem(AI_KEYS_STORAGE_KEY);
     if (!raw) return;
     try {
       const parsed = JSON.parse(raw) as {
@@ -68,7 +69,7 @@ export function AiSettingsModal({
     event?.stopPropagation();
     try {
       localStorage.setItem(
-        "odetool.ai.keys.v1",
+        AI_KEYS_STORAGE_KEY,
         JSON.stringify({
           mistralKeys: mistralKeys.filter((key) => key.trim().length > 0)
         })

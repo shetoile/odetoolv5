@@ -233,6 +233,25 @@ export function useExplorerStore() {
     setBreadcrumbs((prev) => prev.map(applyPatch));
   }, []);
 
+  const removeNode = useCallback((nodeId: string) => {
+    setAllNodes((prev) => {
+      const removedIds = new Set<string>([nodeId]);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const node of prev) {
+          if (!removedIds.has(node.parentId)) continue;
+          if (removedIds.has(node.id)) continue;
+          removedIds.add(node.id);
+          changed = true;
+        }
+      }
+      return prev.filter((node) => !removedIds.has(node.id));
+    });
+    setCurrentChildren((prev) => prev.filter((node) => node.id !== nodeId));
+    setBreadcrumbs((prev) => prev.filter((node) => node.id !== nodeId));
+  }, []);
+
   const createFolder = useCallback(
     async (parentId: string | null, name: string) => {
       const cleanName = name.trim();
@@ -353,6 +372,7 @@ export function useExplorerStore() {
     createFolder,
     renameSelectedNode,
     runSearch,
-    patchNode
+    patchNode,
+    removeNode
   };
 }

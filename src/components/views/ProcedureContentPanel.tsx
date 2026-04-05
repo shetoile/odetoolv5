@@ -24,8 +24,10 @@ import { AiWorkspaceModal } from "@/components/modals/AiWorkspaceModal";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { TextEditContextMenu, type TextEditContextMenuState } from "@/components/overlay/TextEditContextMenu";
 import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
+import { AI_KEYS_STORAGE_KEY } from "@/lib/appIdentity";
 import { type LanguageCode, type TranslationParams } from "@/lib/i18n";
 import { getMindMapTheme } from "@/lib/mindMapTheme";
+import { getNodeDisplayName, shouldHideNodeFromGenericUi } from "@/lib/nodeDisplay";
 import { getODENodeMetadata } from "@/lib/odePolicy";
 import {
   ROOT_PARENT_ID,
@@ -45,8 +47,7 @@ import {
   type ProjectSummary
 } from "@/lib/types";
 import { getDesktopMediaPreviewKind, resolveDesktopPreviewSrc } from "@/lib/iconSupport";
-import { saveExportFile } from "@/lib/nodeService";
-import { buildProcedureDocxBytes, buildProcedurePdfBytes } from "@/lib/procedureExport";
+import { openExternalUrl, openLocalPath, saveExportFile } from "@/lib/nodeService";
 import {
   areChantierProfilesEqual,
   getChantierLinkedNADisplay,
@@ -56,9 +57,11 @@ import {
   readChantierProfile
 } from "@/features/ode/chantierProfile";
 import { isHiddenExecutionTaskNode } from "@/features/workspace/execution";
+import { buildScopedNumbering } from "@/features/workspace/scope";
 import { getSpellSuggestions } from "@/lib/spellcheckService";
 import {
   buildProcedureSectionTree,
+  decodeProcedureAppLinkPayload,
   decodeNodeLinkId,
   findProcedureWorkspaceRootId,
   getNodeBody,
@@ -211,6 +214,36 @@ type ProcedureChantierCopy = {
 
 type ProcedureSystemTabKey = "description" | "steering" | "deliverables";
 
+type ProcedureSectionTitleStyle = {
+  color?: string | null;
+  fontFamily?: string | null;
+  fontSizePt?: number | null;
+  bold?: boolean | null;
+  italic?: boolean | null;
+  textAlignment?: "left" | "center" | "right" | "justify" | null;
+};
+
+type ProcedureWorkspaceBodyStyle = {
+  fontFamily: string;
+  fontSizePt: number;
+  textColor: string;
+  bold: boolean;
+  italic: boolean;
+  lineSpacing: "default" | string;
+};
+
+type ProcedureSectionTitleDefaults = {
+  fontFamily: string;
+  fontSizePt: number;
+  textColor: string;
+  bold: boolean;
+  italic: boolean;
+  textAlignment: "left" | "center" | "right" | "justify";
+};
+
+type ProcedureSectionTitleLevelDefaults = Record<1 | 2 | 3 | 4 | 5 | 6, ProcedureSectionTitleDefaults>;
+type ProcedureWorkspaceHeadingStyleDefaults = Record<1 | 2 | 3 | 4 | 5 | 6, ProcedureWorkspaceBodyStyle>;
+
 interface ProcedureContentPanelProps {
   t: TranslateFn;
   language: LanguageCode;
@@ -253,6 +286,372 @@ interface ProcedureContentPanelProps {
   onActivateProcedureSurface: () => void;
   onOpenNodeContextMenu: (event: ReactMouseEvent<HTMLElement>, nodeId: string) => void;
   onOpenSurfaceContextMenu: (event: ReactMouseEvent<HTMLElement>) => void;
+}
+
+const PROCEDURE_SECTION_TITLE_COLOR_PROPERTY = "odeProcedureTitleColor";
+const PROCEDURE_SECTION_TITLE_FONT_FAMILY_PROPERTY = "odeProcedureTitleFontFamily";
+const PROCEDURE_SECTION_TITLE_FONT_SIZE_PT_PROPERTY = "odeProcedureTitleFontSizePt";
+const PROCEDURE_SECTION_TITLE_BOLD_PROPERTY = "odeProcedureTitleBold";
+const PROCEDURE_SECTION_TITLE_ITALIC_PROPERTY = "odeProcedureTitleItalic";
+const PROCEDURE_SECTION_TITLE_ALIGNMENT_PROPERTY = "odeProcedureTitleTextAlignment";
+const PROCEDURE_SECTION_TITLE_STYLES_PROPERTY = "odeProcedureSectionTitleStyles";
+const PROCEDURE_BODY_STYLE_PROPERTY = "odeProcedureBodyStyle";
+const PROCEDURE_BODY_HEADING_STYLES_PROPERTY = "odeProcedureBodyHeadingStyles";
+const PROCEDURE_DEFAULT_DOCUMENT_TEXT_COLOR = "#111827";
+
+function normalizeProcedureSectionTitleFontFamilyName(value: string | null | undefined): string {
+  const trimmed = value?.trim() ?? "";
+  if (!trimmed) return "";
+  const [firstFamily = ""] = trimmed.split(",");
+  return firstFamily.trim().replace(/^['"]+|['"]+$/g, "");
+}
+
+function buildProcedureSectionTitleFontFamilyCssValue(value: string): string {
+  const normalized = normalizeProcedureSectionTitleFontFamilyName(value);
+  if (!normalized) return "";
+  return /\s/.test(normalized) ? `"${normalized.replace(/"/g, '\\"')}"` : normalized;
+}
+
+function clampProcedureSectionTitleFontSizePt(value: number): number {
+  return Math.max(8, Math.min(96, Math.round(value)));
+}
+
+function convertProcedureSectionTitlePtToPx(value: number): number {
+  return (value * 96) / 72;
+}
+
+function buildDefaultProcedureWorkspaceBodyStyle(): ProcedureWorkspaceBodyStyle {
+  return {
+    fontFamily: "Calibri",
+    fontSizePt: 12,
+    textColor: PROCEDURE_DEFAULT_DOCUMENT_TEXT_COLOR,
+    bold: false,
+    italic: false,
+    lineSpacing: "default"
+  };
+}
+
+function buildDefaultProcedureWorkspaceHeadingStyle(level: 1 | 2 | 3 | 4 | 5 | 6): ProcedureWorkspaceBodyStyle {
+  const fontSizeByLevel = {
+    1: 23,
+    2: 19,
+    3: 14,
+    4: 12,
+    5: 11,
+    6: 10
+  } as const;
+  const lineSpacingByLevel = {
+    1: "1.2",
+    2: "1.25",
+    3: "1.3",
+    4: "1.35",
+    5: "1.35",
+    6: "1.35"
+  } as const;
+  return {
+    fontFamily: "Calibri",
+    fontSizePt: fontSizeByLevel[level],
+    textColor: PROCEDURE_DEFAULT_DOCUMENT_TEXT_COLOR,
+    bold: true,
+    italic: false,
+    lineSpacing: lineSpacingByLevel[level]
+  };
+}
+
+function buildDefaultProcedureWorkspaceHeadingStyles(): ProcedureWorkspaceHeadingStyleDefaults {
+  return {
+    1: buildDefaultProcedureWorkspaceHeadingStyle(1),
+    2: buildDefaultProcedureWorkspaceHeadingStyle(2),
+    3: buildDefaultProcedureWorkspaceHeadingStyle(3),
+    4: buildDefaultProcedureWorkspaceHeadingStyle(4),
+    5: buildDefaultProcedureWorkspaceHeadingStyle(5),
+    6: buildDefaultProcedureWorkspaceHeadingStyle(6)
+  };
+}
+
+function buildDefaultProcedureSectionTitleStyle(level: 1 | 2 | 3 | 4 | 5 | 6): ProcedureSectionTitleDefaults {
+  const fontSizeByLevel = {
+    1: 24,
+    2: 20,
+    3: 17,
+    4: 15,
+    5: 13,
+    6: 12
+  } as const;
+  return {
+    fontFamily: "Calibri",
+    fontSizePt: fontSizeByLevel[level],
+    textColor: "#29afe3",
+    bold: true,
+    italic: false,
+    textAlignment: "left"
+  };
+}
+
+function buildDefaultProcedureSectionTitleStyles(): ProcedureSectionTitleLevelDefaults {
+  return {
+    1: buildDefaultProcedureSectionTitleStyle(1),
+    2: buildDefaultProcedureSectionTitleStyle(2),
+    3: buildDefaultProcedureSectionTitleStyle(3),
+    4: buildDefaultProcedureSectionTitleStyle(4),
+    5: buildDefaultProcedureSectionTitleStyle(5),
+    6: buildDefaultProcedureSectionTitleStyle(6)
+  };
+}
+
+function buildProcedureSectionTitleStyleFromDefaults(
+  defaults: ProcedureSectionTitleDefaults
+): ProcedureSectionTitleStyle {
+  return {
+    color: defaults.textColor,
+    fontFamily: defaults.fontFamily,
+    fontSizePt: defaults.fontSizePt,
+    bold: defaults.bold,
+    italic: defaults.italic,
+    textAlignment: defaults.textAlignment
+  };
+}
+
+function normalizeProcedureWorkspaceLineSpacingValue(value: unknown): "default" | string | null {
+  if (value === "default") return "default";
+  if (typeof value === "number") {
+    if (!Number.isFinite(value) || value < 0.8 || value > 4) return null;
+    return Math.abs(value - 1) <= 0.02 ? "default" : Number(value.toFixed(2)).toString();
+  }
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().replace(",", ".");
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0.8 || parsed > 4) return null;
+  return Math.abs(parsed - 1) <= 0.02 ? "default" : Number(parsed.toFixed(2)).toString();
+}
+
+function resolveProcedureWorkspaceLineSpacingCssValue(value: "default" | string, fallback: string): string {
+  return value === "default" ? fallback : normalizeProcedureWorkspaceLineSpacingValue(value) ?? fallback;
+}
+
+function readProcedureWorkspaceBodyStyle(node: AppNode | null | undefined): ProcedureWorkspaceBodyStyle {
+  const fallback = buildDefaultProcedureWorkspaceBodyStyle();
+  const rawValue = node?.properties?.[PROCEDURE_BODY_STYLE_PROPERTY];
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return fallback;
+  }
+  const parsed = rawValue as Record<string, unknown>;
+  const fontFamily = normalizeProcedureSectionTitleFontFamilyName(typeof parsed.fontFamily === "string" ? parsed.fontFamily : "");
+  const parsedFontSize =
+    typeof parsed.fontSizePt === "number" && Number.isFinite(parsed.fontSizePt)
+      ? parsed.fontSizePt
+      : typeof parsed.fontSizePt === "string" && parsed.fontSizePt.trim().length > 0
+        ? Number(parsed.fontSizePt)
+        : fallback.fontSizePt;
+  return {
+    fontFamily: fontFamily || fallback.fontFamily,
+    fontSizePt: clampProcedureSectionTitleFontSizePt(parsedFontSize ?? fallback.fontSizePt),
+    textColor: typeof parsed.textColor === "string" && parsed.textColor.trim() ? parsed.textColor.trim() : fallback.textColor,
+    bold: parsed.bold === true,
+    italic: parsed.italic === true,
+    lineSpacing: normalizeProcedureWorkspaceLineSpacingValue(parsed.lineSpacing) ?? fallback.lineSpacing
+  };
+}
+
+function readProcedureWorkspaceHeadingStyleDefaults(
+  node: AppNode | null | undefined
+): ProcedureWorkspaceHeadingStyleDefaults {
+  const fallback = buildDefaultProcedureWorkspaceHeadingStyles();
+  const rawValue = node?.properties?.[PROCEDURE_BODY_HEADING_STYLES_PROPERTY];
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+    return fallback;
+  }
+  const parsed = rawValue as Record<string, unknown>;
+  const next = { ...fallback };
+  for (const level of [1, 2, 3, 4, 5, 6] as const) {
+    const rawStyle = parsed[String(level)];
+    if (!rawStyle || typeof rawStyle !== "object" || Array.isArray(rawStyle)) continue;
+    const entry = rawStyle as Record<string, unknown>;
+    const defaultStyle = fallback[level];
+    const fontFamily = normalizeProcedureSectionTitleFontFamilyName(typeof entry.fontFamily === "string" ? entry.fontFamily : "");
+    const parsedFontSize =
+      typeof entry.fontSizePt === "number" && Number.isFinite(entry.fontSizePt)
+        ? entry.fontSizePt
+        : typeof entry.fontSizePt === "string" && entry.fontSizePt.trim().length > 0
+          ? Number(entry.fontSizePt)
+          : defaultStyle.fontSizePt;
+    next[level] = {
+      fontFamily: fontFamily || defaultStyle.fontFamily,
+      fontSizePt: clampProcedureSectionTitleFontSizePt(parsedFontSize ?? defaultStyle.fontSizePt),
+      textColor: typeof entry.textColor === "string" && entry.textColor.trim() ? entry.textColor.trim() : defaultStyle.textColor,
+      bold: typeof entry.bold === "boolean" ? entry.bold : defaultStyle.bold,
+      italic: typeof entry.italic === "boolean" ? entry.italic : defaultStyle.italic,
+      lineSpacing: normalizeProcedureWorkspaceLineSpacingValue(entry.lineSpacing) ?? defaultStyle.lineSpacing
+    };
+  }
+  return next;
+}
+
+function readProcedureSectionTitleStyle(node: AppNode | null | undefined): ProcedureSectionTitleStyle | null {
+  const properties = node?.properties;
+  if (!properties) return null;
+  const rawColor = properties[PROCEDURE_SECTION_TITLE_COLOR_PROPERTY];
+  const rawFontFamily = properties[PROCEDURE_SECTION_TITLE_FONT_FAMILY_PROPERTY];
+  const rawFontSizePt = properties[PROCEDURE_SECTION_TITLE_FONT_SIZE_PT_PROPERTY];
+  const rawBold = properties[PROCEDURE_SECTION_TITLE_BOLD_PROPERTY];
+  const rawItalic = properties[PROCEDURE_SECTION_TITLE_ITALIC_PROPERTY];
+  const rawAlignment = properties[PROCEDURE_SECTION_TITLE_ALIGNMENT_PROPERTY];
+  const nextStyle: ProcedureSectionTitleStyle = {};
+
+  if (typeof rawColor === "string" && rawColor.trim()) {
+    nextStyle.color = rawColor.trim();
+  }
+  if (typeof rawFontFamily === "string" && rawFontFamily.trim()) {
+    nextStyle.fontFamily = normalizeProcedureSectionTitleFontFamilyName(rawFontFamily);
+  }
+  if (typeof rawFontSizePt === "number" && Number.isFinite(rawFontSizePt)) {
+    nextStyle.fontSizePt = clampProcedureSectionTitleFontSizePt(rawFontSizePt);
+  }
+  if (typeof rawBold === "boolean") {
+    nextStyle.bold = rawBold;
+  }
+  if (typeof rawItalic === "boolean") {
+    nextStyle.italic = rawItalic;
+  }
+  if (
+    rawAlignment === "left" ||
+    rawAlignment === "center" ||
+    rawAlignment === "right" ||
+    rawAlignment === "justify"
+  ) {
+    nextStyle.textAlignment = rawAlignment;
+  }
+
+  return Object.keys(nextStyle).length > 0 ? nextStyle : null;
+}
+
+function readProcedureSectionTitleLevelDefaults(
+  node: AppNode | null | undefined
+): ProcedureSectionTitleLevelDefaults {
+  const fallback = buildDefaultProcedureSectionTitleStyles();
+  const rawValue = node?.properties?.[PROCEDURE_SECTION_TITLE_STYLES_PROPERTY];
+  const next = { ...fallback };
+  if (rawValue && typeof rawValue === "object" && !Array.isArray(rawValue)) {
+    const parsed = rawValue as Record<string, unknown>;
+    for (const level of [1, 2, 3, 4, 5, 6] as const) {
+      const rawStyle = parsed[String(level)];
+      if (!rawStyle || typeof rawStyle !== "object" || Array.isArray(rawStyle)) continue;
+      const entry = rawStyle as Record<string, unknown>;
+      const defaultStyle = fallback[level];
+      const fontFamily = normalizeProcedureSectionTitleFontFamilyName(
+        typeof entry.fontFamily === "string" ? entry.fontFamily : ""
+      );
+      const parsedFontSize =
+        typeof entry.fontSizePt === "number" && Number.isFinite(entry.fontSizePt)
+          ? entry.fontSizePt
+          : typeof entry.fontSizePt === "string" && entry.fontSizePt.trim().length > 0
+            ? Number(entry.fontSizePt)
+            : defaultStyle.fontSizePt;
+      const rawAlignment = typeof entry.textAlignment === "string" ? entry.textAlignment.trim().toLowerCase() : "";
+      const textAlignment =
+        rawAlignment === "center" || rawAlignment === "right" || rawAlignment === "justify"
+          ? rawAlignment
+          : "left";
+      next[level] = {
+        fontFamily: fontFamily || defaultStyle.fontFamily,
+        fontSizePt: clampProcedureSectionTitleFontSizePt(parsedFontSize ?? defaultStyle.fontSizePt),
+        textColor:
+          typeof entry.textColor === "string" && entry.textColor.trim() ? entry.textColor.trim() : defaultStyle.textColor,
+        bold: typeof entry.bold === "boolean" ? entry.bold : defaultStyle.bold,
+        italic: typeof entry.italic === "boolean" ? entry.italic : defaultStyle.italic,
+        textAlignment
+      };
+    }
+    return next;
+  }
+  const legacyTitleStyle = readProcedureSectionTitleStyle(node);
+  if (!legacyTitleStyle) return next;
+  for (const level of [1, 2, 3, 4, 5, 6] as const) {
+    next[level] = {
+      ...next[level],
+      fontFamily: legacyTitleStyle.fontFamily ?? next[level].fontFamily,
+      fontSizePt:
+        level === 1 && typeof legacyTitleStyle.fontSizePt === "number"
+          ? legacyTitleStyle.fontSizePt
+          : next[level].fontSizePt,
+      textColor: legacyTitleStyle.color ?? next[level].textColor,
+      bold: typeof legacyTitleStyle.bold === "boolean" ? legacyTitleStyle.bold : next[level].bold,
+      italic: typeof legacyTitleStyle.italic === "boolean" ? legacyTitleStyle.italic : next[level].italic,
+      textAlignment: legacyTitleStyle.textAlignment ?? next[level].textAlignment
+    };
+  }
+  return next;
+}
+
+function buildProcedureSectionTitleInputStyle(
+  titleStyle: ProcedureSectionTitleStyle | null | undefined,
+  options?: { boxed?: boolean }
+): CSSProperties | undefined {
+  if (!titleStyle) return undefined;
+  const style: CSSProperties = {};
+
+  if (titleStyle.color) {
+    style.color = titleStyle.color;
+    style.WebkitTextFillColor = titleStyle.color;
+    style.caretColor = titleStyle.color;
+  }
+  if (titleStyle.fontFamily) {
+    style.fontFamily = buildProcedureSectionTitleFontFamilyCssValue(titleStyle.fontFamily);
+  }
+  if (typeof titleStyle.fontSizePt === "number") {
+    const fontSizePt = clampProcedureSectionTitleFontSizePt(titleStyle.fontSizePt);
+    const fontSizePx = convertProcedureSectionTitlePtToPx(fontSizePt);
+    style.fontSize = `${fontSizePt}pt`;
+    style.lineHeight = `${Math.max(fontSizePx * 1.08, fontSizePx + 6)}px`;
+    if (options?.boxed) {
+      style.height = `${Math.max(72, Math.ceil(fontSizePx * 1.42))}px`;
+    } else {
+      style.minHeight = `${Math.max(36, Math.ceil(fontSizePx * 1.18))}px`;
+    }
+  }
+  if (typeof titleStyle.bold === "boolean") {
+    style.fontWeight = titleStyle.bold ? 700 : 400;
+  }
+  if (typeof titleStyle.italic === "boolean") {
+    style.fontStyle = titleStyle.italic ? "italic" : "normal";
+  }
+  if (titleStyle.textAlignment) {
+    style.textAlign = titleStyle.textAlignment;
+  }
+
+  return style;
+}
+
+function buildProcedureRichDocumentStyle(
+  bodyStyle: ProcedureWorkspaceBodyStyle,
+  headingStyles: ProcedureWorkspaceHeadingStyleDefaults
+): CSSProperties {
+  const style: Record<string, string | number> = {
+    "--ode-procedure-body-font-family": buildProcedureSectionTitleFontFamilyCssValue(bodyStyle.fontFamily),
+    "--ode-procedure-body-font-size": `${clampProcedureSectionTitleFontSizePt(bodyStyle.fontSizePt)}pt`,
+    "--ode-procedure-body-line-height": resolveProcedureWorkspaceLineSpacingCssValue(bodyStyle.lineSpacing, "1.75"),
+    "--ode-procedure-body-color": bodyStyle.textColor,
+    "--ode-procedure-body-font-weight": bodyStyle.bold ? 700 : 400,
+    "--ode-procedure-body-font-style": bodyStyle.italic ? "italic" : "normal"
+  };
+  for (const level of [1, 2, 3, 4, 5, 6] as const) {
+    const headingStyle = headingStyles[level];
+    style[`--ode-procedure-heading-${level}-font-family`] = buildProcedureSectionTitleFontFamilyCssValue(
+      headingStyle.fontFamily
+    );
+    style[`--ode-procedure-heading-${level}-font-size`] = `${clampProcedureSectionTitleFontSizePt(
+      headingStyle.fontSizePt
+    )}pt`;
+    style[`--ode-procedure-heading-${level}-line-height`] = resolveProcedureWorkspaceLineSpacingCssValue(
+      headingStyle.lineSpacing,
+      level <= 2 ? "1.25" : "1.35"
+    );
+    style[`--ode-procedure-heading-${level}-color`] = headingStyle.textColor;
+    style[`--ode-procedure-heading-${level}-font-weight`] = headingStyle.bold ? 700 : 400;
+    style[`--ode-procedure-heading-${level}-font-style`] = headingStyle.italic ? "italic" : "normal";
+  }
+  return style as CSSProperties;
 }
 
 function normalizeExportFileName(value: string): string {
@@ -533,6 +932,14 @@ function buildProcedureToneStyle(level: number): ProcedureToneStyle {
   };
 }
 
+const PROCEDURE_DOSSIER_PANEL_CLASS =
+  "rounded-[28px] border border-[rgba(110,211,255,0.14)] bg-[linear-gradient(180deg,rgba(5,29,46,0.82),rgba(3,20,33,0.94))] shadow-[inset_0_1px_0_rgba(128,226,255,0.05)]";
+const PROCEDURE_DOSSIER_INSET_CLASS =
+  "rounded-[22px] border border-[rgba(110,211,255,0.12)] bg-[linear-gradient(180deg,rgba(4,24,39,0.78),rgba(3,18,30,0.9))] shadow-[inset_0_1px_0_rgba(122,224,255,0.04)]";
+const PROCEDURE_SECTION_LABEL_CLASS = "text-[0.72rem] uppercase tracking-[0.18em] text-[var(--ode-text-dim)]";
+const PROCEDURE_RICH_DOCUMENT_CLASS =
+  "space-y-4 break-words rounded-[10px] border border-[#d6dde6] bg-white px-6 py-6 shadow-[0_16px_36px_rgba(15,23,42,0.08)] [font-family:var(--ode-procedure-body-font-family)] [font-size:var(--ode-procedure-body-font-size)] [line-height:var(--ode-procedure-body-line-height)] [color:var(--ode-procedure-body-color)] [font-weight:var(--ode-procedure-body-font-weight)] [font-style:var(--ode-procedure-body-font-style)] [&_a]:cursor-pointer [&_a]:text-[#2563eb] [&_a]:underline [&_a]:decoration-[rgba(37,99,235,0.35)] [&_blockquote]:my-5 [&_blockquote]:rounded-[4px] [&_blockquote]:border-l-4 [&_blockquote]:border-[#cbd5e1] [&_blockquote]:bg-[#f8fafc] [&_blockquote]:px-5 [&_blockquote]:py-4 [&_blockquote]:text-[#334155] [&_h1]:my-4 [&_h1]:tracking-[-0.04em] [&_h1]:[font-family:var(--ode-procedure-heading-1-font-family)] [&_h1]:[font-size:var(--ode-procedure-heading-1-font-size)] [&_h1]:[line-height:var(--ode-procedure-heading-1-line-height)] [&_h1]:[color:var(--ode-procedure-heading-1-color)] [&_h1]:[font-weight:var(--ode-procedure-heading-1-font-weight)] [&_h1]:[font-style:var(--ode-procedure-heading-1-font-style)] [&_h2]:my-4 [&_h2]:tracking-[-0.03em] [&_h2]:[font-family:var(--ode-procedure-heading-2-font-family)] [&_h2]:[font-size:var(--ode-procedure-heading-2-font-size)] [&_h2]:[line-height:var(--ode-procedure-heading-2-line-height)] [&_h2]:[color:var(--ode-procedure-heading-2-color)] [&_h2]:[font-weight:var(--ode-procedure-heading-2-font-weight)] [&_h2]:[font-style:var(--ode-procedure-heading-2-font-style)] [&_h3]:my-3 [&_h3]:tracking-[-0.02em] [&_h3]:[font-family:var(--ode-procedure-heading-3-font-family)] [&_h3]:[font-size:var(--ode-procedure-heading-3-font-size)] [&_h3]:[line-height:var(--ode-procedure-heading-3-line-height)] [&_h3]:[color:var(--ode-procedure-heading-3-color)] [&_h3]:[font-weight:var(--ode-procedure-heading-3-font-weight)] [&_h3]:[font-style:var(--ode-procedure-heading-3-font-style)] [&_h4]:my-3 [&_h4]:tracking-[-0.01em] [&_h4]:[font-family:var(--ode-procedure-heading-4-font-family)] [&_h4]:[font-size:var(--ode-procedure-heading-4-font-size)] [&_h4]:[line-height:var(--ode-procedure-heading-4-line-height)] [&_h4]:[color:var(--ode-procedure-heading-4-color)] [&_h4]:[font-weight:var(--ode-procedure-heading-4-font-weight)] [&_h4]:[font-style:var(--ode-procedure-heading-4-font-style)] [&_h5]:my-2 [&_h5]:uppercase [&_h5]:tracking-[0.05em] [&_h5]:[font-family:var(--ode-procedure-heading-5-font-family)] [&_h5]:[font-size:var(--ode-procedure-heading-5-font-size)] [&_h5]:[line-height:var(--ode-procedure-heading-5-line-height)] [&_h5]:[color:var(--ode-procedure-heading-5-color)] [&_h5]:[font-weight:var(--ode-procedure-heading-5-font-weight)] [&_h5]:[font-style:var(--ode-procedure-heading-5-font-style)] [&_h6]:my-2 [&_h6]:uppercase [&_h6]:tracking-[0.08em] [&_h6]:[font-family:var(--ode-procedure-heading-6-font-family)] [&_h6]:[font-size:var(--ode-procedure-heading-6-font-size)] [&_h6]:[line-height:var(--ode-procedure-heading-6-line-height)] [&_h6]:[color:var(--ode-procedure-heading-6-color)] [&_h6]:[font-weight:var(--ode-procedure-heading-6-font-weight)] [&_h6]:[font-style:var(--ode-procedure-heading-6-font-style)] [&_hr]:my-6 [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-[#d6dde6] [&_hr[data-ode-page-break='true']]:my-10 [&_hr[data-ode-page-break='true']]:border-t-2 [&_hr[data-ode-page-break='true']]:border-dashed [&_hr[data-ode-page-break='true']]:border-[#38bdf8] [&_img[data-ode-link-type='image']]:my-3 [&_img[data-ode-link-type='image']]:inline-block [&_img[data-ode-link-type='image']]:h-auto [&_img[data-ode-link-type='image']]:max-h-none [&_img[data-ode-link-type='image']]:max-w-full [&_img[data-ode-link-type='image']]:rounded-[6px] [&_img[data-ode-link-type='image']]:border [&_img[data-ode-link-type='image']]:border-[#d6dde6] [&_img[data-ode-link-type='image']]:object-cover [&_ol]:ml-6 [&_ol]:list-decimal [&_ol]:space-y-2 [&_pre]:my-5 [&_pre]:overflow-x-auto [&_pre]:rounded-[8px] [&_pre]:border [&_pre]:border-[#cbd5e1] [&_pre]:bg-[#0f172a] [&_pre]:px-4 [&_pre]:py-3 [&_pre]:font-mono [&_pre]:text-[0.84rem] [&_pre]:leading-6 [&_pre]:text-[#e2e8f0] [&_table]:my-6 [&_table]:w-full [&_table]:border-collapse [&_table]:table-fixed [&_table]:overflow-hidden [&_table]:rounded-[6px] [&_table]:border [&_table]:border-[#cbd5e1] [&_td]:border [&_td]:border-[#cbd5e1] [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_th]:border [&_th]:border-[#cbd5e1] [&_th]:bg-[#e2e8f0] [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_ul]:ml-6 [&_ul]:list-disc [&_ul]:space-y-2";
+
 function getProcedureNodeLevel(nodeId: string, nodeLevelById: Map<string, number>, fallbackDepth: number): number {
   return nodeLevelById.get(nodeId) ?? Math.max(1, fallbackDepth + 1);
 }
@@ -557,6 +964,7 @@ function applyDraftToSectionTree(
         }
       : section.node,
     body: nextBody,
+    bodyHtml: isTarget ? null : section.bodyHtml,
     children: section.children.map((child) => applyDraftToSectionTree(child, nodeId, titleDraft, draft))
   };
 }
@@ -567,7 +975,9 @@ function buildSectionPath(nodeId: string, nodeById: Map<string, AppNode>, rootNo
   let current = nodeById.get(nodeId) ?? null;
 
   while (current) {
-    path.push(current);
+    if (!shouldHideNodeFromGenericUi(current)) {
+      path.push(current);
+    }
     if (current.id === rootNodeId) break;
     if (visited.has(current.id)) break;
     visited.add(current.id);
@@ -640,7 +1050,7 @@ function buildIndexedProcedureTitle(baseLabel: string, existingTitles: Iterable<
 
 function getSavedMistralApiKey(): string | null {
   try {
-    const raw = localStorage.getItem("odetool.ai.keys.v1");
+    const raw = localStorage.getItem(AI_KEYS_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { mistralKeys?: string[] };
     if (!parsed.mistralKeys || parsed.mistralKeys.length === 0) return null;
@@ -1205,9 +1615,9 @@ function renderInlineTokens(
         <button
           key={`${keyPrefix}-node-${matchIndex}`}
           type="button"
-          className={`inline border-none bg-transparent p-0 align-baseline text-left text-[0.98em] underline decoration-[rgba(110,211,255,0.55)] underline-offset-4 transition ${
+          className={`inline rounded-[8px] border-none bg-transparent px-[2px] py-[1px] align-baseline text-left text-[0.98em] underline decoration-[rgba(37,99,235,0.35)] underline-offset-4 transition hover:bg-[rgba(37,99,235,0.08)] ${
             linkedNode
-              ? "text-[var(--ode-accent)] hover:text-white"
+              ? "text-[#2563eb] hover:text-[#1d4ed8]"
               : "text-[#ffb0b0] decoration-[rgba(255,176,176,0.5)]"
           }`}
           onClick={(event) => {
@@ -1234,7 +1644,7 @@ function renderInlineTokens(
           href={href}
           target="_blank"
           rel="noreferrer"
-          className="text-[var(--ode-accent)] underline decoration-[rgba(110,211,255,0.55)] underline-offset-4 transition hover:text-white"
+          className="rounded-[8px] px-[2px] py-[1px] text-[#2563eb] underline decoration-[rgba(37,99,235,0.35)] underline-offset-4 transition hover:bg-[rgba(37,99,235,0.08)] hover:text-[#1d4ed8]"
           onClick={(event) => event.stopPropagation()}
         >
           {label}
@@ -1243,14 +1653,14 @@ function renderInlineTokens(
     }
   } else if (match[4] !== undefined) {
     nodes.push(
-      <strong key={`${keyPrefix}-bold-${matchIndex}`} className="font-semibold text-[var(--ode-text)]">
+      <strong key={`${keyPrefix}-bold-${matchIndex}`} className="font-semibold text-[#111827]">
         {match[4]}
       </strong>
     );
   } else {
     const italicValue = match[5] ?? match[6] ?? "";
     nodes.push(
-      <em key={`${keyPrefix}-italic-${matchIndex}`} className="italic text-[var(--ode-text)]">
+      <em key={`${keyPrefix}-italic-${matchIndex}`} className="italic text-[#111827]">
         {italicValue}
       </em>
     );
@@ -1274,7 +1684,7 @@ function renderProcedureBlocks(
 ) {
   const trimmed = text.trim();
   if (!trimmed) {
-    return showEmptyState ? <span className="italic text-[var(--ode-text-muted)]">{emptyLabel}</span> : null;
+    return showEmptyState ? <span className="italic text-[#64748b]">{emptyLabel}</span> : null;
   }
 
   return parseProcedureBlocks(text).map((block, blockIndex) => {
@@ -1284,8 +1694,8 @@ function renderProcedureBlocks(
           key={`block-${blockIndex}`}
           className={
             block.level === 2
-              ? "text-[1.45rem] font-semibold tracking-[-0.03em] text-[var(--ode-text)]"
-              : "text-[1.15rem] font-semibold tracking-[-0.02em] text-[var(--ode-text)]"
+              ? "max-w-[34ch] text-[1.5rem] font-semibold tracking-[-0.035em] text-[#0f172a]"
+              : "max-w-[42ch] text-[1.18rem] font-semibold tracking-[-0.022em] text-[#111827]"
           }
         >
           {renderInlineTokens(block.text, nodeById, onSelectNode, onReviewFile, `h-${blockIndex}`)}
@@ -1295,7 +1705,7 @@ function renderProcedureBlocks(
 
     if (block.type === "bullets") {
       return (
-        <ul key={`block-${blockIndex}`} className="ml-5 list-disc space-y-1 text-[1rem] leading-7 text-[var(--ode-text-dim)]">
+        <ul key={`block-${blockIndex}`} className="ml-5 max-w-[78ch] list-disc space-y-2 text-[1rem] leading-8 text-[#334155] marker:text-[#2563eb]">
           {block.items.map((item, itemIndex) => (
             <li key={`bullet-${blockIndex}-${itemIndex}`}>
               {renderInlineTokens(item, nodeById, onSelectNode, onReviewFile, `b-${blockIndex}-${itemIndex}`)}
@@ -1307,7 +1717,7 @@ function renderProcedureBlocks(
 
     if (block.type === "numbers") {
       return (
-        <ol key={`block-${blockIndex}`} className="ml-5 list-decimal space-y-1 text-[1rem] leading-7 text-[var(--ode-text-dim)]">
+        <ol key={`block-${blockIndex}`} className="ml-5 max-w-[78ch] list-decimal space-y-2 text-[1rem] leading-8 text-[#334155] marker:text-[#2563eb]">
           {block.items.map((item, itemIndex) => (
             <li key={`number-${blockIndex}-${itemIndex}`}>
               {renderInlineTokens(item, nodeById, onSelectNode, onReviewFile, `n-${blockIndex}-${itemIndex}`)}
@@ -1321,10 +1731,10 @@ function renderProcedureBlocks(
       return (
         <div
           key={`block-${blockIndex}`}
-          className="rounded-[20px] border border-[rgba(110,211,255,0.2)] bg-[linear-gradient(135deg,rgba(8,37,58,0.82),rgba(4,22,37,0.94))] px-4 py-4 text-[0.98rem] leading-7 text-[var(--ode-text)]"
+          className="max-w-[80ch] rounded-[18px] border border-[#d6dde6] bg-[#f8fafc] px-5 py-5 text-[0.98rem] leading-8 text-[#334155]"
         >
-          <div className="mb-2 text-[1.8rem] leading-none text-[var(--ode-accent)]">“</div>
-          <blockquote className="pl-1 italic">
+          <div className="mb-2 text-[1.8rem] leading-none text-[#2563eb]">&quot;</div>
+          <blockquote className="pl-1 italic text-[#334155]">
             {block.lines.map((line, lineIndex) => (
               <Fragment key={`quote-${blockIndex}-${lineIndex}`}>
                 {lineIndex > 0 ? <br /> : null}
@@ -1332,7 +1742,7 @@ function renderProcedureBlocks(
               </Fragment>
             ))}
           </blockquote>
-          <div className="mt-2 text-right text-[1.8rem] leading-none text-[var(--ode-accent)]">”</div>
+          <div className="mt-2 text-right text-[1.8rem] leading-none text-[#2563eb]">&quot;</div>
         </div>
       );
     }
@@ -1341,10 +1751,10 @@ function renderProcedureBlocks(
       return (
         <pre
           key={`block-${blockIndex}`}
-          className="overflow-x-auto rounded-[18px] border border-[rgba(110,211,255,0.18)] bg-[rgba(8,19,31,0.92)] px-4 py-3 font-mono text-[0.84rem] leading-6 text-[#cfeaff]"
+          className="max-w-full overflow-x-auto rounded-[16px] border border-[#cbd5e1] bg-[#0f172a] px-5 py-4 font-mono text-[0.84rem] leading-6 text-[#e2e8f0]"
         >
           {block.language ? (
-            <div className="mb-2 text-[0.72rem] uppercase tracking-[0.14em] text-[var(--ode-accent)]">
+            <div className="mb-2 text-[0.72rem] uppercase tracking-[0.14em] text-[#93c5fd]">
               {block.language}
             </div>
           ) : null}
@@ -1354,19 +1764,23 @@ function renderProcedureBlocks(
     }
 
     if (block.type === "divider") {
-      return <div key={`block-${blockIndex}`} className="my-2 border-t border-[rgba(110,211,255,0.22)]" />;
+      return <div key={`block-${blockIndex}`} className="my-5 border-t border-[#d6dde6]" />;
+    }
+
+    if (block.type === "page_break") {
+      return <div key={`block-${blockIndex}`} className="my-10 border-t-2 border-dashed border-[#38bdf8]" />;
     }
 
     if (block.type === "insight") {
       return (
         <div
           key={`block-${blockIndex}`}
-          className="rounded-[20px] border border-[rgba(110,211,255,0.2)] bg-[linear-gradient(135deg,rgba(10,47,74,0.84),rgba(6,26,42,0.92))] px-4 py-4"
+          className="max-w-[80ch] rounded-[18px] border border-[#d6dde6] bg-[#f8fafc] px-5 py-5"
         >
-          <div className="mb-2 text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-accent)]">
+          <div className="mb-2 text-[0.72rem] uppercase tracking-[0.16em] text-[#2563eb]">
             {getProcedureInsightDomainLabel(block.domain)}
           </div>
-          <div className="space-y-2 text-[0.94rem] leading-7 text-[var(--ode-text)]">
+          <div className="space-y-2 text-[0.94rem] leading-7 text-[#334155]">
             {block.lines.map((line, lineIndex) => (
               <p key={`insight-${blockIndex}-${lineIndex}`}>
                 {renderInlineTokens(line, nodeById, onSelectNode, onReviewFile, `i-${blockIndex}-${lineIndex}`)}
@@ -1378,7 +1792,7 @@ function renderProcedureBlocks(
     }
 
     return (
-      <p key={`block-${blockIndex}`} className="text-[1rem] leading-8 text-[var(--ode-text-dim)]">
+      <p key={`block-${blockIndex}`} className="max-w-[80ch] text-[1rem] leading-[2.05] tracking-[0.003em] text-[#334155]">
         {block.lines.map((line, lineIndex) => (
           <Fragment key={`line-${blockIndex}-${lineIndex}`}>
             {lineIndex > 0 ? <br /> : null}
@@ -1453,6 +1867,42 @@ export function ProcedureContentPanel({
     () => (rootNode ? findProcedureWorkspaceRootId(rootNode.id, globalNodeById, workspaceRootIdSet) : activeProjectRootId),
     [activeProjectRootId, globalNodeById, rootNode, workspaceRootIdSet]
   );
+  const workspaceRootNode = useMemo(
+    () => (workspaceRootId ? globalNodeById.get(workspaceRootId) ?? null : null),
+    [globalNodeById, workspaceRootId]
+  );
+  const workspaceTitleStyles = useMemo(
+    () => readProcedureSectionTitleLevelDefaults(workspaceRootNode),
+    [workspaceRootNode]
+  );
+  const workspaceBodyStyle = useMemo(() => readProcedureWorkspaceBodyStyle(workspaceRootNode), [workspaceRootNode]);
+  const workspaceHeadingStyles = useMemo(
+    () => readProcedureWorkspaceHeadingStyleDefaults(workspaceRootNode),
+    [workspaceRootNode]
+  );
+  const workspaceRichDocumentStyle = useMemo(
+    () => buildProcedureRichDocumentStyle(workspaceBodyStyle, workspaceHeadingStyles),
+    [workspaceBodyStyle, workspaceHeadingStyles]
+  );
+  const resolveWorkspaceSectionTitleStyle = (nodeId: string, fallbackDepth: number): ProcedureSectionTitleStyle => {
+    const level = Math.max(1, Math.min(6, getProcedureNodeLevel(nodeId, nodeLevelById, fallbackDepth))) as 1 | 2 | 3 | 4 | 5 | 6;
+    return buildProcedureSectionTitleStyleFromDefaults(
+      workspaceTitleStyles[level] ?? buildDefaultProcedureSectionTitleStyle(level)
+    );
+  };
+  const procedureScopedNumbering = useMemo(() => {
+    if (!rootNode) return scopedNumbering;
+    return buildScopedNumbering({
+      activeProjectRootId: rootNode.id,
+      numbering: scopedNumbering,
+      nodeById: globalNodeById,
+      byParent,
+      workspaceRootNumberingEnabled: true,
+      numberingMode: "tree_headings",
+      consumesTreeNumbering: (node) =>
+        !isReferenceNode(node) && !isHiddenExecutionTaskNode(node) && !shouldHideNodeFromGenericUi(node)
+    });
+  }, [byParent, globalNodeById, rootNode, scopedNumbering]);
 
   const editorNode = useMemo(() => {
     if (!rootNode) return null;
@@ -1522,7 +1972,7 @@ export function ProcedureContentPanel({
   const [titleSaveState, setTitleSaveState] = useState<SaveState>("idle");
   const [meaningSaveState, setMeaningSaveState] = useState<SaveState>("idle");
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [exportState, setExportState] = useState<"idle" | "pdf" | "docx">("idle");
+  const [exportState, setExportState] = useState<"idle" | "section-pdf" | "database-pdf" | "docx">("idle");
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [nodeLinkPickerOpen, setNodeLinkPickerOpen] = useState(false);
   const [nodeLinkQuery, setNodeLinkQuery] = useState("");
@@ -1561,8 +2011,8 @@ export function ProcedureContentPanel({
   } | null>(null);
 
   const procedureTree = useMemo(
-    () => (rootNode ? buildProcedureSectionTree(rootNode, rootNode.id, byParent, scopedNumbering) : null),
-    [rootNode, byParent, scopedNumbering]
+    () => (rootNode ? buildProcedureSectionTree(rootNode, rootNode.id, byParent, procedureScopedNumbering) : null),
+    [rootNode, byParent, procedureScopedNumbering]
   );
   const liveProcedureTree = useMemo(
     () => (procedureTree ? applyDraftToSectionTree(procedureTree, editorNode?.id ?? null, titleDraft, draft) : null),
@@ -2749,61 +3199,51 @@ export function ProcedureContentPanel({
   }, [chantierProfileDraft, deliverableDrafts, descriptionDraft, editorNode, isChantierEditor, meaningSaveState, objectiveDraft]);
 
   const handleExport = useCallback(
-    async (format: "pdf" | "docx") => {
+    async (format: "pdf" | "docx", scope: "section" | "database" = "database") => {
       if (!liveProcedureTree) return;
-      setExportState(format);
+      const exportRootSection = scope === "section" ? currentSection ?? liveProcedureTree : liveProcedureTree;
+      if (!exportRootSection) return;
+
+      setExportState(format === "docx" ? "docx" : scope === "section" ? "section-pdf" : "database-pdf");
       setExportMessage(null);
       setSaveError(null);
 
       try {
+        const { buildProcedureDocxBytes, buildProcedurePdfBytes } = await import("@/lib/procedureExport");
+        const exportLabels = {
+          generatedPrefix: t("procedure.export_generated"),
+          reportWorkspace: t("procedure.report_workspace"),
+          reportNode: t("procedure.report_node"),
+          statusOverview: t("procedure.status_overview"),
+          sections: t("procedure.status_sections"),
+          documented: t("procedure.status_documented"),
+          references: t("procedure.references"),
+          connections: t("procedure.connections"),
+          linkedNodes: t("procedure.linked_nodes"),
+          externalLinks: t("procedure.external_links"),
+          scheduled: t("procedure.status_scheduled"),
+          planned: t("procedure.status_planned"),
+          active: t("procedure.status_active"),
+          blocked: t("procedure.status_blocked"),
+          done: t("procedure.status_done")
+        };
         const bytes =
           format === "pdf"
-            ? buildProcedurePdfBytes({
-                rootSection: liveProcedureTree,
+            ? await buildProcedurePdfBytes({
+                rootSection: exportRootSection,
                 locale: navigator.language || "en-US",
-                labels: {
-                  generatedPrefix: t("procedure.export_generated"),
-                  reportWorkspace: t("procedure.report_workspace"),
-                  reportNode: t("procedure.report_node"),
-                  statusOverview: t("procedure.status_overview"),
-                  sections: t("procedure.status_sections"),
-                  documented: t("procedure.status_documented"),
-                  references: t("procedure.references"),
-                  connections: t("procedure.connections"),
-                  linkedNodes: t("procedure.linked_nodes"),
-                  externalLinks: t("procedure.external_links"),
-                  scheduled: t("procedure.status_scheduled"),
-                  planned: t("procedure.status_planned"),
-                  active: t("procedure.status_active"),
-                  blocked: t("procedure.status_blocked"),
-                  done: t("procedure.status_done")
-                }
+                labels: exportLabels
               })
             : await buildProcedureDocxBytes({
-                rootSection: liveProcedureTree,
+                rootSection: exportRootSection,
                 locale: navigator.language || "en-US",
-                labels: {
-                  generatedPrefix: t("procedure.export_generated"),
-                  reportWorkspace: t("procedure.report_workspace"),
-                  reportNode: t("procedure.report_node"),
-                  statusOverview: t("procedure.status_overview"),
-                  sections: t("procedure.status_sections"),
-                  documented: t("procedure.status_documented"),
-                  references: t("procedure.references"),
-                  connections: t("procedure.connections"),
-                  linkedNodes: t("procedure.linked_nodes"),
-                  externalLinks: t("procedure.external_links"),
-                  scheduled: t("procedure.status_scheduled"),
-                  planned: t("procedure.status_planned"),
-                  active: t("procedure.status_active"),
-                  blocked: t("procedure.status_blocked"),
-                  done: t("procedure.status_done")
-                }
+                labels: exportLabels
               });
-        const normalizedName = normalizeExportFileName(liveProcedureTree.node.name);
+        const normalizedName = normalizeExportFileName(exportRootSection.node.name);
+        const nameSuffix = format === "pdf" ? (scope === "section" ? "-section" : "-database") : "";
         const savedPath = await saveExportFile(
           format === "pdf" ? t("procedure.export_dialog_pdf_title") : t("procedure.export_dialog_word_title"),
-          `${normalizedName}.${format === "pdf" ? "pdf" : "docx"}`,
+          `${normalizedName}${nameSuffix}.${format === "pdf" ? "pdf" : "docx"}`,
           format === "pdf" ? t("procedure.export_dialog_pdf_filter") : t("procedure.export_dialog_word_filter"),
           format === "pdf" ? "pdf" : "docx",
           Array.from(bytes)
@@ -2817,7 +3257,63 @@ export function ProcedureContentPanel({
         setExportState("idle");
       }
     },
-    [liveProcedureTree, t]
+    [currentSection, liveProcedureTree, t]
+  );
+
+  const handleRichPreviewDocumentClick = useCallback(
+    (event: ReactMouseEvent<HTMLElement>) => {
+      const target = event.target as HTMLElement | null;
+      const linkedNodeElement = target?.closest('[data-ode-link-type="node"]') as HTMLElement | null;
+      if (linkedNodeElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        const nodeId = linkedNodeElement.dataset.nodeId?.trim() || "";
+        const linkedNode = nodeId ? globalNodeById.get(nodeId) ?? null : null;
+        if (!linkedNode) return;
+        if (linkedNode.type === "file") {
+          onReviewFile(linkedNode.id);
+          return;
+        }
+        void onSelectNode(linkedNode.id);
+        return;
+      }
+
+      const linkedImageElement = target?.closest('[data-ode-link-type="image"]') as HTMLElement | null;
+      if (linkedImageElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        const nodeId = linkedImageElement.dataset.nodeId?.trim() || "";
+        if (nodeId) {
+          onReviewFile(nodeId);
+        }
+        return;
+      }
+
+      const appLink = target?.closest('a[data-ode-link-type="app"]') as HTMLAnchorElement | null;
+      if (appLink) {
+        event.preventDefault();
+        event.stopPropagation();
+        const payload = decodeProcedureAppLinkPayload(appLink.getAttribute("href") ?? "");
+        if (!payload) return;
+        if (payload.kind === "local_path") {
+          void openLocalPath(payload.target);
+        } else {
+          void openExternalUrl(payload.target);
+        }
+        return;
+      }
+
+      const websiteLink = target?.closest('a[data-ode-link-type="website"]') as HTMLAnchorElement | null;
+      if (websiteLink) {
+        event.preventDefault();
+        event.stopPropagation();
+        const href = websiteLink.getAttribute("href")?.trim() || "";
+        if (href) {
+          void openExternalUrl(href);
+        }
+      }
+    },
+    [globalNodeById, onReviewFile, onSelectNode]
   );
 
   const handleTextareaKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
@@ -2901,11 +3397,11 @@ export function ProcedureContentPanel({
   };
 
   const minimalActionButtonClass =
-    "inline-flex items-center justify-center rounded-full border border-[var(--ode-border)] bg-[rgba(5,29,46,0.82)] px-4 py-2.5 text-[0.84rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]";
+    "inline-flex items-center justify-center gap-2 rounded-[16px] border border-[rgba(110,211,255,0.16)] bg-[linear-gradient(180deg,rgba(5,29,46,0.88),rgba(3,21,34,0.96))] px-4 py-2.5 text-[0.82rem] font-medium text-[var(--ode-text-dim)] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] transition hover:border-[rgba(120,225,255,0.28)] hover:bg-[rgba(8,38,60,0.92)] hover:text-[var(--ode-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(120,225,255,0.2)]";
   const labeledActionButtonClass =
-    "inline-flex h-11 items-center gap-2 rounded-full border border-[var(--ode-border)] bg-[rgba(5,29,46,0.82)] px-4 text-[0.88rem] text-[var(--ode-text)] transition hover:border-[var(--ode-border-strong)] hover:bg-[rgba(8,38,60,0.9)]";
+    "inline-flex h-11 items-center gap-2 rounded-[16px] border border-[rgba(110,211,255,0.16)] bg-[linear-gradient(180deg,rgba(5,29,46,0.9),rgba(3,21,34,0.98))] px-4 text-[0.86rem] text-[var(--ode-text)] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] transition hover:border-[rgba(120,225,255,0.28)] hover:bg-[rgba(8,38,60,0.92)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(120,225,255,0.2)]";
   const primaryLabeledActionButtonClass =
-    "ode-primary-btn inline-flex h-11 items-center gap-2 px-4 text-[0.88rem]";
+    "ode-primary-btn inline-flex h-11 items-center gap-2 rounded-[16px] px-4 text-[0.86rem] shadow-[0_10px_24px_rgba(13,70,105,0.28)]";
   const iconActionButtonClass = `${minimalActionButtonClass} h-10 w-10 px-0`;
   const tallIconActionButtonClass = `${minimalActionButtonClass} h-11 w-11 px-0`;
   const renderTooltipIconButton = (
@@ -2957,14 +3453,15 @@ export function ProcedureContentPanel({
   );
   const allNodeLinkCandidates = useMemo(() => {
     return allNodes
-      .filter((node) => node.id !== editorNode?.id)
+      .filter((node) => node.id !== editorNode?.id && !shouldHideNodeFromGenericUi(node))
       .map<ProcedureNodeLinkCandidate>((node) => {
         const candidateWorkspaceRootId = nodeProjectRootById.get(node.id) ?? null;
+        const label = getNodeDisplayName(node);
         const workspaceName = candidateWorkspaceRootId
-          ? (projectByRootId.get(candidateWorkspaceRootId)?.name ?? node.name)
-          : node.name;
+          ? (projectByRootId.get(candidateWorkspaceRootId)?.name ?? label)
+          : label;
         const pathLabel = buildSectionPath(node.id, globalNodeById, candidateWorkspaceRootId ?? node.id)
-          .map((item) => item.name)
+          .map((item) => getNodeDisplayName(item))
           .join(" / ");
         return {
           node,
@@ -2972,7 +3469,7 @@ export function ProcedureContentPanel({
           workspaceName,
           pathLabel,
           isCurrentWorkspace: candidateWorkspaceRootId === workspaceRootId,
-          searchText: `${node.name} ${pathLabel} ${workspaceName} ${node.type}`.toLowerCase()
+          searchText: `${label} ${pathLabel} ${workspaceName} ${node.type}`.toLowerCase()
         };
       })
       .sort((left, right) => {
@@ -3134,7 +3631,8 @@ export function ProcedureContentPanel({
         start: draftRef.current.length,
         end: draftRef.current.length
       };
-      const label = sanitizeProcedureLinkLabel(candidate.node.name, candidate.node.name);
+      const displayName = getNodeDisplayName(candidate.node);
+      const label = sanitizeProcedureLinkLabel(displayName, displayName);
       const replacement = `[${label}](ode://node/${encodeURIComponent(candidate.node.id)})`;
       replaceDraftRange(selection.start, selection.end, replacement);
     },
@@ -3144,7 +3642,7 @@ export function ProcedureContentPanel({
   const insertMentionNodeLink = useCallback(
     (candidate: ProcedureNodeLinkCandidate) => {
       if (!mentionState) return;
-      const replacement = `[${candidate.node.name}](ode://node/${encodeURIComponent(candidate.node.id)})`;
+      const replacement = `[${getNodeDisplayName(candidate.node)}](ode://node/${encodeURIComponent(candidate.node.id)})`;
       replaceDraftRange(mentionState.start, mentionState.end, replacement);
     },
     [mentionState, replaceDraftRange]
@@ -3319,9 +3817,9 @@ export function ProcedureContentPanel({
     const compact = options?.compact ?? false;
 
     return (
-      <div className="space-y-3">
+      <div className="space-y-4">
         {options?.title ? (
-          <div className="text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-text-dim)]">{options.title}</div>
+          <div className={PROCEDURE_SECTION_LABEL_CLASS}>{options.title}</div>
         ) : null}
         <div className={compact ? "space-y-2" : "grid gap-3 sm:grid-cols-2"}>
           {references.map((reference) => {
@@ -3331,10 +3829,10 @@ export function ProcedureContentPanel({
             return (
               <div
                 key={reference.id}
-                className={`flex items-center gap-3 rounded-[18px] border px-3 py-3 transition ${
+                className={`flex items-center gap-3 rounded-[22px] border px-4 py-3.5 shadow-[inset_0_1px_0_rgba(122,224,255,0.04)] transition ${
                   isSelected
-                    ? "border-[var(--ode-accent)] bg-[rgba(38,157,214,0.18)] text-[var(--ode-text)]"
-                    : "border-[var(--ode-border)] bg-[rgba(4,28,45,0.82)] text-[var(--ode-text-dim)]"
+                    ? "border-[rgba(120,225,255,0.3)] bg-[linear-gradient(135deg,rgba(18,73,108,0.5),rgba(5,31,48,0.92))] text-[var(--ode-text)]"
+                    : "border-[rgba(110,211,255,0.12)] bg-[linear-gradient(180deg,rgba(4,28,45,0.82),rgba(3,20,33,0.92))] text-[var(--ode-text-dim)] hover:border-[rgba(110,211,255,0.22)] hover:bg-[rgba(6,34,53,0.94)]"
                 }`}
               >
                 <button
@@ -4313,6 +4811,9 @@ export function ProcedureContentPanel({
     options?: { compactReferences?: boolean; showHeadingCard?: boolean }
   ) => {
     const toneStyle = buildProcedureToneStyle(nodeLevel);
+    const sectionTitleStyle = resolveWorkspaceSectionTitleStyle(section.node.id, section.depth);
+    const sectionTitleBoxedInputStyle = buildProcedureSectionTitleInputStyle(sectionTitleStyle, { boxed: true });
+    const sectionTitleInlineInputStyle = buildProcedureSectionTitleInputStyle(sectionTitleStyle);
     const combinedSaveState: SaveState =
       bodySaveState === "error" || titleSaveState === "error"
         ? "error"
@@ -4323,7 +4824,7 @@ export function ProcedureContentPanel({
             : bodySaveState === "saved" || titleSaveState === "saved"
               ? "saved"
               : "idle";
-  const saveStateLabel =
+    const saveStateLabel =
       combinedSaveState === "saving"
         ? t("procedure.save_saving")
         : combinedSaveState === "error"
@@ -4331,16 +4832,29 @@ export function ProcedureContentPanel({
           : combinedSaveState === "dirty"
             ? t("procedure.save_pending")
             : t("procedure.save_saved");
-  const previewNodes = renderProcedureBlocks(
-    draft,
-    globalNodeById,
-    onSelectNode,
-    onReviewFile,
-    t("procedure.preview_empty")
-  );
+    const hasSavedRichPreview =
+      !systemFocusedMode &&
+      typeof section.bodyHtml === "string" &&
+      section.bodyHtml.trim().length > 0 &&
+      draft === section.body;
+      const previewBody = hasSavedRichPreview ? (
+        <div
+          className={PROCEDURE_RICH_DOCUMENT_CLASS}
+          style={workspaceRichDocumentStyle}
+          onClick={handleRichPreviewDocumentClick}
+          dangerouslySetInnerHTML={{ __html: section.bodyHtml ?? "" }}
+        />
+      ) : (
+        <div
+          className={PROCEDURE_RICH_DOCUMENT_CLASS}
+          style={workspaceRichDocumentStyle}
+        >
+        {renderProcedureBlocks(draft, globalNodeById, onSelectNode, onReviewFile, t("procedure.preview_empty"))}
+      </div>
+    );
 
     return (
-      <div className="space-y-5" data-ode-procedure-ignore-context="true" style={toneStyle}>
+      <div className="space-y-6" data-ode-procedure-ignore-context="true" style={toneStyle}>
         {!systemFocusedMode && selectedReferenceId ? (
           <div className="rounded-[18px] border border-[var(--ode-border)] bg-[rgba(5,30,47,0.86)] px-4 py-3 text-[0.84rem] text-[var(--ode-text-dim)]">
             {t("procedure.editor_selected_file")}
@@ -4348,44 +4862,69 @@ export function ProcedureContentPanel({
         ) : null}
 
         <div
-          className="rounded-[28px] border px-5 py-5 shadow-[0_16px_48px_rgba(0,0,0,0.16)]"
+          className="relative overflow-hidden rounded-[32px] border px-5 py-5 shadow-[0_24px_72px_rgba(0,0,0,0.22)] lg:px-6 lg:py-6"
           style={{
             borderColor: "var(--ode-procedure-border)",
-            background: "linear-gradient(180deg,rgba(4,24,39,0.96),rgba(2,18,31,0.98))"
+            background: "linear-gradient(180deg,rgba(4,24,39,0.97),rgba(2,18,31,0.99))"
           }}
         >
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(132,229,255,0.5),transparent)]"
+          />
           {systemFocusedMode ? (
-            <div className="space-y-4">
-              <label className="block">
-                <div className="mb-2 text-[0.78rem] uppercase tracking-[0.14em] text-[var(--ode-text-dim)]">
-                  {t("procedure.node_title")}
+            <div className="space-y-5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="min-w-0 flex-1">
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex rounded-full border border-[var(--ode-procedure-chip-border)] bg-[var(--ode-procedure-chip-bg)] px-3 py-1 text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-procedure-accent)]">
+                      {t("procedure.node_title")}
+                    </span>
+                    <span className="inline-flex rounded-full border border-[rgba(110,211,255,0.14)] bg-[rgba(6,32,50,0.78)] px-3 py-1 text-[0.72rem] uppercase tracking-[0.14em] text-[var(--ode-text-dim)]">
+                      {saveStateLabel}
+                    </span>
+                    {section.headingNumber ? (
+                      <span className="inline-flex rounded-full border border-[var(--ode-procedure-chip-border)] bg-[var(--ode-procedure-chip-bg)] px-3 py-1 text-[0.72rem] uppercase tracking-[0.14em] text-[var(--ode-procedure-accent)]">
+                        {section.headingNumber}
+                      </span>
+                    ) : null}
+                  </div>
+                  <label className="block">
+                    <input
+                      className="ode-input h-[4.5rem] w-full rounded-[22px] border-[rgba(120,225,255,0.18)] bg-[linear-gradient(180deg,rgba(4,23,38,0.92),rgba(3,18,30,0.98))] px-5 text-[clamp(1.4rem,2.9vw,2.5rem)] font-semibold tracking-[-0.035em] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)]"
+                      style={sectionTitleBoxedInputStyle}
+                      value={titleDraft}
+                      onChange={(event) => setTitleDraft(event.target.value)}
+                      onContextMenu={(event) => {
+                        void openProcedureTextEditContextMenu(event, {
+                          getValue: () => titleDraft,
+                          setValue: (value) => setTitleDraft(value)
+                        });
+                      }}
+                      onBlur={() => {
+                        void saveTitleNow();
+                      }}
+                      onKeyDown={handleTitleKeyDown}
+                      placeholder={t("procedure.node_title_placeholder")}
+                    />
+                  </label>
+                  {editorPathLabel ? (
+                    <div className="mt-3 max-w-[84ch] text-[0.86rem] leading-6 text-[var(--ode-text-muted)]">
+                      {editorPathLabel}
+                    </div>
+                  ) : null}
                 </div>
-                <input
-                  className="ode-input h-14 w-full rounded-[18px] px-4 text-[1.05rem] font-semibold tracking-tight"
-                  value={titleDraft}
-                  onChange={(event) => setTitleDraft(event.target.value)}
-                  onContextMenu={(event) => {
-                    void openProcedureTextEditContextMenu(event, {
-                      getValue: () => titleDraft,
-                      setValue: (value) => setTitleDraft(value)
-                    });
-                  }}
-                  onBlur={() => {
-                    void saveTitleNow();
-                  }}
-                  onKeyDown={handleTitleKeyDown}
-                  placeholder={t("procedure.node_title_placeholder")}
-                />
-              </label>
+              </div>
             </div>
           ) : (
-            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[rgba(110,211,255,0.14)] pb-4">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[rgba(110,211,255,0.14)] pb-5">
               <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
                 <div className="text-[0.72rem] uppercase tracking-[0.16em]" style={{ color: "var(--ode-procedure-accent)" }}>
                   {t("desktop.view_procedure")}
                 </div>
                 <input
                   className="min-w-[220px] flex-1 border-none bg-transparent p-0 text-[clamp(1.2rem,2.2vw,1.8rem)] font-semibold tracking-tight text-[var(--ode-text)] outline-none placeholder:text-[var(--ode-text-muted)]"
+                  style={sectionTitleInlineInputStyle}
                   value={titleDraft}
                   onChange={(event) => setTitleDraft(event.target.value)}
                   onContextMenu={(event) => {
@@ -4426,17 +4965,31 @@ export function ProcedureContentPanel({
                   type="button"
                   className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
                   onClick={() => {
-                    void handleExport("pdf");
+                    void handleExport("pdf", "section");
                   }}
                   disabled={exportState !== "idle"}
                 >
-                  {exportState === "pdf" ? t("procedure.export_pdf_busy") : t("procedure.export_pdf")}
+                  {exportState === "section-pdf"
+                    ? t("procedure.export_section_pdf_busy")
+                    : t("procedure.export_section_pdf")}
                 </button>
                 <button
                   type="button"
                   className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
                   onClick={() => {
-                    void handleExport("docx");
+                    void handleExport("pdf", "database");
+                  }}
+                  disabled={exportState !== "idle"}
+                >
+                  {exportState === "database-pdf"
+                    ? t("procedure.export_database_pdf_busy")
+                    : t("procedure.export_database_pdf")}
+                </button>
+                <button
+                  type="button"
+                  className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
+                  onClick={() => {
+                    void handleExport("docx", "database");
                   }}
                   disabled={exportState !== "idle"}
                 >
@@ -4452,7 +5005,8 @@ export function ProcedureContentPanel({
 
           {systemFocusedMode ? (
             <>
-              <div className="mt-4 flex flex-wrap gap-3">
+              <div className={`mt-5 p-2 ${PROCEDURE_DOSSIER_INSET_CLASS}`}>
+                <div className="flex flex-wrap gap-2">
                 {([
                   { key: "description" as const, label: t("procedure.node_description") },
                   ...(showChantierSteeringTab ? [{ key: "steering" as const, label: chantierCopy.steeringTab }] : []),
@@ -4463,10 +5017,10 @@ export function ProcedureContentPanel({
                     <button
                       key={`system-tab-${tab.key}`}
                       type="button"
-                      className={`rounded-full border px-4 py-2 text-[0.82rem] uppercase tracking-[0.12em] transition ${
+                      className={`rounded-[16px] border px-4 py-2.5 text-[0.8rem] uppercase tracking-[0.14em] shadow-[inset_0_1px_0_rgba(128,226,255,0.03)] transition ${
                         isActive
-                          ? "border-[var(--ode-accent)] bg-[rgba(38,157,214,0.18)] text-[var(--ode-text)]"
-                          : "border-[rgba(110,211,255,0.18)] bg-[rgba(5,29,46,0.54)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+                          ? "border-[rgba(120,225,255,0.3)] bg-[linear-gradient(180deg,rgba(16,72,106,0.58),rgba(8,39,60,0.9))] text-[var(--ode-text)]"
+                          : "border-[rgba(110,211,255,0.12)] bg-[rgba(5,29,46,0.52)] text-[var(--ode-text-dim)] hover:border-[rgba(120,225,255,0.22)] hover:text-[var(--ode-text)]"
                       }`}
                       onClick={() => setSystemTab(tab.key)}
                     >
@@ -4474,13 +5028,14 @@ export function ProcedureContentPanel({
                     </button>
                   );
                 })}
+                </div>
               </div>
 
-              <div className="mt-4 rounded-[22px] border border-[rgba(110,211,255,0.16)] bg-[rgba(6,29,46,0.62)] px-4 py-4">
+              <div className={`mt-5 px-5 py-5 lg:px-6 ${PROCEDURE_DOSSIER_PANEL_CLASS}`}>
                 {systemTab === "description" ? (
                   <div className="space-y-4">
                     <textarea
-                      className="ode-input min-h-[132px] w-full resize-y rounded-[18px] px-4 py-3 text-[0.94rem] leading-7"
+                      className="ode-input min-h-[220px] w-full resize-y rounded-[22px] border-[rgba(110,211,255,0.14)] bg-[rgba(4,22,36,0.88)] px-5 py-4 text-[0.98rem] leading-8 shadow-[inset_0_1px_0_rgba(128,226,255,0.04)]"
                       value={descriptionDraft}
                       onChange={(event) => setDescriptionDraft(event.target.value)}
                       onBlur={() => {
@@ -5039,75 +5594,75 @@ export function ProcedureContentPanel({
               <div className="mt-4 rounded-[22px] border border-[rgba(110,211,255,0.16)] bg-[rgba(6,29,46,0.62)] px-4 py-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-text-dim)]">
+                    <div className={PROCEDURE_SECTION_LABEL_CLASS}>
                       {t("procedure.preview_title")}
                     </div>
                   </div>
                 </div>
                 <div
-                  className="space-y-3 rounded-[18px] border border-[rgba(110,211,255,0.12)] bg-[linear-gradient(180deg,rgba(4,24,39,0.72),rgba(3,18,30,0.88))] px-4 py-4"
+                  className="rounded-[24px] border border-[rgba(148,163,184,0.24)] bg-[linear-gradient(180deg,#dbe4ee,#eef3f8)] px-4 py-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.28)]"
                   onClick={() => {
                     draftTextareaRef.current?.focus();
                   }}
                 >
-                  {previewNodes}
+                  {previewBody}
                 </div>
               </div>
 
-              <div className="mt-4 rounded-[20px] border border-[rgba(110,211,255,0.14)] bg-[rgba(5,29,46,0.56)] px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-text-dim)]">
-                      {t("procedure.editor_toolbar")}
-                    </div>
+              <div className={`mt-4 px-4 py-4 ${PROCEDURE_DOSSIER_PANEL_CLASS}`}>
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div className="min-w-0">
+                    <div className={PROCEDURE_SECTION_LABEL_CLASS}>{t("procedure.editor_toolbar")}</div>
                   </div>
-                  <button
-                    ref={nodeLinkButtonRef}
-                    type="button"
-                    className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
-                    onMouseDown={preserveEditorSelection}
-                    onClick={() => {
-                      openNodeLinkPicker();
-                    }}
-                  >
-                    <NodeLinkGlyphSmall />
-                    <span>{t("procedure.format_node_link")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
-                    onMouseDown={preserveEditorSelection}
-                    onClick={openExternalLinkDialog}
-                  >
-                    {t("procedure.format_link")}
-                  </button>
-                  <button
-                    type="button"
-                    className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
-                    onMouseDown={preserveEditorSelection}
-                    onClick={insertQuoteBlock}
-                  >
-                    {t("procedure.insert_quote")}
-                  </button>
-                  <button
-                    type="button"
-                    className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
-                    onMouseDown={preserveEditorSelection}
-                    onClick={insertDividerBlock}
-                  >
-                    {t("procedure.insert_divider")}
-                  </button>
-                  {onOpenAssistant ? (
-                    <button type="button" className="ode-primary-btn h-10 px-4" onClick={onOpenAssistant}>
-                      {t("procedure.ask_ai")}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      ref={nodeLinkButtonRef}
+                      type="button"
+                      className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
+                      onMouseDown={preserveEditorSelection}
+                      onClick={() => {
+                        openNodeLinkPicker();
+                      }}
+                    >
+                      <NodeLinkGlyphSmall />
+                      <span>{t("procedure.format_node_link")}</span>
                     </button>
-                  ) : null}
+                    <button
+                      type="button"
+                      className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
+                      onMouseDown={preserveEditorSelection}
+                      onClick={openExternalLinkDialog}
+                    >
+                      {t("procedure.format_link")}
+                    </button>
+                    <button
+                      type="button"
+                      className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
+                      onMouseDown={preserveEditorSelection}
+                      onClick={insertQuoteBlock}
+                    >
+                      {t("procedure.insert_quote")}
+                    </button>
+                    <button
+                      type="button"
+                      className={`${minimalActionButtonClass} h-10 px-4 text-[0.8rem]`}
+                      onMouseDown={preserveEditorSelection}
+                      onClick={insertDividerBlock}
+                    >
+                      {t("procedure.insert_divider")}
+                    </button>
+                    {onOpenAssistant ? (
+                      <button type="button" className="ode-primary-btn h-10 rounded-[16px] px-4" onClick={onOpenAssistant}>
+                        {t("procedure.ask_ai")}
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
               </div>
 
               {nodeLinkPickerOpen ? (
-                <div ref={nodeLinkPickerRef} className="mt-4 space-y-4 rounded-[20px] border border-[var(--ode-border)] bg-[rgba(5,29,46,0.72)] px-4 py-4">
-                  <div className="text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-text-dim)]">
+                <div ref={nodeLinkPickerRef} className={`mt-4 space-y-4 px-4 py-4 ${PROCEDURE_DOSSIER_PANEL_CLASS}`}>
+                  <div className={PROCEDURE_SECTION_LABEL_CLASS}>
                     {t("procedure.node_link_picker_title")}
                   </div>
                   <input
@@ -5132,7 +5687,7 @@ export function ProcedureContentPanel({
                               className="flex w-full flex-col rounded-[18px] border border-[var(--ode-border)] bg-[rgba(5,29,46,0.76)] px-4 py-3 text-left transition hover:border-[var(--ode-border-strong)] hover:bg-[rgba(7,37,58,0.84)]"
                               onClick={() => insertNodeLink(candidate)}
                             >
-                              <span className="ode-wrap-text text-[0.92rem] font-medium text-[var(--ode-text)]">{candidate.node.name}</span>
+                              <span className="ode-wrap-text text-[0.92rem] font-medium text-[var(--ode-text)]">{getNodeDisplayName(candidate.node)}</span>
                               <span className="ode-wrap-text mt-1 text-[0.8rem] leading-5 text-[var(--ode-text-muted)]">{candidate.pathLabel}</span>
                             </button>
                           ))
@@ -5158,7 +5713,7 @@ export function ProcedureContentPanel({
                               onClick={() => insertNodeLink(candidate)}
                             >
                               <span className="ode-wrap-text text-[0.92rem] font-medium text-[var(--ode-text)]">
-                                {candidate.node.name}
+                                {getNodeDisplayName(candidate.node)}
                                 <span className="ml-2 text-[0.76rem] uppercase tracking-[0.14em] text-[var(--ode-text-muted)]">
                                   {candidate.workspaceName}
                                 </span>
@@ -5179,13 +5734,13 @@ export function ProcedureContentPanel({
 
               <div className="mt-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="text-[0.72rem] uppercase tracking-[0.16em] text-[var(--ode-text-dim)]">
+                  <div className={PROCEDURE_SECTION_LABEL_CLASS}>
                     {t("procedure.editor_title")}
                   </div>
                 </div>
                 <textarea
                   ref={draftTextareaRef}
-                  className="ode-input ode-procedure-editor-textarea min-h-[360px] w-full resize-y rounded-[22px] px-5 py-4 text-[0.98rem] leading-8"
+                  className="ode-input ode-procedure-editor-textarea min-h-[420px] w-full resize-y rounded-[26px] border-[rgba(110,211,255,0.14)] bg-[linear-gradient(180deg,rgba(4,22,36,0.92),rgba(3,18,30,0.98))] px-6 py-5 text-[1rem] leading-[2.05] tracking-[0.003em] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)]"
                   value={draft}
                   onChange={(event) => {
                     draftRef.current = event.target.value;
@@ -5265,7 +5820,7 @@ export function ProcedureContentPanel({
                           }}
                           onClick={() => insertMentionNodeLink(candidate)}
                         >
-                          <span className="ode-wrap-text text-[0.92rem] font-medium text-[var(--ode-text)]">{candidate.node.name}</span>
+                          <span className="ode-wrap-text text-[0.92rem] font-medium text-[var(--ode-text)]">{getNodeDisplayName(candidate.node)}</span>
                           <span className="ode-wrap-text mt-1 text-[0.8rem] leading-5 text-[var(--ode-text-muted)]">
                             {candidate.workspaceName}
                             {candidate.pathLabel ? ` / ${candidate.pathLabel}` : ""}
@@ -5314,22 +5869,29 @@ export function ProcedureContentPanel({
 
   const renderSectionHeadingCard = (section: ProcedureSectionData, nodeLevel: number, label: string, hint: string) => {
     const toneStyle = buildProcedureToneStyle(nodeLevel);
+    const sectionTitleStyle = resolveWorkspaceSectionTitleStyle(section.node.id, section.depth);
+    const sectionTitleInlineInputStyle = buildProcedureSectionTitleInputStyle(sectionTitleStyle);
     return (
       <section
         data-ode-node-id={section.node.id}
-        className="rounded-[28px] border px-5 py-5 shadow-[0_16px_48px_rgba(0,0,0,0.18)]"
+        className="relative overflow-hidden rounded-[32px] border px-5 py-5 shadow-[0_24px_64px_rgba(0,0,0,0.22)]"
         style={{
           ...toneStyle,
           borderColor: "var(--ode-procedure-border)",
-          background: "linear-gradient(180deg,rgba(4,25,40,0.96),rgba(3,20,33,0.94))"
+          background: "linear-gradient(180deg,rgba(4,25,40,0.97),rgba(3,20,33,0.96))"
         }}
       >
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(132,229,255,0.5),transparent)]"
+        />
         <div className="text-[0.72rem] uppercase tracking-[0.16em]" style={{ color: "var(--ode-procedure-accent)" }}>
           {label}
         </div>
-        <div className="mt-2 max-w-[54ch] text-[0.9rem] leading-6 text-[var(--ode-text-muted)]">{hint}</div>
+        <div className="mt-2 max-w-[60ch] text-[0.92rem] leading-7 text-[var(--ode-text-muted)]">{hint}</div>
         <input
-          className="mt-5 min-w-0 w-full border-none bg-transparent p-0 text-[clamp(1.6rem,3vw,2.3rem)] font-semibold tracking-tight text-[var(--ode-text)] outline-none placeholder:text-[var(--ode-text-muted)]"
+          className="mt-6 min-w-0 w-full border-none bg-transparent p-0 text-[clamp(1.7rem,3vw,2.5rem)] font-semibold tracking-[-0.035em] text-[var(--ode-text)] outline-none placeholder:text-[var(--ode-text-muted)]"
+          style={sectionTitleInlineInputStyle}
           value={titleDraft}
           onChange={(event) => setTitleDraft(event.target.value)}
           onContextMenu={(event) => {
@@ -5376,7 +5938,7 @@ export function ProcedureContentPanel({
 
   return (
     <div
-      className="min-h-0 flex-1 overflow-hidden bg-[linear-gradient(180deg,rgba(3,22,36,0.96),rgba(2,16,27,0.98))]"
+      className="relative min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_top,rgba(21,77,113,0.16),transparent_30%),linear-gradient(180deg,rgba(3,22,36,0.97),rgba(2,16,27,0.99))]"
       data-ode-surface="procedure"
       data-ode-procedure-surface="true"
       onMouseDownCapture={onActivateProcedureSurface}
@@ -5780,10 +6342,14 @@ export function ProcedureContentPanel({
           onClearAll={clearAiMemoryEntries}
         />
       ) : null}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-28 bg-[linear-gradient(180deg,rgba(117,224,255,0.05),transparent)]"
+      />
       <div className="flex h-full min-h-0 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div
-            className="mx-auto flex max-w-[1180px] flex-col gap-5 px-4 py-5 lg:px-6"
+            className="mx-auto flex max-w-[1280px] flex-col gap-6 px-4 py-6 lg:px-8"
             onContextMenu={(event) => {
               if (shouldIgnoreProcedureNodeContextMenu(event.target)) return;
               onOpenSurfaceContextMenu(event);
@@ -5791,18 +6357,22 @@ export function ProcedureContentPanel({
           >
             <section
               data-ode-node-id={currentSection?.node.id ?? editorNode.id}
-              className="min-w-0 rounded-[34px] border p-5 lg:p-6"
+              className="relative min-w-0 overflow-hidden rounded-[38px] border p-5 lg:p-7"
               style={{
                 ...currentToneStyle,
                 borderColor: "var(--ode-procedure-border)",
-                background: "linear-gradient(180deg,rgba(4,24,39,0.96),rgba(2,18,31,0.98))",
-                boxShadow: "0 18px 60px rgba(0,0,0,0.2)"
+                background: "linear-gradient(180deg,rgba(4,24,39,0.97),rgba(2,18,31,0.99))",
+                boxShadow: "0 24px 72px rgba(0,0,0,0.24)"
               }}
               onContextMenu={(event) => {
                 if (shouldIgnoreProcedureNodeContextMenu(event.target)) return;
                 onOpenNodeContextMenu(event, currentSection?.node.id ?? editorNode.id);
               }}
             >
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-x-12 top-0 h-px bg-[linear-gradient(90deg,transparent,rgba(132,229,255,0.55),transparent)]"
+              />
               {renderInlineSectionEditor(currentSection ?? liveProcedureTree, currentSectionLevel, {
                 compactReferences: true
               })}

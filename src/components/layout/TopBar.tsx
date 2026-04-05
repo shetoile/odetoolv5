@@ -1,25 +1,30 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { TranslationParams } from "@/lib/i18n";
+import { WorkspaceRootGlyphSmall } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { WindowControls } from "@/components/layout/WindowControls";
+import { APP_DISPLAY_NAME } from "@/lib/appIdentity";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
 type WorkspaceMode = "grid" | "timeline";
+type WorkspaceFocusMode = "structure" | "data" | "execution";
 
 interface TopBarProps {
   t: TranslateFn;
   workspaceMode: WorkspaceMode;
+  workspaceFocusMode: WorkspaceFocusMode;
   documentationModeActive: boolean;
+  libraryModeActive: boolean;
   workspaceSettingsOpen: boolean;
   isDesktopRuntime: boolean;
   isWindowMaximized: boolean;
   hasBlockingOverlayOpen: boolean;
   onBrandClick?: () => void;
   onWindowDragStart?: (event: ReactMouseEvent<HTMLElement>) => void;
+  onLibraryTabClick: () => void;
   onDocumentationTabClick: () => void;
   onDesktopTabClick: () => void;
-  onTimelineTabClick: () => void;
   onWorkspaceSettingsClick: () => void;
   onWindowMinimize: () => void;
   onWindowToggleMaximize: () => void;
@@ -29,23 +34,35 @@ interface TopBarProps {
 export function TopBar({
   t,
   workspaceMode,
+  workspaceFocusMode,
   documentationModeActive,
+  libraryModeActive,
   workspaceSettingsOpen,
   isDesktopRuntime,
   isWindowMaximized,
   hasBlockingOverlayOpen,
   onBrandClick,
   onWindowDragStart,
+  onLibraryTabClick,
   onDocumentationTabClick,
   onDesktopTabClick,
-  onTimelineTabClick,
   onWorkspaceSettingsClick,
   onWindowMinimize,
   onWindowToggleMaximize,
   onWindowClose
 }: TopBarProps) {
   const isDocumentationActive = documentationModeActive && !workspaceSettingsOpen;
-  const isDesktopActive = workspaceMode === "grid" && !documentationModeActive && !workspaceSettingsOpen;
+  const isLibraryActive =
+    workspaceMode === "grid" &&
+    libraryModeActive &&
+    !documentationModeActive &&
+    !workspaceSettingsOpen;
+  const isDesktopActive =
+    workspaceMode === "grid" &&
+    workspaceFocusMode !== "execution" &&
+    !libraryModeActive &&
+    !documentationModeActive &&
+    !workspaceSettingsOpen;
   const handleWindowFrameMouseDown = (event: ReactMouseEvent<HTMLElement>) => {
     if (!isDesktopRuntime) return;
     if (event.button !== 0) return;
@@ -99,7 +116,7 @@ export function TopBar({
           onMouseDown={handleWindowFrameMouseDown}
           onDoubleClick={handleWindowFrameDoubleClick}
         >
-          <span className="ode-brand-title">ODETool</span>
+          <span className="ode-brand-title">{APP_DISPLAY_NAME}</span>
         </div>
       </div>
       <div
@@ -109,6 +126,13 @@ export function TopBar({
       />
 
       <div className="flex min-w-0 items-stretch">
+        <button
+          data-ode-window-drag-ignore="true"
+          className={`ode-tab-btn ${isLibraryActive ? "ode-tab-btn-active" : ""}`}
+          onClick={onLibraryTabClick}
+        >
+          {t("tabs.library")}
+        </button>
         <button
           data-ode-window-drag-ignore="true"
           className={`ode-tab-btn ${isDocumentationActive ? "ode-tab-btn-active" : ""}`}
@@ -123,20 +147,14 @@ export function TopBar({
         >
           {t("tabs.desktop")}
         </button>
-        <button
-          data-ode-window-drag-ignore="true"
-          className={`ode-tab-btn ${workspaceMode === "timeline" ? "ode-tab-btn-active" : ""}`}
-          onClick={onTimelineTabClick}
-        >
-          {t("tabs.timeline")}
-        </button>
-        <OdeTooltip label={t("project.settings_title")} side="bottom">
+        <OdeTooltip label={t("project.title")} side="bottom">
           <button
             data-ode-window-drag-ignore="true"
-            className={`ode-tab-btn ${workspaceSettingsOpen ? "ode-tab-btn-active" : ""}`}
+            className={`ode-tab-btn flex w-[70px] items-center justify-center px-0 ${workspaceSettingsOpen ? "ode-tab-btn-active" : ""}`}
             onClick={onWorkspaceSettingsClick}
+            aria-label={t("project.title")}
           >
-            {t("project.title")}
+            <WorkspaceRootGlyphSmall />
           </button>
         </OdeTooltip>
         <div data-ode-window-drag-ignore="true" className="flex items-stretch">

@@ -1,11 +1,12 @@
 {
   "$schema": "../gen/schemas/capability.json",
   "identifier": "default",
-  "description": "Default permissions for ODETool Rebuild",
-  "windows": ["main"],
+  "description": "Default permissions for ODETool Pro",
+  "windows": ["main", "odetool-panel-*", "odetool-node-*"],
   "permissions": [
     "core:default",
     "core:window:default",
+    "core:window:allow-create",
     "core:window:allow-close",
     "core:window:allow-minimize",
     "core:window:allow-maximize",
@@ -15,6 +16,7 @@
     "core:window:allow-set-fullscreen",
     "core:window:allow-start-dragging",
     "core:window:allow-set-focus",
+    "core:webview:allow-create-webview-window",
     "clipboard-manager:default",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text"

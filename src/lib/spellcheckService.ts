@@ -1,48 +1,55 @@
 import nspell from "nspell";
-import type { LanguageCode } from "@/lib/i18n";
+import enAffUrl from "@/dictionaries/en.aff?url";
+import enDicUrl from "@/dictionaries/en.dic?url";
+import deAffUrl from "@/dictionaries/de.aff?url";
+import deDicUrl from "@/dictionaries/de.dic?url";
+import esAffUrl from "@/dictionaries/es.aff?url";
+import esDicUrl from "@/dictionaries/es.dic?url";
+import frAffUrl from "@/dictionaries/fr.aff?url";
+import frDicUrl from "@/dictionaries/fr.dic?url";
+import {
+  resolveSupportedLanguageCode,
+  type LanguageCode,
+  type SupportedLanguageCode
+} from "@/lib/i18n";
 
 type SpellChecker = {
   correct: (word: string) => boolean;
   suggest: (word: string) => string[];
 };
 
-const spellCheckerByLanguage = new Map<LanguageCode, Promise<SpellChecker>>();
+const DICTIONARY_ASSET_URLS: Record<SupportedLanguageCode, { aff: string; dic: string }> = {
+  EN: { aff: enAffUrl, dic: enDicUrl },
+  DE: { aff: deAffUrl, dic: deDicUrl },
+  ES: { aff: esAffUrl, dic: esDicUrl },
+  FR: { aff: frAffUrl, dic: frDicUrl }
+};
 
-async function loadSpellChecker(language: LanguageCode): Promise<SpellChecker> {
-  const dictionaryPromise = (() => {
-    if (language === "FR") {
-      return Promise.all([
-        import("@/dictionaries/fr.aff?raw"),
-        import("@/dictionaries/fr.dic?raw")
-      ]);
-    }
-    if (language === "DE") {
-      return Promise.all([
-        import("@/dictionaries/de.aff?raw"),
-        import("@/dictionaries/de.dic?raw")
-      ]);
-    }
-    if (language === "ES") {
-      return Promise.all([
-        import("@/dictionaries/es.aff?raw"),
-        import("@/dictionaries/es.dic?raw")
-      ]);
-    }
-    return Promise.all([
-      import("@/dictionaries/en.aff?raw"),
-      import("@/dictionaries/en.dic?raw")
-    ]);
-  })();
+const spellCheckerByLanguage = new Map<SupportedLanguageCode, Promise<SpellChecker>>();
 
-  const [affModule, dicModule] = await dictionaryPromise;
-  return nspell(affModule.default, dicModule.default) as SpellChecker;
+async function readDictionaryAsset(url: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to load spellcheck dictionary asset: ${url}`);
+  }
+  return response.text();
+}
+
+async function loadSpellChecker(language: SupportedLanguageCode): Promise<SpellChecker> {
+  const urls = DICTIONARY_ASSET_URLS[language] ?? DICTIONARY_ASSET_URLS.EN;
+  const [affText, dicText] = await Promise.all([
+    readDictionaryAsset(urls.aff),
+    readDictionaryAsset(urls.dic)
+  ]);
+  return nspell(affText, dicText) as SpellChecker;
 }
 
 async function getSpellChecker(language: LanguageCode): Promise<SpellChecker> {
-  const cached = spellCheckerByLanguage.get(language);
+  const resolvedLanguage = resolveSupportedLanguageCode(language);
+  const cached = spellCheckerByLanguage.get(resolvedLanguage);
   if (cached) return cached;
-  const created = loadSpellChecker(language);
-  spellCheckerByLanguage.set(language, created);
+  const created = loadSpellChecker(resolvedLanguage);
+  spellCheckerByLanguage.set(resolvedLanguage, created);
   return created;
 }
 

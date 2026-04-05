@@ -8,6 +8,23 @@ export type QualityGateResult = {
   output: string;
 };
 
+export type ProcedureTableSpreadsheetMetaEntry = {
+  label: string;
+  value: string;
+};
+
+export type ProcedureTableSpreadsheetSheet = {
+  name: string;
+  headers: string[];
+  rows: string[][];
+};
+
+export type ProcedureTableSpreadsheetPayload = {
+  tableName: string;
+  meta: ProcedureTableSpreadsheetMetaEntry[];
+  sheets: ProcedureTableSpreadsheetSheet[];
+};
+
 export type WorkspaceRepairSummary = {
   recoveredCount: number;
   updatedCount: number;
@@ -200,6 +217,10 @@ export async function getWindowsFileIcon(
   return callNative<string | null>("get_windows_file_icon", { filePath, fileName, size });
 }
 
+export async function getWindowsInstalledFontFamilies(): Promise<string[]> {
+  return callNative<string[]>("get_windows_installed_font_families");
+}
+
 export async function setWindowsClipboardFilePaths(paths: string[]): Promise<void> {
   await callNative("set_windows_clipboard_file_paths", { paths });
 }
@@ -243,12 +264,34 @@ export async function exportTreeStructureExcel(
   });
 }
 
+export async function exportProcedureTableExcel(
+  dialogTitle: string,
+  defaultFileName: string,
+  payload: ProcedureTableSpreadsheetPayload
+): Promise<string | null> {
+  return callNative<string | null>("export_procedure_table_excel", {
+    dialogTitle,
+    defaultFileName,
+    payload
+  });
+}
+
 export async function pickWindowsTreeSpreadsheetFile(): Promise<string | null> {
   return callNative<string | null>("pick_windows_tree_spreadsheet_file");
 }
 
+export async function pickWindowsProcedureTableSpreadsheetFile(): Promise<string | null> {
+  return callNative<string | null>("pick_windows_procedure_table_spreadsheet_file");
+}
+
 export async function readTreeStructureExcel(filePath: string): Promise<TreeSpreadsheetPayload> {
   return callNative<TreeSpreadsheetPayload>("read_tree_structure_excel", { filePath });
+}
+
+export async function readProcedureTableExcel(
+  filePath: string
+): Promise<ProcedureTableSpreadsheetPayload> {
+  return callNative<ProcedureTableSpreadsheetPayload>("read_procedure_table_excel", { filePath });
 }
 
 export async function getProjects(): Promise<ProjectSummary[]> {

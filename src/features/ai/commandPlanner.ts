@@ -4,6 +4,7 @@ export const AI_COMMAND_ACTION_IDS = [
   "plan_my_day",
   "wbs_generate",
   "wbs_from_document",
+  "database_create_section",
   "tree_create_topic",
   "tree_rename_selected",
   "tree_move_selected",
@@ -53,6 +54,12 @@ export function normalizeAiCommandActionId(value: string | null | undefined): Ai
     file_wbs: "wbs_from_document",
     create_wbs_from_document: "wbs_from_document",
     create_wbs_from_file: "wbs_from_document",
+    create_database_section: "database_create_section",
+    database_create_section: "database_create_section",
+    database_section: "database_create_section",
+    database_schema: "database_create_section",
+    create_schema: "database_create_section",
+    create_database_schema: "database_create_section",
     create_topic: "tree_create_topic",
     tree_create_topic: "tree_create_topic",
     rename_selected: "tree_rename_selected",
@@ -94,6 +101,18 @@ export function normalizeAiCommandActionId(value: string | null | undefined): Ai
 
 export function inferAiCommandActionId(commandText: string): AiCommandActionId | null {
   const text = commandText.toLowerCase();
+  const hasDatabaseIntent =
+    (text.includes("database") ||
+      text.includes("schema") ||
+      text.includes("field") ||
+      text.includes("fields") ||
+      text.includes("column") ||
+      text.includes("columns")) &&
+    (text.includes("create") ||
+      text.includes("add") ||
+      text.includes("build") ||
+      text.includes("generate") ||
+      text.includes("make"));
   if ((text.includes("wbs") || text.includes("work breakdown") || text.includes("break down") || text.includes("breakdown")) &&
     (text.includes("document") || text.includes("documents") || text.includes("doc") || text.includes("file") || text.includes("pdf") || text.includes("proposal") || text.includes("brief") || text.includes("report") || text.includes("upload"))) {
     return "wbs_from_document";
@@ -107,6 +126,7 @@ export function inferAiCommandActionId(commandText: string): AiCommandActionId |
   if (text.includes("schedule") || text.includes("deadline") || text.includes("start date") || text.includes("end date")) return "timeline_set_schedule";
   if (text.includes("timeline")) return "timeline_open";
   if (text.includes("desktop")) return "desktop_open";
+  if (hasDatabaseIntent) return "database_create_section";
   if (text.includes("rename")) return "tree_rename_selected";
   if (text.includes("move")) return "tree_move_selected";
   if ((text.includes("bulk") || text.includes("batch") || text.includes("multiple")) && (text.includes("create") || text.includes("add"))) return "tree_bulk_create";
@@ -150,6 +170,7 @@ export function buildAiPlannerPrompts(commandText: string, context: string): {
     "plan_my_day: Build a short AI focus plan from current workspace context.",
     "wbs_generate: Generate recursive AI WBS under current context. args: { goal }",
     "wbs_from_document: Generate recursive AI WBS from selected document/file context. args: { goal? }",
+    "database_create_section: Create a database section and optional aligned fields. args: { section_name?, fields?: string[] }",
     "tree_create_topic: Create a new topic node in current context.",
     "tree_rename_selected: Rename selected node. args: { new_name }",
     "tree_move_selected: Move selected node(s) into target folder. args: { target_ref }",
@@ -200,9 +221,46 @@ export function buildAiPlannerPrompts(commandText: string, context: string): {
   };
 }
 
+function extractDelimitedList(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,;\n|]/)
+        .map((item) => item.trim().replace(/^\"|\"$/g, ""))
+        .filter((item) => item.length > 0)
+    )
+  ).slice(0, 25);
+}
+
+function extractDatabaseSectionName(text: string): string {
+  const match =
+    text.match(/\b(?:section|table|schema)\s+(?:named|called)\s+\"?([^\"\n,]+?)\"?(?:\s+(?:with|including)\b|$)/i) ??
+    text.match(/\bcreate\s+(?:a|an|the)?\s*\"?([^\"\n,]+?)\"?\s+(?:database\s+)?(?:section|table|schema)\b/i) ??
+    text.match(/\b(?:database|schema)\s+(?:for|named|called)\s+\"?([^\"\n,]+?)\"?(?:\s+(?:with|including)\b|$)/i);
+  return match?.[1]?.trim() ?? "";
+}
+
+function extractDatabaseFields(text: string): string[] {
+  const source =
+    text.match(/\b(?:fields?|columns?)\s*(?:\:|->|=|include|includes|including)\s*(.+)$/i)?.[1] ??
+    text.match(/\bwith\s+(.+?)\s+(?:as\s+)?(?:fields?|columns?)\b/i)?.[1] ??
+    "";
+  if (!source) return [];
+  const values = extractDelimitedList(source);
+  return values.length >= 2 ? values : [];
+}
+
 export function inferAiCommandArgs(commandText: string, actionId: AiCommandActionId | null): Record<string, unknown> {
   if (!actionId) return {};
   const text = commandText.trim();
+  if (actionId === "database_create_section") {
+    const sectionName = extractDatabaseSectionName(text);
+    const fields = extractDatabaseFields(text);
+    const args: Record<string, unknown> = {};
+    if (sectionName) args.section_name = sectionName;
+    if (fields.length > 0) args.fields = fields;
+    return args;
+  }
   if (actionId === "tree_rename_selected") {
     const renameMatch = text.match(/rename(?:\s+(?:node|topic|ticket))?\s*(?:to|as)\s+\"?([^"\n]+?)\"?$/i) ?? text.match(/rename\s+\"?([^"\n]+?)\"?$/i);
     return renameMatch?.[1] ? { new_name: renameMatch[1].trim() } : {};
@@ -213,7 +271,7 @@ export function inferAiCommandArgs(commandText: string, actionId: AiCommandActio
   }
   if (actionId === "tree_bulk_create") {
     const source = text.match(/(?:create|add)\s+(?:topics?|nodes?)\s*(?:\:|->)?\s*(.+)$/i)?.[1] ?? text;
-    const names = source.split(/[,;\n|]/).map((item) => item.trim().replace(/^\"|\"$/g, "")).filter((item) => item.length > 0).slice(0, 25);
+    const names = extractDelimitedList(source);
     return names.length > 0 ? { names } : {};
   }
   if (actionId === "timeline_set_schedule") {
@@ -271,6 +329,31 @@ export function sanitizeAiCommandArgs(actionId: AiCommandActionId, rawArgs: Reco
     }
     return "";
   };
+  const getStringList = (...keys: string[]) => {
+    for (const key of keys) {
+      const raw = source[key];
+      if (Array.isArray(raw)) {
+        const values = raw
+          .map((item) => (typeof item === "string" ? item.trim() : ""))
+          .filter((item) => item.length > 0)
+          .slice(0, 25);
+        if (values.length > 0) return values;
+      }
+      if (typeof raw === "string") {
+        const values = extractDelimitedList(raw);
+        if (values.length > 0) return values;
+      }
+    }
+    return [] as string[];
+  };
+  if (actionId === "database_create_section") {
+    const args: Record<string, unknown> = {};
+    const sectionName = getString("section_name", "sectionName", "name", "title", "section");
+    const fields = getStringList("fields", "columns", "names");
+    if (sectionName) args.section_name = sectionName;
+    if (fields.length > 0) args.fields = fields;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
   if (actionId === "tree_rename_selected") return getString("new_name", "name", "newName") ? { new_name: getString("new_name", "name", "newName") } : fallback;
   if (actionId === "tree_move_selected") return getString("target_ref", "target", "targetRef", "destination") ? { target_ref: getString("target_ref", "target", "targetRef", "destination") } : fallback;
   if (actionId === "tree_bulk_create") {

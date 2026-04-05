@@ -1,12 +1,12 @@
 [package]
-name = "odetool-rebuild"
+name = "odetool-pro"
 version = "0.1.0"
-description = "ODETool rebuild with Tauri + Vite + SurrealDB"
-authors = ["ODETool"]
+description = "ODETool Pro with Tauri + Vite + SurrealDB"
+authors = ["ODETool Pro"]
 edition = "2021"
 
 [lib]
-name = "odetool_rebuild_lib"
+name = "odetool_pro_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -32,6 +32,7 @@ rfd = "0.15"
 dirs = "6"
 base64 = "0.22"
 rust_xlsxwriter = "0.81"
+argon2 = "0.5"
 windows = { version = "0.61.3", features = [
   "Globalization",
   "Win32_Foundation",
