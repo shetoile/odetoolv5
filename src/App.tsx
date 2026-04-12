@@ -12,6 +12,7 @@ import {
 import { flushSync } from "react-dom";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
+import { listen } from "@tauri-apps/api/event";
 import { currentMonitor, getAllWindows, getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { readText as readClipboardText, writeText as writeClipboardText } from "@tauri-apps/plugin-clipboard-manager";
@@ -22,6 +23,14 @@ import {
 } from "@/ai/core/aiOrchestrator";
 import { callNative } from "@/lib/tauriApi";
 import { translate, getLocaleForLanguage, isRtlLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
+import {
+  APP_UPDATER_EVENT,
+  checkForAppUpdates,
+  isUpdaterBusy,
+  resolveUpdaterStatusLabel,
+  resolveUpdaterStatusTone,
+  type AppUpdaterStatusPayload
+} from "@/lib/appUpdater";
 import { REGRESSION_CHECKLIST_ITEMS, type RegressionChecklistItem } from "@/lib/regressionChecklist";
 import { getLocalizedRegressionChecklistItem } from "@/lib/regressionChecklistLocalization";
 import {
@@ -388,6 +397,7 @@ import {
 import { detectDocumentLanguage, type DocumentLanguageCode } from "@/lib/documentLanguage";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TopBar } from "@/components/layout/TopBar";
+import { AppUpdateToast } from "@/components/overlay/AppUpdateToast";
 import { NodeContextMenu } from "@/components/overlay/NodeContextMenu";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { TextEditContextMenu, type TextEditContextMenuState } from "@/components/overlay/TextEditContextMenu";
@@ -2000,6 +2010,10 @@ export default function App() {
   const [rememberedAuthSessionToken, setRememberedAuthSessionToken] = useState<string | null>(() =>
     readRememberedAuthSessionToken()
   );
+  const [updaterStatus, setUpdaterStatus] = useState<AppUpdaterStatusPayload | null>(null);
+  const [updaterStatusLabel, setUpdaterStatusLabel] = useState<string | null>(null);
+  const [updaterToastOpen, setUpdaterToastOpen] = useState(false);
+  const [manualUpdateCheckPending, setManualUpdateCheckPending] = useState(false);
   const [rememberPasswordPreference, setRememberPasswordPreference] = useState<RememberPasswordPreference>(() =>
     readRememberPasswordPreference()
   );
@@ -2217,6 +2231,88 @@ export default function App() {
   const [workspaceLocalPathInput, setWorkspaceLocalPathInput] = useState("");
   const [workspaceCreateInlineOpen, setWorkspaceCreateInlineOpen] = useState(false);
   const [projectPathInput, setProjectPathInput] = useState("");
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let disposed = false;
+    let unlistenUpdater: (() => void) | null = null;
+
+    void listen<AppUpdaterStatusPayload>(APP_UPDATER_EVENT, (event) => {
+      if (disposed) return;
+
+      const nextStatus = event.payload;
+      const shouldShowUpToDateToast = manualUpdateCheckPending && nextStatus.stage === "up_to_date";
+      const shouldShowToast =
+        (manualUpdateCheckPending && nextStatus.stage === "checking") ||
+        shouldShowUpToDateToast ||
+        nextStatus.stage === "available" ||
+        nextStatus.stage === "downloading" ||
+        nextStatus.stage === "installing" ||
+        nextStatus.stage === "installed" ||
+        nextStatus.stage === "error";
+
+      setUpdaterStatus(nextStatus);
+      setUpdaterStatusLabel(resolveUpdaterStatusLabel(nextStatus));
+
+      if (shouldShowToast) {
+        setUpdaterToastOpen(true);
+      }
+
+      if (
+        nextStatus.stage === "up_to_date" ||
+        nextStatus.stage === "error" ||
+        nextStatus.stage === "available"
+      ) {
+        setManualUpdateCheckPending(false);
+      }
+    })
+      .then((unlistenFn) => {
+        if (disposed) {
+          void unlistenFn();
+          return;
+        }
+        unlistenUpdater = unlistenFn;
+      })
+      .catch(() => {
+        // Updater events are optional when the desktop runtime is unavailable or the plugin is disabled.
+      });
+
+    return () => {
+      disposed = true;
+      if (unlistenUpdater) {
+        void unlistenUpdater();
+      }
+    };
+  }, [manualUpdateCheckPending]);
+
+  useEffect(() => {
+    if (!updaterToastOpen || updaterStatus?.stage !== "up_to_date") return;
+
+    const timeoutId = window.setTimeout(() => {
+      setUpdaterToastOpen(false);
+    }, 4200);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [updaterStatus, updaterToastOpen]);
+
+  const handleCheckForUpdates = useCallback(() => {
+    if (!isTauri()) return;
+
+    setManualUpdateCheckPending(true);
+    void checkForAppUpdates().catch((error) => {
+      const nextStatus: AppUpdaterStatusPayload = {
+        stage: "error",
+        message: `Update check could not start: ${error instanceof Error ? error.message : String(error)}`
+      };
+      setUpdaterStatus(nextStatus);
+      setUpdaterStatusLabel(resolveUpdaterStatusLabel(nextStatus));
+      setUpdaterToastOpen(true);
+      setManualUpdateCheckPending(false);
+    });
+  }, []);
 
   useEffect(() => {
     if (!AI_COMMAND_BAR_ENABLED) {
@@ -25798,8 +25894,16 @@ export default function App() {
         </main>
 
       </div>
+      <AppUpdateToast
+        open={updaterToastOpen}
+        status={updaterStatus}
+        onDismiss={() => setUpdaterToastOpen(false)}
+      />
       <StatusBar
         version="v1.043"
+        updateStatusLabel={updaterStatusLabel}
+        updateStatusTone={resolveUpdaterStatusTone(updaterStatus)}
+        updateStatusMessage={updaterStatus?.message ?? null}
         t={t}
         branchClipboard={branchClipboard}
         mirrorStatus={mirrorStatus}
@@ -25822,6 +25926,8 @@ export default function App() {
           if (!footerQuickAppTargetNode) return;
           openNodeQuickAppsModal(footerQuickAppTargetNode.id);
         }}
+        onCheckForUpdates={handleCheckForUpdates}
+        isCheckingForUpdates={manualUpdateCheckPending || isUpdaterBusy(updaterStatus)}
         onSelectWorkspaceFocusMode={workspaceMode === "timeline" ? selectTimelineWorkspaceFocusMode : selectWorkspaceFocusMode}
         onToggleWorkspaceEmptyOnly={toggleWorkspaceEmptyOnly}
         qaChecklistSummary={qaChecklistSummary}

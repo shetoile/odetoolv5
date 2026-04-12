@@ -1,6 +1,6 @@
 [package]
 name = "odetool-pro"
-version = "0.1.3"
+version = "0.1.4"
 description = "ODETool Pro with Tauri + Vite + SurrealDB"
 authors = ["ODETool Pro"]
 edition = "2021"

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import {
+  ArrowUpGlyphSmall,
   ChecklistGlyphSmall,
   FileGlyphSmall,
   InfoGlyphSmall,
@@ -29,6 +30,9 @@ type QaChecklistSummary = {
 
 interface StatusBarProps {
   version: string;
+  updateStatusLabel?: string | null;
+  updateStatusTone?: "info" | "success" | "error";
+  updateStatusMessage?: string | null;
   t: TranslateFn;
   branchClipboard: BranchClipboardLike | null;
   mirrorStatus: MirrorStatus;
@@ -51,6 +55,8 @@ interface StatusBarProps {
   onOpenReleaseNotes: () => void;
   onOpenHelp: () => void;
   onOpenQaChecklist: () => void;
+  onCheckForUpdates?: () => void;
+  isCheckingForUpdates?: boolean;
   onOpenAssistant?: () => void;
   currentUserLabel?: string | null;
   currentUserPhotoDataUrl?: string | null;
@@ -176,6 +182,9 @@ function readStoredAiDockPosition(): AiDockPosition | null {
 
 export function StatusBar({
   version,
+  updateStatusLabel,
+  updateStatusTone = "info",
+  updateStatusMessage,
   t,
   qaChecklistSummary,
   qaChecklistHealth,
@@ -187,6 +196,8 @@ export function StatusBar({
   onOpenReleaseNotes,
   onOpenHelp,
   onOpenQaChecklist,
+  onCheckForUpdates,
+  isCheckingForUpdates = false,
   onOpenAssistant,
   currentUserLabel,
   currentUserPhotoDataUrl,
@@ -262,6 +273,31 @@ export function StatusBar({
             <span className="ode-statusbar-info-version">{version}</span>
             <span>{t("footer.released")}</span>
           </div>
+          {onCheckForUpdates ? (
+            <div className={`ode-statusbar-updater-card ode-statusbar-updater-card-${updateStatusTone}`}>
+              <div className="ode-statusbar-updater-copy">
+                <span className="ode-statusbar-updater-eyebrow">Automatic updates</span>
+                <span className="ode-statusbar-updater-title">
+                  {updateStatusLabel ?? "Ready for the next GitHub release."}
+                </span>
+                <span className="ode-statusbar-updater-message">
+                  {updateStatusMessage ?? "New versions download and install automatically when found at startup."}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="ode-statusbar-info-action"
+                onClick={() => {
+                  setInfoMenuOpen(false);
+                  onCheckForUpdates();
+                }}
+                disabled={isCheckingForUpdates}
+              >
+                <ArrowUpGlyphSmall />
+                <span>{isCheckingForUpdates ? "Checking updates..." : "Check for updates"}</span>
+              </button>
+            </div>
+          ) : null}
           <button
             type="button"
             className="ode-statusbar-info-action"
@@ -622,7 +658,14 @@ export function StatusBar({
           leadingSlot={userProfileMenu}
         />
 
-        <div className="flex items-center gap-3 px-3">{infoMenu}</div>
+        <div className="flex items-center gap-2 px-3">
+          {updateStatusLabel ? (
+            <span className={`ode-statusbar-update-pill ode-statusbar-update-pill-${updateStatusTone}`}>
+              {updateStatusLabel}
+            </span>
+          ) : null}
+          {infoMenu}
+        </div>
       </footer>
     </>
   );

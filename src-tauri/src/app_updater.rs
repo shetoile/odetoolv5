@@ -1,11 +1,13 @@
 use serde::Serialize;
 use std::env;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 use tauri_plugin_updater::UpdaterExt;
 
 pub const APP_UPDATER_EVENT: &str = "odetool://updater";
 const AUTO_UPDATE_DISABLE_ENV: &str = "ODETOOL_DISABLE_AUTO_UPDATE";
 const AUTO_UPDATE_DEBUG_ENV: &str = "ODETOOL_ENABLE_AUTO_UPDATE_IN_DEBUG";
+static AUTO_UPDATE_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,16 +54,34 @@ fn emit_updater_status(
     );
 }
 
-pub fn start_auto_update(app: AppHandle) {
-    if env_flag(AUTO_UPDATE_DISABLE_ENV) {
-        return;
-    }
+struct UpdateCheckGuard;
 
-    if cfg!(debug_assertions) && !env_flag(AUTO_UPDATE_DEBUG_ENV) {
+impl Drop for UpdateCheckGuard {
+    fn drop(&mut self) {
+        AUTO_UPDATE_IN_PROGRESS.store(false, Ordering::SeqCst);
+    }
+}
+
+fn spawn_update_check(app: AppHandle) {
+    if AUTO_UPDATE_IN_PROGRESS
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        emit_updater_status(
+            &app,
+            "checking",
+            "An update check is already in progress...",
+            None,
+            None,
+            None,
+            None,
+        );
         return;
     }
 
     tauri::async_runtime::spawn(async move {
+        let _guard = UpdateCheckGuard;
+
         emit_updater_status(
             &app,
             "checking",
@@ -186,4 +206,22 @@ pub fn start_auto_update(app: AppHandle) {
 
         app.restart();
     });
+}
+
+pub fn start_auto_update(app: AppHandle) {
+    if env_flag(AUTO_UPDATE_DISABLE_ENV) {
+        return;
+    }
+
+    if cfg!(debug_assertions) && !env_flag(AUTO_UPDATE_DEBUG_ENV) {
+        return;
+    }
+
+    spawn_update_check(app);
+}
+
+#[tauri::command]
+pub fn check_for_app_updates(app: AppHandle) -> Result<(), String> {
+    spawn_update_check(app);
+    Ok(())
 }

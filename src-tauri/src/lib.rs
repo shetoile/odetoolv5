@@ -9210,6 +9210,7 @@ pub fn run() {
             analyze_ticket,
             generate_ticket_reply,
             open_external_url,
+            app_updater::check_for_app_updates,
             start_windows_snipping_tool,
             probe_single_instance_relaunch,
             attach_clipboard_image_to_ticket,

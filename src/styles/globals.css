@@ -2509,6 +2509,54 @@ input {
   font-weight: 600;
 }
 
+.ode-statusbar-updater-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid rgba(61, 128, 170, 0.36);
+  border-radius: 10px;
+  padding: 0.55rem;
+  background: rgba(9, 49, 77, 0.3);
+}
+
+.ode-statusbar-updater-card-info {
+  border-color: rgba(61, 128, 170, 0.36);
+}
+
+.ode-statusbar-updater-card-success {
+  border-color: rgba(73, 164, 122, 0.42);
+  background: rgba(15, 65, 48, 0.28);
+}
+
+.ode-statusbar-updater-card-error {
+  border-color: rgba(202, 103, 103, 0.45);
+  background: rgba(82, 31, 31, 0.28);
+}
+
+.ode-statusbar-updater-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.ode-statusbar-updater-eyebrow {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ode-text-dim);
+}
+
+.ode-statusbar-updater-title {
+  color: var(--ode-text);
+  font-weight: 600;
+}
+
+.ode-statusbar-updater-message {
+  color: var(--ode-text-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
 .ode-statusbar-info-action {
   display: inline-flex;
   align-items: center;
@@ -2520,6 +2568,11 @@ input {
   color: var(--ode-accent);
   background: rgba(8, 58, 90, 0.18);
   transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.ode-statusbar-info-action:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .ode-statusbar-info-action:hover {
@@ -2610,6 +2663,153 @@ input {
 .ode-qa-summary-pill-btn:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px rgba(92, 195, 255, 0.24);
+}
+
+.ode-statusbar-update-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(95, 220, 255, 0.24);
+  background: rgba(8, 52, 82, 0.5);
+  padding: 0.28rem 0.72rem;
+  font-size: 0.7rem;
+  color: rgba(220, 244, 255, 0.92);
+}
+
+.ode-statusbar-update-pill-info {
+  border-color: rgba(95, 220, 255, 0.24);
+  background: rgba(8, 52, 82, 0.5);
+  color: rgba(220, 244, 255, 0.92);
+}
+
+.ode-statusbar-update-pill-success {
+  border-color: rgba(92, 199, 138, 0.36);
+  background: rgba(18, 69, 49, 0.5);
+  color: #d8ffea;
+}
+
+.ode-statusbar-update-pill-error {
+  border-color: rgba(222, 107, 107, 0.42);
+  background: rgba(78, 28, 28, 0.54);
+  color: #ffdede;
+}
+
+.ode-update-toast {
+  position: fixed;
+  right: 1rem;
+  bottom: 4.65rem;
+  z-index: 85;
+  width: min(24rem, calc(100vw - 2rem));
+  border-radius: 18px;
+  border: 1px solid rgba(82, 173, 222, 0.34);
+  background: linear-gradient(180deg, rgba(7, 34, 56, 0.97), rgba(4, 18, 32, 0.97));
+  padding: 0.95rem 1rem 1rem;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(14px);
+}
+
+.ode-update-toast-info {
+  border-color: rgba(82, 173, 222, 0.34);
+}
+
+.ode-update-toast-success {
+  border-color: rgba(84, 188, 135, 0.38);
+}
+
+.ode-update-toast-error {
+  border-color: rgba(223, 108, 108, 0.42);
+}
+
+.ode-update-toast-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ode-update-toast-eyebrow {
+  font-size: 0.68rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ode-text-dim);
+}
+
+.ode-update-toast-title {
+  margin-top: 0.18rem;
+  color: var(--ode-text);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.ode-update-toast-close {
+  border: 1px solid rgba(79, 131, 161, 0.34);
+  border-radius: 999px;
+  width: 1.9rem;
+  height: 1.9rem;
+  color: var(--ode-text-muted);
+  background: rgba(8, 52, 82, 0.32);
+  transition: border-color 120ms ease, background-color 120ms ease, color 120ms ease;
+}
+
+.ode-update-toast-close:hover {
+  border-color: rgba(100, 188, 232, 0.56);
+  background: rgba(12, 74, 116, 0.44);
+  color: var(--ode-text);
+}
+
+.ode-update-toast-message {
+  margin-top: 0.75rem;
+  color: var(--ode-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.ode-update-toast-version-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.7rem;
+}
+
+.ode-update-toast-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(88, 170, 218, 0.42);
+  background: rgba(11, 71, 111, 0.34);
+  padding: 0.18rem 0.6rem;
+  font-size: 0.72rem;
+  color: var(--ode-text);
+}
+
+.ode-update-toast-chip-muted {
+  border-color: rgba(83, 127, 153, 0.34);
+  background: rgba(10, 45, 68, 0.3);
+  color: var(--ode-text-muted);
+}
+
+.ode-update-toast-progress {
+  overflow: hidden;
+  margin-top: 0.8rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: rgba(14, 58, 89, 0.42);
+}
+
+.ode-update-toast-progress-bar {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(77, 197, 255, 0.78), rgba(122, 236, 255, 0.92));
+  transition: width 180ms ease;
+}
+
+@media (max-width: 700px) {
+  .ode-update-toast {
+    right: 0.75rem;
+    left: 0.75rem;
+    width: auto;
+    bottom: 5rem;
+  }
 }
 
 .ode-qa-summary-pill-active {
