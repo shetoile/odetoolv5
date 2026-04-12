@@ -31,6 +31,17 @@ npm run tauri:dev
 npm run mock:test
 ```
 
+## Auto Update
+
+- The installed Windows app can now check GitHub Releases for updates on startup.
+- Release prep guide: `docs/AUTO_UPDATE_SETUP.md`
+- Automated tag-based release workflow: `.github/workflows/release-updater.yml`
+- After `npm run tauri:build`, generate `latest.json` with:
+
+```bash
+npm run updater:prepare
+```
+
 ## Consistency Audit
 
 ```bash

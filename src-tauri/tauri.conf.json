@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ODETool Pro",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.odetool.pro",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "nsis",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/icon.ico",
       "icons/icon.icns",
@@ -45,6 +46,17 @@
       "wix": {
         "bannerPath": "icons/wix-banner.bmp",
         "dialogImagePath": "icons/wix-dialog.bmp"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDBGRDJGMzQ1QkRDRjExRUYKUldUdkVjKzlSZlBTRDgyUW80TnpzeGxYVzlXbFJEQURPTEROZnFlZmJLRG5pckNtY2VtZVZ1WVYK",
+      "endpoints": [
+        "https://github.com/shetoile/odetoolv5/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

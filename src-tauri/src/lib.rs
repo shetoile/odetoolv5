@@ -41,6 +41,7 @@ use windows::Win32::{
 };
 
 pub mod ai_server;
+pub mod app_updater;
 pub mod document_parser;
 pub mod ticket_ai;
 
@@ -9121,6 +9122,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(SingleInstanceProbeState::new())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let state = app.state::<SingleInstanceProbeState>();
             state.mark_activation();
@@ -9218,6 +9220,7 @@ pub fn run() {
         ])
         .manage(ai_server::LocalAiState::new())
         .setup(|app| {
+            app_updater::start_auto_update(app.handle().clone());
             if let Err(err) = ensure_mirror_root_exists(&app.handle()) {
                 eprintln!("failed to ensure mirror root path: {err}");
             }
