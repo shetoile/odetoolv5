@@ -639,6 +639,86 @@ function hasCreationVerb(text: string): boolean {
   );
 }
 
+function matchesAnyPattern(text: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(text));
+}
+
+function hasStructureOnlyDirective(text: string): boolean {
+  return matchesAnyPattern(text, [
+    /\bthis\s+is\s+step\s+\d+\s+only\b/i,
+    /\b(?:database\s+)?structure\s+only\b/i,
+    /\b(?:database\s+)?schema\s+only\b/i,
+    /\bonly\s+create\s+the\s+(?:database\s+)?(?:structure|schema)\b/i,
+    /\bcreate\s+the\s+(?:database\s+)?(?:structure|schema)\s+only\b/i,
+    /\bfor\s+now,\s*only\s+create\b/i
+  ]);
+}
+
+function shouldSuppressDatabaseExamplesIntent(text: string): boolean {
+  return (
+    hasStructureOnlyDirective(text) ||
+    matchesAnyPattern(text, [
+      /\bdo\s+not\s+(?:create|add|seed|populate|fill)\b[^.\n]{0,120}\b(?:sample|samples|example|examples|records?|rows?|data)\b/i,
+      /\bdo\s+not\s+create\b[^.\n]{0,120}\b(?:fake|sample|samples|example|examples|operational)\b[^.\n]{0,40}\b(?:data|records?|rows?)\b/i,
+      /\bdo\s+not\s+create\s+records?\s+yet\b/i,
+      /\bdo\s+not\s+(?:populate|seed)\b/i,
+      /\b(?:no|without)\s+(?:fake|sample|samples|example|examples)\b[^.\n]{0,40}\b(?:data|records?|rows?)\b/i
+    ])
+  );
+}
+
+function shouldSuppressDashboardWidgetIntent(text: string): boolean {
+  return (
+    hasStructureOnlyDirective(text) ||
+    matchesAnyPattern(text, [
+      /\bdo\s+not\s+(?:create|add)\b[^.\n]{0,120}\b(?:dashboards?|widgets?|metrics?|charts?|heatmaps?)\b/i,
+      /\b(?:no|without)\s+(?:dashboards?|widgets?)\b/i
+    ])
+  );
+}
+
+function hasDatabaseExamplesRequest(text: string): boolean {
+  if (!/\b(?:database|table|section|record|records|row|rows)\b/i.test(text)) {
+    return false;
+  }
+  return matchesAnyPattern(text, [
+    /\b(?:create|add|seed|populate|fill)\b[^.\n]{0,80}\b(?:sample|samples|example|examples|records?|rows?)\b/i,
+    /\b(?:sample|samples|example|examples)\s+(?:records?|rows?)\b/i,
+    /\b(?:seed|populate|fill)\b[^.\n]{0,80}\b(?:database|table|section)\b/i
+  ]);
+}
+
+function hasDashboardWidgetRequest(text: string): boolean {
+  if (!hasCreationVerb(text)) return false;
+  return (
+    /\b(?:widget|widgets|dashboard|dashboards|chart|charts|heatmap|heatmaps)\b/i.test(text) ||
+    /\bcreate\b[^.\n]{0,80}\b(?:metric|metrics|distribution)\b/i.test(text) ||
+    (/\b(?:matrix|heatmap)\b/i.test(text) && /\b(?:widget|dashboard|chart|visual|insight|report)\b/i.test(text))
+  );
+}
+
+function isWeakDatabaseSectionName(value: string): boolean {
+  const normalized = value.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) return true;
+  if (/^(?:main|new|primary|database|section|table|schema)$/.test(normalized)) {
+    return true;
+  }
+  return (
+    /^(?:to\s+)?(?:explain|describe|summari[sz]e|review|analy[sz]e)\b/.test(normalized) &&
+    /\b(?:it|this|that|what it is|what this is)\b/.test(normalized)
+  );
+}
+
+function shouldSuppressAiCommandAction(actionId: AiCommandActionId, commandText: string): boolean {
+  if (actionId === "database_seed_examples") {
+    return shouldSuppressDatabaseExamplesIntent(commandText);
+  }
+  if (actionId === "dashboard_widget_create") {
+    return shouldSuppressDashboardWidgetIntent(commandText);
+  }
+  return false;
+}
+
 type AiCommandClauseHint = {
   actionId: AiCommandActionId;
   start: number;
@@ -696,6 +776,8 @@ function extractAiCommandClauseText(commandText: string, actionId: AiCommandActi
 export function inferAiCommandActionId(commandText: string): AiCommandActionId | null {
   const text = commandText.toLowerCase();
   const hasCreateIntent = hasCreationVerb(text);
+  const suppressDatabaseExamplesIntent = shouldSuppressDatabaseExamplesIntent(text);
+  const suppressWidgetIntent = shouldSuppressDashboardWidgetIntent(text);
   const hasScheduleIntent =
     /\bset schedule\b/.test(text) ||
     /\bschedule\b/.test(text) ||
@@ -717,21 +799,7 @@ export function inferAiCommandActionId(commandText: string): AiCommandActionId |
         text.includes("fields") ||
         text.includes("column") ||
         text.includes("columns")));
-  const hasDatabaseExamplesIntent =
-    (text.includes("example") ||
-      text.includes("examples") ||
-      text.includes("sample") ||
-      text.includes("samples") ||
-      text.includes("seed") ||
-      text.includes("populate") ||
-      text.includes("fill")) &&
-    (text.includes("database") ||
-      text.includes("table") ||
-      text.includes("section") ||
-      text.includes("record") ||
-      text.includes("records") ||
-      text.includes("row") ||
-      text.includes("rows"));
+  const hasDatabaseExamplesIntent = !suppressDatabaseExamplesIntent && hasDatabaseExamplesRequest(text);
   const hasDatabaseIntent =
     hasCreateIntent &&
     (text.includes("database") ||
@@ -740,15 +808,7 @@ export function inferAiCommandActionId(commandText: string): AiCommandActionId |
       text.includes("fields") ||
       text.includes("column") ||
       text.includes("columns"));
-  const hasWidgetIntent =
-    hasCreateIntent &&
-    (text.includes("widget") ||
-      text.includes("dashboard") ||
-      text.includes("metric") ||
-      text.includes("distribution") ||
-      text.includes("matrix") ||
-      text.includes("heatmap") ||
-      text.includes("chart"));
+  const hasWidgetIntent = !suppressWidgetIntent && hasDashboardWidgetRequest(text);
   const hasGovernanceIntent =
     (text.includes("framework") ||
       text.includes("governance") ||
@@ -776,21 +836,21 @@ export function inferAiCommandActionId(commandText: string): AiCommandActionId |
   }
   if (text.includes("plan my day") || text.includes("my day") || text.includes("daily plan") || text.includes("focus list")) return "plan_my_day";
   if (text.includes("wbs") || text.includes("work breakdown") || text.includes("break down") || text.includes("breakdown")) return "wbs_generate";
-  if (text.includes("import")) return "workspace_import";
-  if (text.includes("re-sync") || text.includes("resync") || text.includes("synchronize") || text.includes("sync")) return "workspace_resync";
+  if (/\bimport\b/.test(text)) return "workspace_import";
+  if (/\b(?:re-sync|resync|synchronize|sync)\b/.test(text)) return "workspace_resync";
   if (text.includes("clear schedule") || text.includes("remove schedule") || text.includes("delete schedule")) return "timeline_clear_schedule";
   if ((text.includes("review") || text.includes("analyze") || text.includes("summarize")) && (text.includes("document") || text.includes("documents") || text.includes("doc") || text.includes("file"))) return "document_review";
   if (hasExplicitDatabaseSectionIntent) return "database_create_section";
   if (hasDatabaseExamplesIntent) return "database_seed_examples";
   if (hasWidgetIntent) return "dashboard_widget_create";
+  if (hasDatabaseIntent) return "database_create_section";
   if (hasGovernanceIntent) return "governance_framework_generate";
   if (hasTaskIntent) return "execution_task_create";
-  if (hasDatabaseIntent) return "database_create_section";
   if (hasScheduleIntent) return "timeline_set_schedule";
   if (text.includes("timeline")) return "timeline_open";
   if (text.includes("desktop")) return "desktop_open";
-  if (text.includes("rename")) return "tree_rename_selected";
-  if (text.includes("move")) return "tree_move_selected";
+  if (/\brename\b/.test(text)) return "tree_rename_selected";
+  if (/\bmove\b/.test(text)) return "tree_move_selected";
   if ((text.includes("bulk") || text.includes("batch") || text.includes("multiple")) && (text.includes("create") || text.includes("add"))) return "tree_bulk_create";
   if (text.includes("favorite") || text.includes("favourite") || text.includes("bookmark") || text.includes("quick access")) return "favorite_selected";
   if ((text.includes("reply") || text.includes("response") || text.includes("respond")) && text.includes("ticket")) return "ticket_draft_reply";
@@ -814,6 +874,7 @@ export function normalizeAiCommandActionSequence(
 
   for (const rawStep of rawSteps) {
     if (!rawStep.actionId) continue;
+    if (shouldSuppressAiCommandAction(rawStep.actionId, commandText)) continue;
     const args = sanitizeAiCommandArgs(rawStep.actionId, rawStep.args ?? {}, commandText);
     const dedupeKey = `${rawStep.actionId}:${JSON.stringify(args)}`;
     if (seenKeys.has(dedupeKey)) continue;
@@ -866,6 +927,8 @@ export function inferAiCommandActionSequence(
 ): AiPlannerActionStep[] {
   const text = commandText.toLowerCase();
   const hasCreateIntent = hasCreationVerb(text);
+  const suppressDatabaseExamplesIntent = shouldSuppressDatabaseExamplesIntent(text);
+  const suppressWidgetIntent = shouldSuppressDashboardWidgetIntent(text);
   const hasExplicitDatabaseSectionIntent =
     hasCreateIntent &&
     ((/\bdatabase\s+(section|table|schema)\b/.test(text) ||
@@ -881,30 +944,16 @@ export function inferAiCommandActionSequence(
         text.includes("fields") ||
         text.includes("column") ||
         text.includes("columns")));
-  const hasDatabaseExamplesIntent =
-    (text.includes("example") ||
-      text.includes("examples") ||
-      text.includes("sample") ||
-      text.includes("samples") ||
-      text.includes("seed") ||
-      text.includes("populate") ||
-      text.includes("fill")) &&
-    (text.includes("database") ||
-      text.includes("table") ||
-      text.includes("section") ||
-      text.includes("record") ||
-      text.includes("records") ||
-      text.includes("row") ||
-      text.includes("rows"));
-  const hasWidgetIntent =
+  const hasDatabaseExamplesIntent = !suppressDatabaseExamplesIntent && hasDatabaseExamplesRequest(text);
+  const hasDatabaseIntent =
     hasCreateIntent &&
-    (text.includes("widget") ||
-      text.includes("dashboard") ||
-      text.includes("metric") ||
-      text.includes("distribution") ||
-      text.includes("matrix") ||
-      text.includes("heatmap") ||
-      text.includes("chart"));
+    (text.includes("database") ||
+      text.includes("schema") ||
+      text.includes("field") ||
+      text.includes("fields") ||
+      text.includes("column") ||
+      text.includes("columns"));
+  const hasWidgetIntent = !suppressWidgetIntent && hasDashboardWidgetRequest(text);
   const hasTaskIntent =
     hasCreateIntent &&
     (/\btask\b/.test(text) ||
@@ -925,11 +974,28 @@ export function inferAiCommandActionSequence(
   };
 
   const requestedSteps: Array<{ actionId: AiCommandActionId; args?: Record<string, unknown> }> = [];
+  const listedDatabaseSections = extractDatabaseSectionList(commandText);
   if (hasExplicitDatabaseSectionIntent) {
     requestedSteps.push({
       actionId: "database_create_section",
       args: buildArgsForAction("database_create_section")
     });
+  } else if ((hasDatabaseIntent || preferredActionId === "database_create_section") && listedDatabaseSections.length > 0) {
+    const sharedArgs = buildArgsForAction("database_create_section");
+    const {
+      fields: _sharedFields,
+      field_specs: _sharedFieldSpecs,
+      ...sharedSectionArgs
+    } = sharedArgs;
+    for (const sectionName of listedDatabaseSections) {
+      requestedSteps.push({
+        actionId: "database_create_section",
+        args: {
+          ...sharedSectionArgs,
+          section_name: sectionName
+        }
+      });
+    }
   }
   if (hasDatabaseExamplesIntent) {
     requestedSteps.push({
@@ -1050,6 +1116,9 @@ export function buildAiPlannerPrompts(commandText: string, context: string): {
     "Structured field examples: Owner = relation(Owners) | display: Full Name ; Residual Score = formula(Likelihood * Impact) ; Review Date = date | role: execution_due_date ; Priority = priority(Low, Medium, High, Critical).",
     "Preserve labels like Author, Tags, Meeting URL, Attendees, Scheduled At, Created At so the database engine can align correct defaults automatically.",
     "Prefer database_create_section when the user explicitly asks for a database section/table/schema with fields, even if the section name is Risk Register, Controls, Actions, or Reviews.",
+    "Treat risk matrix or likelihood/impact matrix as database structure unless the user explicitly asks for a dashboard widget or chart.",
+    "Respect negative instructions exactly. If the user says not to create widgets, dashboards, examples, sample data, or records yet, do not return those actions.",
+    "When the user provides a list of database sections or tables, return several database_create_section actions, one per listed section.",
     "When the user lists several widgets, return several dashboard_widget_create actions, one per widget.",
     "When the user asks for follow-up tasks without exact names, keep the scenario in args.scenario so execution can synthesize them safely.",
     "Multi-step workflows are allowed: one command can create a section, seed sample rows, add several widgets, and create tasks in one ordered action sequence."
@@ -1116,7 +1185,7 @@ function extractDatabaseSectionName(text: string): string {
     for (const pattern of linePatterns) {
       const candidate = pattern.exec(line)?.[1]?.trim();
       if (!candidate) continue;
-      if (/^(?:main|new|primary|database|section|table|schema)$/i.test(candidate)) continue;
+      if (isWeakDatabaseSectionName(candidate)) continue;
       return candidate;
     }
   }
@@ -1133,10 +1202,20 @@ function extractDatabaseSectionName(text: string): string {
   for (const pattern of patterns) {
     const candidate = pattern.exec(text)?.[1]?.trim();
     if (!candidate) continue;
-    if (/^(?:main|new|primary|database|section|table|schema)$/i.test(candidate)) continue;
+    if (isWeakDatabaseSectionName(candidate)) continue;
     return candidate;
   }
   return "";
+}
+
+function extractDatabaseSectionList(text: string): string[] {
+  return extractAiHeadingList(text, [
+    /\b(?:include\s+at\s+least|include\s+these|database\s+sections?|database\s+tables?|registers?|tables?)\b.*:$/i,
+    /\b(?:create|build)\b.*\b(?:database\s+sections?|database\s+tables?)\b.*:$/i
+  ])
+    .map((entry) => entry.replace(/[:.;]+$/g, "").trim())
+    .filter((entry) => entry.length > 0 && !isWeakDatabaseSectionName(entry))
+    .slice(0, 24);
 }
 
 function extractAiFieldSpecs(text: string): AiDatabaseFieldSpec[] {
@@ -1572,7 +1651,7 @@ export function sanitizeAiCommandArgs(actionId: AiCommandActionId, rawArgs: Reco
     const sectionName = getString("section_name", "sectionName", "name", "title", "section");
     const fields = getStringList("fields", "columns", "names");
     const fieldSpecs = coerceAiDatabaseFieldSpecs(source.field_specs ?? source.fieldSpecs);
-    if (sectionName) args.section_name = sectionName;
+    if (sectionName && !isWeakDatabaseSectionName(sectionName)) args.section_name = sectionName;
     if (fieldSpecs.length > 0) {
       args.field_specs = fieldSpecs;
       if (fields.length === 0) {
@@ -1587,7 +1666,7 @@ export function sanitizeAiCommandArgs(actionId: AiCommandActionId, rawArgs: Reco
     const sectionName = getString("section_name", "sectionName", "name", "title", "section");
     const scenario = getString("scenario", "focus", "goal", "brief");
     const count = getNumber("count", "examples", "records", "rows");
-    if (sectionName) args.section_name = sectionName;
+    if (sectionName && !isWeakDatabaseSectionName(sectionName)) args.section_name = sectionName;
     if (scenario) args.scenario = scenario;
     if (Number.isFinite(count)) args.count = Math.max(1, Math.min(12, count));
     return Object.keys(args).length > 0 ? args : fallback;
@@ -1722,7 +1801,10 @@ export function parseAiPlannerPayload(rawResponse: string, commandText: string):
         : [],
       commandText
     );
-    const actionId = parsedSequence[0]?.actionId ?? normalizeAiCommandActionId(parsed.action_id ?? null);
+    const parsedActionId = normalizeAiCommandActionId(parsed.action_id ?? null);
+    const actionId =
+      parsedSequence[0]?.actionId ??
+      (parsedActionId && !shouldSuppressAiCommandAction(parsedActionId, commandText) ? parsedActionId : null);
     const reason = typeof parsed.reason === "string" && parsed.reason.trim().length > 0 ? parsed.reason.trim() : null;
     const steps = Array.isArray(parsed.steps) ? parsed.steps.map((step) => (typeof step === "string" ? step.trim() : "")).filter((step) => step.length > 0).slice(0, 6) : [];
     const confidence = clampAiPlannerConfidence(parsed.confidence, actionId ? 0.72 : 0.18);

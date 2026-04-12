@@ -230,6 +230,8 @@ type SpeechRecognitionWindow = Window & {
 const AI_COMMAND_HISTORY_STORAGE_KEY = buildAppStorageKey("ai.commandHistory.v1");
 const MAX_RECENT_COMMANDS = 40;
 const DEFAULT_HISTORY_GROUP = "General";
+const AI_COMMAND_TEXTAREA_MIN_HEIGHT_PX = 62;
+const AI_COMMAND_TEXTAREA_MAX_HEIGHT_PX = 300;
 
 function createCommandHistoryId(): string {
   return `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -267,7 +269,28 @@ function cleanupHistorySubject(value: string): string {
   return subject.replace(/[:.,;]+$/, "").trim();
 }
 
-function deriveHistorySubject(text: string): string {
+function deriveContextualHistorySubject(text: string, contextTitle: string): string | null {
+  const normalized = text.trim().toLowerCase();
+  if (!normalized) return null;
+  if (/^(?:to\s+)?(?:explain|what\s+is|what's)\b/.test(normalized)) {
+    return `${contextTitle} - Explain`;
+  }
+  if (/^(?:to\s+)?describe\b/.test(normalized)) {
+    return `${contextTitle} - Describe`;
+  }
+  if (/^(?:to\s+)?summari[sz]e\b/.test(normalized)) {
+    return `${contextTitle} - Summary`;
+  }
+  if (/^(?:to\s+)?review\b/.test(normalized)) {
+    return `${contextTitle} - Review`;
+  }
+  if (/^(?:to\s+)?analy[sz]e\b/.test(normalized)) {
+    return `${contextTitle} - Analysis`;
+  }
+  return null;
+}
+
+function deriveHistorySubject(text: string, contextTitle?: string | null): string {
   const trimmed = text.replace(/\s+/g, " ").trim();
   if (!trimmed) return "Untitled";
 
@@ -285,6 +308,12 @@ function deriveHistorySubject(text: string): string {
 
   if (/\brisk management framework\b/i.test(trimmed)) {
     return "Risk Management Framework";
+  }
+
+  const cleanedContextTitle = contextTitle ? cleanupHistorySubject(contextTitle) : "";
+  const contextualSubject = cleanedContextTitle ? deriveContextualHistorySubject(trimmed, cleanedContextTitle) : null;
+  if (contextualSubject) {
+    return contextualSubject;
   }
 
   const forMatch = trimmed.match(/\bfor\s+([^.:]+?)(?:\s+with\b|:|\.|$)/i);
@@ -377,9 +406,12 @@ function deriveHistoryAutoGroup(text: string, defaultGroup = DEFAULT_HISTORY_GRO
   return matched?.group ?? defaultGroup;
 }
 
-function buildCommandHistoryMetadata(text: string): Pick<CommandHistoryEntry, "subject" | "autoGroup"> {
+function buildCommandHistoryMetadata(
+  text: string,
+  contextTitle?: string | null
+): Pick<CommandHistoryEntry, "subject" | "autoGroup"> {
   return {
-    subject: deriveHistorySubject(text),
+    subject: deriveHistorySubject(text, contextTitle),
     autoGroup: deriveHistoryAutoGroup(text)
   };
 }
@@ -430,9 +462,8 @@ function mergeDuplicateHistoryEntries(
   const seen = new Set<string>();
   const next: CommandHistoryEntry[] = [];
   for (const entry of sorted) {
-    const dedupeKey = `${isHistoryEntryArchived(entry, defaultGroup) ? "archived" : "recent"}::${buildHistoryDisplayIdentity(
-      resolveHistoryEntrySubject(entry),
-      resolveHistoryEntryDisplayGroup(entry, defaultGroup)
+    const dedupeKey = `${isHistoryEntryArchived(entry, defaultGroup) ? "archived" : "recent"}::${normalizeHistoryIdentity(
+      entry.text
     )}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
@@ -672,6 +703,16 @@ export function AiCommandBar({
   const recognitionRef = useRef<{
     stop: () => void;
   } | null>(null);
+  const syncCommandInputHeight = (textarea: HTMLTextAreaElement | null = inputRef.current) => {
+    if (!textarea) return;
+    textarea.style.height = "0px";
+    const nextHeight = Math.max(
+      AI_COMMAND_TEXTAREA_MIN_HEIGHT_PX,
+      Math.min(textarea.scrollHeight, AI_COMMAND_TEXTAREA_MAX_HEIGHT_PX)
+    );
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > AI_COMMAND_TEXTAREA_MAX_HEIGHT_PX ? "auto" : "hidden";
+  };
   const historyCopy = useMemo(() => buildCommandHistoryCopy(language), [language]);
   const recentCommandEntries = useMemo(
     () =>
@@ -756,8 +797,8 @@ export function AiCommandBar({
     return exact ? [exact, ...startsWithMatches, ...containsMatches] : [...startsWithMatches, ...containsMatches];
   }, [recentCommandEntries, commandText]);
   const currentHistoryMetadata = useMemo(
-    () => buildCommandHistoryMetadata(commandText),
-    [commandText]
+    () => buildCommandHistoryMetadata(commandText, nodeContext?.title ?? null),
+    [commandText, nodeContext?.title]
   );
 
   const shouldIgnoreWindowDragTarget = (target: EventTarget | null) => {
@@ -867,6 +908,14 @@ export function AiCommandBar({
   }, [open, activeTab]);
 
   useEffect(() => {
+    if (!open || activeTab !== "command") return;
+    const frame = window.requestAnimationFrame(() => {
+      syncCommandInputHeight();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeTab, commandText, open]);
+
+  useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -920,18 +969,11 @@ export function AiCommandBar({
     setCommandHistoryEntries((current) => {
       const now = new Date().toISOString();
       const normalized = trimmed.toLowerCase();
-      const metadata = buildCommandHistoryMetadata(trimmed);
-      const displayIdentity = buildHistoryDisplayIdentity(metadata.subject, metadata.autoGroup);
+      const metadata = buildCommandHistoryMetadata(trimmed, nodeContext?.title ?? null);
       const existing = current.find(
         (entry) =>
           !resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup) &&
-          (
-            entry.text.toLowerCase() === normalized ||
-            buildHistoryDisplayIdentity(
-              resolveHistoryEntrySubject(entry),
-              resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)
-            ) === displayIdentity
-          )
+          entry.text.toLowerCase() === normalized
       );
       const nextEntry: CommandHistoryEntry = existing
         ? {
@@ -991,22 +1033,14 @@ export function AiCommandBar({
   const archiveCurrentCommand = () => {
     const trimmed = commandText.trim();
     if (!trimmed) return;
-    const metadata = buildCommandHistoryMetadata(trimmed);
-    const displayIdentity = buildHistoryDisplayIdentity(metadata.subject, metadata.autoGroup);
+    const metadata = buildCommandHistoryMetadata(trimmed, nodeContext?.title ?? null);
     setCommandHistoryEntries((current) => {
       const now = new Date().toISOString();
       const existing = current.find(
         (entry) => {
           const isArchived = Boolean(resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup));
           const matchesText = entry.text.toLowerCase() === trimmed.toLowerCase();
-          const matchesDisplay =
-            buildHistoryDisplayIdentity(
-              resolveHistoryEntrySubject(entry),
-              isArchived
-                ? resolveHistoryEntryArchiveGroup(entry, historyCopy.defaultGroup)
-                : resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)
-            ) === displayIdentity;
-          return isArchived && (matchesText || matchesDisplay);
+          return isArchived && matchesText;
         }
       );
       const nextEntry: CommandHistoryEntry = existing
@@ -1034,13 +1068,7 @@ export function AiCommandBar({
             entry.id !== nextEntry.id &&
             !(
               !resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup) &&
-              (
-                entry.text.toLowerCase() === trimmed.toLowerCase() ||
-                buildHistoryDisplayIdentity(
-                  resolveHistoryEntrySubject(entry),
-                  resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)
-                ) === displayIdentity
-              )
+              entry.text.toLowerCase() === trimmed.toLowerCase()
             )
         )
       ];
@@ -1960,16 +1988,22 @@ export function AiCommandBar({
                 <div className="relative min-w-[220px] flex-1">
                   <textarea
                     ref={inputRef}
-                    className="ode-input min-h-[3.9rem] w-full resize-y rounded-xl px-4 py-3 text-[1rem] leading-6"
+                    className="ode-input min-h-[3.9rem] w-full resize-none rounded-xl px-4 py-3 text-[1rem] leading-6"
                     value={commandText}
                     placeholder={commandInputPlaceholder}
                     onChange={(event) => {
                       const nextValue = event.target.value;
+                      syncCommandInputHeight(event.currentTarget);
                       setCommandText(nextValue);
                       clearPlanPreview();
                       if (commandHistoryEntries.length > 0) {
                         setHistoryOpen(true);
                       }
+                    }}
+                    onPaste={() => {
+                      window.requestAnimationFrame(() => {
+                        syncCommandInputHeight();
+                      });
                     }}
                     onFocus={() => {
                       cancelHistoryClose();
