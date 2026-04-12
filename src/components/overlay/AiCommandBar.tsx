@@ -1127,15 +1127,22 @@ export function AiCommandBar({
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-3" data-ode-window-drag-ignore="true">
-            <button
-              type="button"
-              className={`ode-icon-btn h-9 w-9 ${activeTab === "settings" ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.28)] text-[var(--ode-accent)]" : ""}`}
-              onClick={() => setActiveTab((current) => (current === "settings" ? "command" : "settings"))}
-              aria-label={t("settings.ai_title")}
-              title={t("settings.ai_title")}
-            >
-              <SettingsGlyphSmall />
-            </button>
+            <OdeTooltip label={t("settings.ai_title")} side="bottom">
+              <button
+                type="button"
+                className={`ode-utility-window-btn ode-ai-command-settings-btn ${
+                  activeTab === "settings" ? "ode-ai-command-settings-btn-active" : ""
+                }`}
+                onClick={() => setActiveTab((current) => (current === "settings" ? "command" : "settings"))}
+                aria-label={t("settings.ai_title")}
+                data-ode-window-drag-ignore="true"
+                data-tauri-drag-region="false"
+              >
+                <span className="ode-window-icon-shell ode-ai-command-settings-icon-shell" aria-hidden="true">
+                  <SettingsGlyphSmall />
+                </span>
+              </button>
+            </OdeTooltip>
             {showWindowControls ? (
               <WindowControls
                 t={t}

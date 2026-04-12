@@ -10,6 +10,7 @@ import {
   useState
 } from "react";
 import { flushSync } from "react-dom";
+import { getVersion } from "@tauri-apps/api/app";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
@@ -2014,6 +2015,7 @@ export default function App() {
   const [updaterStatusLabel, setUpdaterStatusLabel] = useState<string | null>(null);
   const [updaterToastOpen, setUpdaterToastOpen] = useState(false);
   const [manualUpdateCheckPending, setManualUpdateCheckPending] = useState(false);
+  const [appVersionLabel, setAppVersionLabel] = useState(APP_DISPLAY_NAME);
   const [rememberPasswordPreference, setRememberPasswordPreference] = useState<RememberPasswordPreference>(() =>
     readRememberPasswordPreference()
   );
@@ -2231,6 +2233,26 @@ export default function App() {
   const [workspaceLocalPathInput, setWorkspaceLocalPathInput] = useState("");
   const [workspaceCreateInlineOpen, setWorkspaceCreateInlineOpen] = useState(false);
   const [projectPathInput, setProjectPathInput] = useState("");
+
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (cancelled) return;
+        const normalizedVersion = version.trim();
+        setAppVersionLabel(normalizedVersion ? `v${normalizedVersion} ${APP_DISPLAY_NAME}` : APP_DISPLAY_NAME);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAppVersionLabel(APP_DISPLAY_NAME);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -25900,7 +25922,7 @@ export default function App() {
         onDismiss={() => setUpdaterToastOpen(false)}
       />
       <StatusBar
-        version="v1.043"
+        version={appVersionLabel}
         updateStatusLabel={updaterStatusLabel}
         updateStatusTone={resolveUpdaterStatusTone(updaterStatus)}
         updateStatusMessage={updaterStatus?.message ?? null}

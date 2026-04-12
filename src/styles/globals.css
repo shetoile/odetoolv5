@@ -3322,6 +3322,36 @@ input {
   transform: translateY(1px);
 }
 
+.ode-ai-command-settings-btn {
+  width: 34px;
+  height: 34px;
+}
+
+.ode-ai-command-settings-btn-active {
+  border-color: rgba(107, 205, 245, 0.62);
+  color: var(--ode-accent);
+  background:
+    radial-gradient(60px 24px at 50% 4px, rgba(76, 193, 242, 0.14), transparent 68%),
+    linear-gradient(180deg, rgba(10, 62, 97, 0.62), rgba(6, 37, 58, 0.82));
+}
+
+.ode-ai-command-settings-btn-active:hover:enabled {
+  border-color: rgba(123, 218, 255, 0.78);
+  color: #e6f8ff;
+}
+
+.ode-ai-command-settings-icon-shell {
+  width: 16px;
+  height: 16px;
+}
+
+.ode-ai-command-settings-icon-shell > svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  transform: translateX(0.5px);
+}
+
 .ode-utility-window-btn-close:hover:enabled {
   border-color: rgba(221, 73, 73, 0.65);
   background:
