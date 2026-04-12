@@ -8,7 +8,7 @@ import {
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AI_SPEECH_LOCALES } from "@/ai/planning/outputLanguage";
-import { DatabaseRootGlyph, FolderGlyph } from "@/components/Icons";
+import { DatabaseRootGlyph, FolderGlyph, SettingsGlyphSmall } from "@/components/Icons";
 import { WindowControls } from "@/components/layout/WindowControls";
 import { OdeAiMark } from "@/components/OdeAiMark";
 import { DocumentTreeProposalEditor } from "@/components/overlay/DocumentTreeProposalEditor";
@@ -378,7 +378,8 @@ export function AiCommandBar({
   useEffect(() => {
     if (!simpleMode) return;
     const canKeepMemoryTab = Boolean(documentReview?.open);
-    if (activeTab !== "command" && !(canKeepMemoryTab && activeTab === "memory")) {
+    const canKeepSettingsTab = activeTab === "settings";
+    if (activeTab !== "command" && !canKeepSettingsTab && !(canKeepMemoryTab && activeTab === "memory")) {
       setActiveTab("command");
     }
   }, [simpleMode, activeTab, documentReview?.open]);
@@ -1126,6 +1127,15 @@ export function AiCommandBar({
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-3" data-ode-window-drag-ignore="true">
+            <button
+              type="button"
+              className={`ode-icon-btn h-9 w-9 ${activeTab === "settings" ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.28)] text-[var(--ode-accent)]" : ""}`}
+              onClick={() => setActiveTab((current) => (current === "settings" ? "command" : "settings"))}
+              aria-label={t("settings.ai_title")}
+              title={t("settings.ai_title")}
+            >
+              <SettingsGlyphSmall />
+            </button>
             {showWindowControls ? (
               <WindowControls
                 t={t}
@@ -1184,17 +1194,6 @@ export function AiCommandBar({
                   onClick={() => setActiveTab("activity")}
                 >
                   {t("assistant.activity_title")}
-                </button>
-                <button
-                  type="button"
-                  className={`rounded-full border px-4 py-2 text-[0.78rem] uppercase tracking-[0.12em] transition ${
-                    activeTab === "settings"
-                      ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)] text-[var(--ode-accent)]"
-                      : "border-[var(--ode-border)] bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]"
-                  }`}
-                  onClick={() => setActiveTab("settings")}
-                >
-                  {t("settings.ai_title_short")}
                 </button>
               </>
             ) : null}
