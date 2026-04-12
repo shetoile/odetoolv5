@@ -1,117 +1,122 @@
 import { type AiCommandActionId } from "@/features/ai/commandPlanner";
 
+export type AiCommandExecutionResult = {
+  createdSectionName?: string | null;
+  createdSectionNodeId?: string | null;
+  databaseRootNodeId?: string | null;
+  createdWidgetNodeId?: string | null;
+  widgetHostNodeId?: string | null;
+  executionOwnerNodeId?: string | null;
+  createdTaskNodeIds?: string[];
+};
+
 export interface AiCommandExecutionHandlers {
-  workspaceImport: () => Promise<void> | void;
-  workspaceResync: () => Promise<void> | void;
-  planMyDay: () => Promise<void> | void;
-  wbsGenerate: (args?: Record<string, unknown>) => Promise<void> | void;
-  wbsFromDocument: (args?: Record<string, unknown>) => Promise<void> | void;
-  databaseCreateSection: (args?: Record<string, unknown>) => Promise<void> | void;
-  treeCreateTopic: () => Promise<void> | void;
-  treeRenameSelected: (args?: Record<string, unknown>) => Promise<void> | void;
-  treeMoveSelected: (args?: Record<string, unknown>) => Promise<void> | void;
-  treeBulkCreate: (args?: Record<string, unknown>) => Promise<void> | void;
-  favoriteSelected: (args?: Record<string, unknown>) => Promise<void> | void;
-  desktopOpen: () => Promise<void> | void;
-  timelineOpen: () => Promise<void> | void;
-  timelineSetSchedule: (args?: Record<string, unknown>) => Promise<void> | void;
-  timelineClearSchedule: () => Promise<void> | void;
-  documentReview: (args?: Record<string, unknown>) => Promise<void> | void;
-  ticketCreate: () => Promise<void> | void;
-  ticketAnalyze: () => Promise<void> | void;
-  ticketDraftReply: (args?: Record<string, unknown>) => Promise<void> | void;
-  runQa: () => Promise<void> | void;
-  draftReleaseNote: () => Promise<void> | void;
+  workspaceImport: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  workspaceResync: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  planMyDay: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  wbsGenerate: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  wbsFromDocument: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  databaseCreateSection: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  databaseSeedExamples: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  dashboardWidgetCreate: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  governanceFrameworkGenerate: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  executionTaskCreate: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  treeCreateTopic: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  treeRenameSelected: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  treeMoveSelected: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  treeBulkCreate: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  favoriteSelected: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  desktopOpen: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  timelineOpen: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  timelineSetSchedule: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  timelineClearSchedule: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  documentReview: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  ticketCreate: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  ticketAnalyze: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  ticketDraftReply: (args?: Record<string, unknown>) => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  runQa: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
+  draftReleaseNote: () => Promise<AiCommandExecutionResult | void> | AiCommandExecutionResult | void;
 }
 
 export async function executeAiCommandActionWithHandlers(
   actionId: AiCommandActionId,
   args: Record<string, unknown> | undefined,
   handlers: AiCommandExecutionHandlers
-): Promise<void> {
+): Promise<AiCommandExecutionResult | void> {
   if (actionId === "workspace_import") {
-    await handlers.workspaceImport();
-    return;
+    return handlers.workspaceImport();
   }
   if (actionId === "workspace_resync") {
-    await handlers.workspaceResync();
-    return;
+    return handlers.workspaceResync();
   }
   if (actionId === "plan_my_day") {
-    await handlers.planMyDay();
-    return;
+    return handlers.planMyDay();
   }
   if (actionId === "wbs_generate") {
-    await handlers.wbsGenerate(args);
-    return;
+    return handlers.wbsGenerate(args);
   }
   if (actionId === "wbs_from_document") {
-    await handlers.wbsFromDocument(args);
-    return;
+    return handlers.wbsFromDocument(args);
   }
   if (actionId === "database_create_section") {
-    await handlers.databaseCreateSection(args);
-    return;
+    return handlers.databaseCreateSection(args);
+  }
+  if (actionId === "database_seed_examples") {
+    return handlers.databaseSeedExamples(args);
+  }
+  if (actionId === "dashboard_widget_create") {
+    return handlers.dashboardWidgetCreate(args);
+  }
+  if (actionId === "governance_framework_generate") {
+    return handlers.governanceFrameworkGenerate(args);
+  }
+  if (actionId === "execution_task_create") {
+    return handlers.executionTaskCreate(args);
   }
   if (actionId === "tree_create_topic") {
-    await handlers.treeCreateTopic();
-    return;
+    return handlers.treeCreateTopic();
   }
   if (actionId === "tree_rename_selected") {
-    await handlers.treeRenameSelected(args);
-    return;
+    return handlers.treeRenameSelected(args);
   }
   if (actionId === "tree_move_selected") {
-    await handlers.treeMoveSelected(args);
-    return;
+    return handlers.treeMoveSelected(args);
   }
   if (actionId === "tree_bulk_create") {
-    await handlers.treeBulkCreate(args);
-    return;
+    return handlers.treeBulkCreate(args);
   }
   if (actionId === "favorite_selected") {
-    await handlers.favoriteSelected(args);
-    return;
+    return handlers.favoriteSelected(args);
   }
   if (actionId === "desktop_open") {
-    await handlers.desktopOpen();
-    return;
+    return handlers.desktopOpen();
   }
   if (actionId === "timeline_open") {
-    await handlers.timelineOpen();
-    return;
+    return handlers.timelineOpen();
   }
   if (actionId === "timeline_set_schedule") {
-    await handlers.timelineSetSchedule(args);
-    return;
+    return handlers.timelineSetSchedule(args);
   }
   if (actionId === "timeline_clear_schedule") {
-    await handlers.timelineClearSchedule();
-    return;
+    return handlers.timelineClearSchedule();
   }
   if (actionId === "document_review") {
-    await handlers.documentReview(args);
-    return;
+    return handlers.documentReview(args);
   }
   if (actionId === "ticket_create") {
-    await handlers.ticketCreate();
-    return;
+    return handlers.ticketCreate();
   }
   if (actionId === "ticket_analyze") {
-    await handlers.ticketAnalyze();
-    return;
+    return handlers.ticketAnalyze();
   }
   if (actionId === "ticket_draft_reply") {
-    await handlers.ticketDraftReply(args);
-    return;
+    return handlers.ticketDraftReply(args);
   }
   if (actionId === "run_qa") {
-    await handlers.runQa();
-    return;
+    return handlers.runQa();
   }
   if (actionId === "draft_release_note") {
-    await handlers.draftReleaseNote();
-    return;
+    return handlers.draftReleaseNote();
   }
   throw new Error(`Unsupported action: ${actionId}`);
 }

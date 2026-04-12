@@ -197,6 +197,16 @@ const FR_CHECKLIST_TEXT: ChecklistTextById = {
     scenario:
       "Ouvrez Notes de version, Aide et Checklist QA dans leurs fenetres utilitaires dediees, puis verifiez que chaque entete propose reduire, agrandir/restaurer et fermer, et qu'un double-clic sur l'entete bascule aussi entre agrandir et restaurer."
   },
+  "ui-main-window-multi-display-move": {
+    title: "La fenetre principale se deplace proprement entre plusieurs ecrans",
+    scenario:
+      "Avec au moins deux ecrans connectes, faites glisser la fenetre principale ODETool d'un ecran a un autre en mode restaure, puis recommencez depuis une fenetre agrandie. Verifiez que la fenetre traverse les ecrans, continue a suivre le pointeur, peut etre agrandie sur le nouvel ecran, puis garde aussi reduire/restaurer."
+  },
+  "tree-organization-structure-lock": {
+    title: "Les branches d'organisation peuvent etre verrouillees et deverrouillees depuis l'arborescence",
+    scenario:
+      "Dans Organisation, faites un clic droit sur une branche normale qui n'est pas la racine du workspace et confirmez que Verrouiller la structure apparait. Verrouillez la branche, verifiez que le badge cadenas apparait sur ce noeud et confirmez que la creation, le deplacement ou la suppression de noeuds dans cette branche sont bloques. Puis deverrouillez la meme branche et confirmez que ces editions d'arborescence refonctionnent."
+  },
   "ui-qa-evidence-capture-flow": {
     title: "Les preuves QA acceptent les images presse-papiers et les fichiers",
     scenario:
@@ -441,6 +451,16 @@ const DE_CHECKLIST_TEXT: ChecklistTextById = {
     scenario:
       "Release Notes, Hilfe und QA-Checkliste in ihren eigenen Utility-Fenstern oeffnen und pruefen, dass jede Kopfzeile Minimieren, Maximieren/Wiederherstellen und Schliessen anbietet und dass ein Doppelklick auf die Kopfzeile ebenfalls zwischen Maximieren und Wiederherstellen umschaltet."
   },
+  "ui-main-window-multi-display-move": {
+    title: "Das Hauptfenster laesst sich sauber ueber mehrere Monitore verschieben",
+    scenario:
+      "Mit zwei oder mehr angeschlossenen Monitoren das ODETool-Hauptfenster im wiederhergestellten Zustand von einem Bildschirm auf einen anderen ziehen und den Test dann erneut aus maximiertem Zustand starten. Pruefen, dass das Fenster den Monitor wechselt, dem Zeiger weiter folgt, auf dem neuen Bildschirm maximiert werden kann und danach weiterhin Minimieren/Wiederherstellen unterstuetzt."
+  },
+  "tree-organization-structure-lock": {
+    title: "Organisationszweige lassen sich im Baum sperren und entsperren",
+    scenario:
+      "In Organisation einen normalen Zweig, der nicht die Workspace-Wurzel ist, per Rechtsklick oeffnen und bestaetigen, dass Struktur sperren erscheint. Den Zweig sperren, pruefen, dass das Schloss-Badge an diesem Knoten erscheint, und bestaetigen, dass Erstellen, Verschieben oder Loeschen von Knoten innerhalb dieses Zweigs blockiert wird. Danach denselben Zweig entsperren und bestaetigen, dass diese Baum-Bearbeitungen wieder funktionieren."
+  },
   "ui-qa-evidence-capture-flow": {
     title: "QA-Belege akzeptieren Zwischenablagebilder und Dateien",
     scenario:
@@ -684,6 +704,16 @@ const ES_CHECKLIST_TEXT: ChecklistTextById = {
     title: "Las ventanas utilitarias admiten minimizar, maximizar, restaurar y cerrar",
     scenario:
       "Abra Notas de version, Ayuda y Checklist QA en sus ventanas utilitarias dedicadas y verifique que cada cabecera ofrece minimizar, maximizar/restaurar y cerrar, y que un doble clic en la cabecera tambien alterna entre maximizar y restaurar."
+  },
+  "ui-main-window-multi-display-move": {
+    title: "La ventana principal se mueve correctamente entre varias pantallas",
+    scenario:
+      "Con dos o mas monitores conectados, arrastre la ventana principal de ODETool de una pantalla a otra estando restaurada y luego repita partiendo de una ventana maximizada. Verifique que la ventana cruza entre pantallas, sigue al puntero, puede maximizarse en la nueva pantalla y despues sigue admitiendo minimizar/restaurar."
+  },
+  "tree-organization-structure-lock": {
+    title: "Las ramas de organizacion pueden bloquearse y desbloquearse desde el arbol",
+    scenario:
+      "En Organizacion, haga clic derecho en una rama normal que no sea la raiz del workspace y confirme que aparece Bloquear estructura. Bloquee la rama, verifique que el icono de candado aparece en ese nodo y confirme que crear, mover o eliminar nodos dentro de esa rama queda bloqueado. Luego desbloquee la misma rama y confirme que esas ediciones del arbol vuelven a funcionar."
   },
   "ui-qa-evidence-capture-flow": {
     title: "Las pruebas QA admiten imagenes del portapapeles y archivos",

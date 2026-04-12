@@ -19,6 +19,7 @@ interface OdeTooltipProps {
   side?: TooltipSide;
   align?: TooltipAlign;
   tooltipClassName?: string;
+  hoverOpenDelayMs?: number;
   children: ReactElement;
 }
 
@@ -50,10 +51,12 @@ export function OdeTooltip({
   side = "bottom",
   align = "center",
   tooltipClassName,
+  hoverOpenDelayMs = 0,
   children
 }: OdeTooltipProps) {
   const anchorRef = useRef<TooltipAnchorElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const openTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<TooltipPosition>({
     left: 0,
@@ -65,6 +68,35 @@ export function OdeTooltip({
   if (!label || !isValidElement(children)) {
     return children;
   }
+
+  const cancelScheduledOpen = () => {
+    if (openTimerRef.current !== null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+  };
+
+  const openTooltip = () => {
+    cancelScheduledOpen();
+    setOpen(true);
+  };
+
+  const closeTooltip = () => {
+    cancelScheduledOpen();
+    setOpen(false);
+  };
+
+  const scheduleOpen = () => {
+    cancelScheduledOpen();
+    if (hoverOpenDelayMs <= 0) {
+      setOpen(true);
+      return;
+    }
+    openTimerRef.current = window.setTimeout(() => {
+      openTimerRef.current = null;
+      setOpen(true);
+    }, hoverOpenDelayMs);
+  };
 
   const updatePosition = () => {
     const anchor = anchorRef.current;
@@ -134,6 +166,12 @@ export function OdeTooltip({
     };
   }, [align, label, open, side]);
 
+  useLayoutEffect(() => {
+    return () => {
+      cancelScheduledOpen();
+    };
+  }, []);
+
   const child = children as ReactElement<any>;
   const childProps = child.props as {
     onMouseEnter?: (event: ReactMouseEvent<TooltipAnchorElement>) => void;
@@ -153,19 +191,19 @@ export function OdeTooltip({
         },
         onMouseEnter: (event: ReactMouseEvent<TooltipAnchorElement>) => {
           childProps.onMouseEnter?.(event);
-          setOpen(true);
+          scheduleOpen();
         },
         onMouseLeave: (event: ReactMouseEvent<TooltipAnchorElement>) => {
           childProps.onMouseLeave?.(event);
-          setOpen(false);
+          closeTooltip();
         },
         onFocus: (event: ReactFocusEvent<TooltipAnchorElement>) => {
           childProps.onFocus?.(event);
-          setOpen(true);
+          openTooltip();
         },
         onBlur: (event: ReactFocusEvent<TooltipAnchorElement>) => {
           childProps.onBlur?.(event);
-          setOpen(false);
+          closeTooltip();
         },
         "aria-describedby": open
           ? childProps["aria-describedby"]

@@ -1,5 +1,8 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import {
+  resolveWorkspaceSuggestedNameFromPath
+} from "@/features/workspace/manage";
+import {
   createProjectFromPath,
   createWorkspace,
   deleteProjectWorkspace,
@@ -86,9 +89,25 @@ export function useWorkspaceActions({
   refreshTree,
   navigateTo
 }: UseWorkspaceActionsParams) {
+  const normalizeLinkedPathSegment = (value: string) => value.trim().toLocaleLowerCase();
+
+  const readWindowsPathLeaf = (value: string) => {
+    const trimmed = value.trim().replace(/[\\/]+$/, "");
+    if (!trimmed) return "";
+    const parts = trimmed.split(/[\\/]+/).filter((part) => part.trim().length > 0);
+    return parts.length > 0 ? parts[parts.length - 1] : "";
+  };
+
   const buildWorkspaceLinkedPath = (parentPath: string, workspaceName: string) => {
     const trimmedParent = parentPath.trim().replace(/[\\/]+$/, "");
     if (!trimmedParent) return "";
+    const parentLeaf = readWindowsPathLeaf(trimmedParent);
+    if (
+      parentLeaf &&
+      normalizeLinkedPathSegment(parentLeaf) === normalizeLinkedPathSegment(workspaceName)
+    ) {
+      return trimmedParent;
+    }
     return `${trimmedParent}\\${workspaceName}`;
   };
 
@@ -163,7 +182,17 @@ export function useWorkspaceActions({
     if (isWorkspaceCreating || isProjectImporting) return;
     try {
       const pickedPath = await pickWindowsProjectFolder();
-      setWorkspaceLocalPathInput(pickedPath?.trim() ?? "");
+      const trimmedPath = pickedPath?.trim() ?? "";
+      if (!trimmedPath) return;
+      const previousSuggestedName = resolveWorkspaceSuggestedNameFromPath(workspaceLocalPathInput);
+      const nextSuggestedName = resolveWorkspaceSuggestedNameFromPath(trimmedPath);
+      setWorkspaceLocalPathInput(trimmedPath);
+      if (
+        nextSuggestedName &&
+        (workspaceNameInput.trim().length === 0 || workspaceNameInput.trim() === previousSuggestedName)
+      ) {
+        setWorkspaceNameInput(nextSuggestedName);
+      }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       setProjectError(t("project.local_path_failed", { reason }));

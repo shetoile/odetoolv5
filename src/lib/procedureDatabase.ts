@@ -9,6 +9,7 @@ export type ProcedureFieldType =
   | "short_text"
   | "long_text"
   | "rich_text"
+  | "message"
   | "number"
   | "year"
   | "month"
@@ -20,11 +21,16 @@ export type ProcedureFieldType =
   | "time"
   | "datetime"
   | "duration"
+  | "priority"
   | "single_select"
   | "multi_select"
+  | "tags"
   | "yes_no"
   | "email"
   | "phone"
+  | "url"
+  | "user_ref"
+  | "user_list"
   | "identifier"
   | "attachment"
   | "table"
@@ -53,6 +59,19 @@ export type ProcedureAutomationRole =
   | "execution_due_date"
   | "execution_note";
 
+export type ProcedureFieldAutoValue = "none" | "current_user" | "today" | "now";
+
+export type ProcedurePriorityOption = {
+  value: string;
+  icon: string;
+  color: string;
+  rank: number;
+  score: number;
+  tooltip: string;
+  reviewDays: number | null;
+  escalate: boolean;
+};
+
 export type ProcedureFieldDefinition = {
   nodeId: string;
   label: string;
@@ -67,7 +86,11 @@ export type ProcedureFieldDefinition = {
   relationTargetNodeId: string | null;
   relationDisplayFieldIds: string[];
   formulaExpression: string;
+  priorityOptions: ProcedurePriorityOption[];
+  priorityDefaultValue: string;
+  priorityTooltip: string;
   automationRole: ProcedureAutomationRole;
+  autoValue: ProcedureFieldAutoValue;
 };
 
 export type ProcedureTableDefinition = {
@@ -118,6 +141,10 @@ function readStringProperty(properties: Record<string, unknown> | undefined, key
   return typeof value === "string" ? value : "";
 }
 
+function readNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function readBooleanProperty(properties: Record<string, unknown> | undefined, key: string): boolean {
   return properties?.[key] === true;
 }
@@ -134,6 +161,54 @@ function normalizeOptionLines(value: string, fallback: string[]): string[] {
     .map((item) => item.trim())
     .filter(Boolean);
   return cleaned.length > 0 ? cleaned : fallback;
+}
+
+const DEFAULT_PRIORITY_COLOR_BY_INDEX = ["#5dc2ff", "#66d4a3", "#ffcb5c", "#ff7f6e"];
+const DEFAULT_PROCEDURE_PRIORITY_VALUES = ["Low", "Medium", "High", "Critical"];
+
+export function buildDefaultProcedurePriorityOptions(labels?: string[]): ProcedurePriorityOption[] {
+  const values = labels && labels.length > 0 ? labels : DEFAULT_PROCEDURE_PRIORITY_VALUES;
+  return values.map((value, index) => ({
+    value,
+    icon: "",
+    color: DEFAULT_PRIORITY_COLOR_BY_INDEX[Math.min(index, DEFAULT_PRIORITY_COLOR_BY_INDEX.length - 1)] ?? "#5dc2ff",
+    rank: index + 1,
+    score: index + 1,
+    tooltip: "",
+    reviewDays: null,
+    escalate: index >= values.length - 1
+  }));
+}
+
+function normalizeProcedurePriorityOptions(value: unknown, fallbackLabels: string[]): ProcedurePriorityOption[] {
+  if (!Array.isArray(value)) {
+    return buildDefaultProcedurePriorityOptions(fallbackLabels);
+  }
+
+  const parsed = value
+    .map((item, index) => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const candidateValue = typeof record.value === "string" ? record.value.trim() : "";
+      if (!candidateValue) return null;
+      return {
+        value: candidateValue,
+        icon: typeof record.icon === "string" ? record.icon.trim() : "",
+        color:
+          typeof record.color === "string" && record.color.trim().length > 0
+            ? record.color.trim()
+            : DEFAULT_PRIORITY_COLOR_BY_INDEX[Math.min(index, DEFAULT_PRIORITY_COLOR_BY_INDEX.length - 1)] ?? "#5dc2ff",
+        rank: readNullableNumber(record.rank) ?? index + 1,
+        score: readNullableNumber(record.score) ?? index + 1,
+        tooltip: typeof record.tooltip === "string" ? record.tooltip.trim() : "",
+        reviewDays: readNullableNumber(record.reviewDays),
+        escalate: record.escalate === true
+      } satisfies ProcedurePriorityOption;
+    })
+    .filter((item): item is ProcedurePriorityOption => item !== null)
+    .sort((left, right) => left.rank - right.rank || left.value.localeCompare(right.value));
+
+  return parsed.length > 0 ? parsed : buildDefaultProcedurePriorityOptions(fallbackLabels);
 }
 
 export function encodeProcedureNodeToken(nodeId: string): string {
@@ -181,6 +256,7 @@ export function decodeProcedureRecordToken(
 
 export function normalizeProcedureFieldType(value: unknown): ProcedureFieldType {
   switch (value) {
+    case "message":
     case "long_text":
     case "rich_text":
     case "number":
@@ -194,11 +270,16 @@ export function normalizeProcedureFieldType(value: unknown): ProcedureFieldType 
     case "time":
     case "datetime":
     case "duration":
+    case "priority":
     case "single_select":
     case "multi_select":
+    case "tags":
     case "yes_no":
     case "email":
     case "phone":
+    case "url":
+    case "user_ref":
+    case "user_list":
     case "identifier":
     case "attachment":
     case "table":
@@ -215,6 +296,17 @@ export function normalizeProcedureFieldType(value: unknown): ProcedureFieldType 
   }
 }
 
+export function normalizeProcedureFieldAutoValue(value: unknown): ProcedureFieldAutoValue {
+  switch (value) {
+    case "current_user":
+    case "today":
+    case "now":
+      return value;
+    default:
+      return "none";
+  }
+}
+
 function normalizeProcedureFieldInferenceKey(value: string): string {
   return value
     .normalize("NFD")
@@ -228,8 +320,53 @@ export function inferProcedureFieldTypeFromLabel(label: string): ProcedureFieldT
   const normalized = normalizeProcedureFieldInferenceKey(label);
   if (!normalized) return "short_text";
 
-  if (/\b(email|e mail|mail|courriel)\b/.test(normalized)) return "email";
+  if (
+    /\b(priority|priorite|severity|criticality|risk level|impact level|likelihood level|likelihood|impact|residual score|residual severity|control effectiveness|appetite)\b/.test(
+      normalized
+    )
+  ) {
+    return "priority";
+  }
+  if (
+    /\b(created at|logged at|reported at|submitted at|posted at|updated at|scheduled at|started at|ended at|timestamp|time stamp|date time|datetime)\b/.test(
+      normalized
+    )
+  ) {
+    return "datetime";
+  }
+  if (
+    /\b(created on|logged on|reported on|submitted on|entry date|review date|meeting date|scheduled on|start date|end date)\b/.test(
+      normalized
+    )
+  ) {
+    return "date";
+  }
+  if (/\b(start time|end time|meeting time|scheduled time)\b/.test(normalized)) return "time";
+  if (
+    /\b(meeting url|meeting link|join url|join link|website|web site|webpage|web page|url|uri|link)\b/.test(
+      normalized
+    )
+  ) {
+    return "url";
+  }
+  if (/\b(email|e mail|mail|courriel|recipient|recipients|to|cc|bcc|email to|email cc|email bcc)\b/.test(normalized)) {
+    return "email";
+  }
   if (/\b(phone|telephone|tel|mobile|cell|gsm|whatsapp)\b/.test(normalized)) return "phone";
+  if (
+    /\b(attendee|attendees|participant|participants|member|members|reviewer|reviewers|approver|approvers|assignee|assignees|users|team members|owners)\b/.test(
+      normalized
+    )
+  ) {
+    return "user_list";
+  }
+  if (
+    /\b(author|created by|reported by|submitted by|requested by|prepared by|assignee|owner|reviewer|approver|host)\b/.test(
+      normalized
+    )
+  ) {
+    return "user_ref";
+  }
   if (/\b(date|deadline|due|birthday|birth|hire|join|start|end|echeance)\b/.test(normalized)) {
     return "date";
   }
@@ -238,14 +375,84 @@ export function inferProcedureFieldTypeFromLabel(label: string): ProcedureFieldT
   if (/\b(percent|percentage|pourcentage|ratio|rate|taux)\b/.test(normalized)) return "percentage";
   if (/\b(budget|cost|price|salary|amount|montant|cout|tarif)\b/.test(normalized)) return "currency";
   if (/\b(number|count|qty|quantity|age|nombre)\b/.test(normalized)) return "number";
-  if (/\b(status|state|statut)\b/.test(normalized)) return "single_select";
+  if (/\b(status|state|statut|category|classification|domain|type)\b/.test(normalized)) return "single_select";
+  if (/\b(tag|tags|label|labels|keyword|keywords)\b/.test(normalized)) return "tags";
   if (/\b(active|enabled|approved|verified|archived|confirmed|present)\b/.test(normalized)) return "yes_no";
   if (/\b(id|identifier|identifiant|matricule|reference|numero)\b/.test(normalized)) return "identifier";
-  if (/\b(note|notes|comment|commentaire|description|details|detail|summary|resume|observation)\b/.test(normalized)) {
+  if (/\b(message|messages|post|posts|chat|thread|body|contenu)\b/.test(normalized)) return "message";
+  if (
+    /\b(note|notes|comment|commentaire|description|details|detail|summary|resume|observation|action items|actions|next steps)\b/.test(
+      normalized
+    )
+  ) {
     return "long_text";
   }
   if (/\b(file|files|attachment|attachments|piece jointe)\b/.test(normalized)) return "attachment";
   return "short_text";
+}
+
+export function inferProcedureFieldAutoValueFromLabel(
+  label: string,
+  type?: ProcedureFieldType | null
+): ProcedureFieldAutoValue {
+  const normalized = normalizeProcedureFieldInferenceKey(label);
+  const resolvedType = type ?? inferProcedureFieldTypeFromLabel(label);
+  if (!normalized) return "none";
+
+  if (
+    resolvedType === "user_ref" &&
+    /\b(author|created by|reported by|submitted by|requested by|prepared by|posted by)\b/.test(normalized)
+  ) {
+    return "current_user";
+  }
+  if (
+    (resolvedType === "date" || resolvedType === "datetime" || resolvedType === "time") &&
+    /\b(created at|logged at|reported at|submitted at|posted at|updated at|timestamp|time stamp)\b/.test(normalized)
+  ) {
+    return "now";
+  }
+  if (resolvedType === "date" && /\b(entry date|log date|created on|reported on|submitted on|today)\b/.test(normalized)) {
+    return "today";
+  }
+  return "none";
+}
+
+export function inferProcedureAutomationRoleFromLabel(
+  label: string,
+  type?: ProcedureFieldType | null
+): ProcedureAutomationRole {
+  const normalized = normalizeProcedureFieldInferenceKey(label);
+  const resolvedType = type ?? inferProcedureFieldTypeFromLabel(label);
+  if (!normalized) return "none";
+
+  if (
+    (resolvedType === "user_ref" ||
+      resolvedType === "node_link" ||
+      resolvedType === "relation" ||
+      resolvedType === "organization_link") &&
+    /\b(owner|responsible|assignee|assigned owner|owner node)\b/.test(normalized)
+  ) {
+    return "execution_owner_node";
+  }
+  if (/\b(deliverable|output|work package|milestone)\b/.test(normalized)) {
+    return "execution_deliverable";
+  }
+  if (/\b(task|action item|follow up|follow-up|todo|to do)\b/.test(normalized)) {
+    return "execution_task";
+  }
+  if (/\b(subtask|sub task|sub action)\b/.test(normalized)) {
+    return "execution_subtask";
+  }
+  if (/\b(action status|task status|execution status|delivery status|work status)\b/.test(normalized)) {
+    return "execution_status";
+  }
+  if (/\b(due date|deadline|target date|next review|review date)\b/.test(normalized)) {
+    return "execution_due_date";
+  }
+  if (/\b(note|notes|comment|comments|details|follow up note|follow-up note)\b/.test(normalized)) {
+    return "execution_note";
+  }
+  return "none";
 }
 
 function normalizeAutomationRole(value: unknown): ProcedureAutomationRole {
@@ -286,14 +493,29 @@ export function isProcedureOrganizationLinkFieldType(type: ProcedureFieldType): 
   return type === "organization_link";
 }
 
+export function isProcedureUserFieldType(type: ProcedureFieldType): boolean {
+  return type === "user_ref" || type === "user_list";
+}
+
 export function buildProcedureFieldDefinition(node: AppNode): ProcedureFieldDefinition {
   const type = normalizeProcedureFieldType(node.properties?.odeProcedureFieldType);
+  const autoValue =
+    node.properties?.odeProcedureAutoValue === undefined
+      ? inferProcedureFieldAutoValueFromLabel(node.name, type)
+      : normalizeProcedureFieldAutoValue(node.properties?.odeProcedureAutoValue);
   const legacyRelationDisplayFieldId =
     typeof node.properties?.odeProcedureRelationDisplayFieldId === "string" &&
     node.properties.odeProcedureRelationDisplayFieldId.trim().length > 0
       ? node.properties.odeProcedureRelationDisplayFieldId.trim()
       : null;
   const relationDisplayFieldIds = readStringArrayProperty(node.properties, "odeProcedureRelationDisplayFieldIds");
+  const priorityOptions =
+    type === "priority"
+      ? normalizeProcedurePriorityOptions(
+          node.properties?.odeProcedurePriorityOptions,
+          readStringArrayProperty(node.properties, "odeProcedureOptions")
+        )
+      : [];
   return {
     nodeId: node.id,
     label: node.name,
@@ -301,10 +523,16 @@ export function buildProcedureFieldDefinition(node: AppNode): ProcedureFieldDefi
     placeholder: readStringProperty(node.properties, "odeProcedurePlaceholder"),
     required: readBooleanProperty(node.properties, "odeProcedureRequired"),
     options:
-      type === "single_select" || type === "multi_select" || type === "table"
+      type === "single_select" || type === "multi_select" || type === "table" || type === "tags" || type === "priority"
         ? normalizeOptionLines(
             readStringArrayProperty(node.properties, "odeProcedureOptions").join("\n"),
-            type === "table" ? ["Column 1", "Column 2"] : ["Option 1", "Option 2"]
+            type === "table"
+              ? ["Column 1", "Column 2"]
+              : type === "tags"
+                ? []
+                : type === "priority"
+                  ? priorityOptions.map((option) => option.value)
+                  : ["Option 1", "Option 2"]
           )
         : [],
     showInMasterList: node.properties?.odeProcedureShowInMasterList === false ? false : true,
@@ -331,7 +559,12 @@ export function buildProcedureFieldDefinition(node: AppNode): ProcedureFieldDefi
           ? [legacyRelationDisplayFieldId]
           : [],
     formulaExpression: readStringProperty(node.properties, "odeProcedureFormulaExpression"),
-    automationRole: normalizeAutomationRole(node.properties?.odeProcedureAutomationRole)
+    priorityOptions,
+    priorityDefaultValue:
+      type === "priority" ? readStringProperty(node.properties, "odeProcedurePriorityDefaultValue") : "",
+    priorityTooltip: type === "priority" ? readStringProperty(node.properties, "odeProcedurePriorityTooltip") : "",
+    automationRole: normalizeAutomationRole(node.properties?.odeProcedureAutomationRole),
+    autoValue
   };
 }
 

@@ -201,6 +201,12 @@ export function collectWorkareaOwnerNodeIds(params: {
     if (params.visibleScope && !params.visibleScope.has(candidate.id)) continue;
     if (isFileLikeNode(candidate)) continue;
     if (isWorkareaRootNode(candidate)) {
+      const hasVisibleChildren =
+        getVisibleWorkareaChildNodes({
+          parentNode: candidate,
+          byParent: params.byParent
+        }).length > 0;
+      if (!hasVisibleChildren) continue;
       const ownerNodeId = getWorkareaRootOwnerNodeId(candidate, params.nodeById);
       if (ownerNodeId) ownerIds.add(ownerNodeId);
       continue;
@@ -215,8 +221,12 @@ export function collectWorkareaOwnerNodeIds(params: {
       }
       continue;
     }
-    const children = params.byParent.get(candidate.id) ?? [];
-    if (children.some((child) => isWorkareaRootNode(child) || isWorkareaItemNode(child))) {
+    const hasVisibleChildren =
+      getVisibleWorkareaChildNodes({
+        parentNode: candidate,
+        byParent: params.byParent
+      }).length > 0;
+    if (hasVisibleChildren) {
       ownerIds.add(candidate.id);
     }
   }

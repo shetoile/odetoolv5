@@ -7,7 +7,7 @@ import {
 import { getWorkareaItemKind, getWorkareaOwnerNodeId, isWorkareaItemNode } from "@/features/workspace/workarea";
 import { isFileLikeNode, type AppNode } from "@/lib/types";
 
-export type DashboardWidgetType = "metric" | "distribution" | "table";
+export type DashboardWidgetType = "metric" | "distribution" | "table" | "matrix";
 export type DashboardSourceKind = "database_records" | "execution_items";
 export type DashboardAggregation = "count" | "sum" | "avg" | "min" | "max";
 export type DashboardFilterOperator =
@@ -35,6 +35,7 @@ export type DashboardWidgetDefinition = {
   aggregation: DashboardAggregation;
   measureFieldId: string | null;
   groupFieldId: string | null;
+  secondaryGroupFieldId: string | null;
   displayFieldIds: string[];
   filterFieldId: string | null;
   filterOperator: DashboardFilterOperator;
@@ -85,6 +86,27 @@ export type DashboardWidgetResult =
       fieldOptions: DashboardFieldOption[];
       sourceKind: DashboardSourceKind;
       sourceNodeId: string | null;
+    }
+  | {
+      kind: "matrix";
+      title: string;
+      rowFieldLabel: string;
+      columnFieldLabel: string;
+      columns: string[];
+      rows: Array<{
+        label: string;
+        cells: Array<{
+          key: string;
+          label: string;
+          value: number;
+          displayValue: string;
+          rows: DashboardDrilldownRow[];
+        }>;
+      }>;
+      rowCount: number;
+      fieldOptions: DashboardFieldOption[];
+      sourceKind: DashboardSourceKind;
+      sourceNodeId: string | null;
     };
 
 const EXECUTION_SOURCE_ALL_ID = "__ode_dashboard_execution_all__";
@@ -115,6 +137,7 @@ function normalizeWidgetType(value: unknown): DashboardWidgetType {
   switch (value) {
     case "distribution":
     case "table":
+    case "matrix":
       return value;
     default:
       return "metric";
@@ -181,6 +204,8 @@ function mapProcedureFieldValueType(field: ProcedureFieldDefinition): DashboardF
       return "date";
     case "yes_no":
       return "boolean";
+    case "priority":
+      return "status";
     case "node_link":
       return "node";
     case "relation":
@@ -210,6 +235,7 @@ export function buildDashboardWidgetDefinition(node: AppNode): DashboardWidgetDe
     aggregation: normalizeAggregation(node.properties?.odeDashboardAggregation),
     measureFieldId: readStringProperty(node.properties, "odeDashboardMeasureFieldId") || null,
     groupFieldId: readStringProperty(node.properties, "odeDashboardGroupFieldId") || null,
+    secondaryGroupFieldId: readStringProperty(node.properties, "odeDashboardSecondaryGroupFieldId") || null,
     displayFieldIds: readStringArrayProperty(node.properties, "odeDashboardDisplayFieldIds"),
     filterFieldId: readStringProperty(node.properties, "odeDashboardFilterFieldId") || null,
     filterOperator: normalizeFilterOperator(node.properties?.odeDashboardFilterOperator),
@@ -406,6 +432,17 @@ function resolveFieldLabel(fieldOptions: DashboardFieldOption[], fieldId: string
   return fieldOptions.find((field) => field.id === fieldId)?.label ?? fieldId;
 }
 
+function sortDashboardGroupLabels(labels: Iterable<string>): string[] {
+  return Array.from(new Set(labels)).sort((left, right) => {
+    const leftNumber = coerceNumber(left);
+    const rightNumber = coerceNumber(right);
+    if (leftNumber !== null && rightNumber !== null) {
+      return leftNumber - rightNumber;
+    }
+    return left.localeCompare(right, undefined, { sensitivity: "base", numeric: true });
+  });
+}
+
 export function evaluateDashboardWidget(
   widget: DashboardWidgetDefinition,
   nodes: AppNode[]
@@ -415,6 +452,61 @@ export function evaluateDashboardWidget(
       ? resolveExecutionRows(nodes, widget.sourceNodeId)
       : resolveDatabaseRows(nodes, widget.sourceNodeId);
   const filteredRows = applyWidgetFilter(source.rows, widget);
+
+  if (widget.widgetType === "matrix") {
+    const columnFieldId = widget.groupFieldId ?? source.fieldOptions[0]?.id ?? "";
+    const rowFieldId = widget.secondaryGroupFieldId ?? source.fieldOptions[1]?.id ?? source.fieldOptions[0]?.id ?? "";
+    const rowLabels = new Set<string>();
+    const columnLabels = new Set<string>();
+    const groups = new Map<string, { rows: DashboardDrilldownRow[]; values: number[] }>();
+
+    for (const row of filteredRows) {
+      const rowLabel = row.values[rowFieldId] || "Empty";
+      const columnLabel = row.values[columnFieldId] || "Empty";
+      const groupKey = `${rowLabel}\u001f${columnLabel}`;
+      const current = groups.get(groupKey) ?? { rows: [], values: [] };
+      current.rows.push(row);
+      current.values.push(
+        widget.aggregation === "count" || !widget.measureFieldId
+          ? 1
+          : coerceNumber(row.values[widget.measureFieldId] ?? "") ?? 0
+      );
+      groups.set(groupKey, current);
+      rowLabels.add(rowLabel);
+      columnLabels.add(columnLabel);
+    }
+
+    const sortedColumnLabels = sortDashboardGroupLabels(columnLabels);
+    const sortedRowLabels = sortDashboardGroupLabels(rowLabels);
+    return {
+      kind: "matrix",
+      title: widget.title,
+      rowFieldLabel: resolveFieldLabel(source.fieldOptions, rowFieldId) || "Rows",
+      columnFieldLabel: resolveFieldLabel(source.fieldOptions, columnFieldId) || "Columns",
+      columns: sortedColumnLabels,
+      rows: sortedRowLabels.map((rowLabel) => ({
+        label: rowLabel,
+        cells: sortedColumnLabels.map((columnLabel) => {
+          const group = groups.get(`${rowLabel}\u001f${columnLabel}`) ?? { rows: [], values: [] };
+          const value =
+            widget.aggregation === "count" || !widget.measureFieldId
+              ? group.rows.length
+              : aggregateNumericValues(group.values, widget.aggregation);
+          return {
+            key: `${rowLabel}\u001f${columnLabel}`,
+            label: columnLabel,
+            value,
+            displayValue: formatMetricValue(value),
+            rows: group.rows
+          };
+        })
+      })),
+      rowCount: filteredRows.length,
+      fieldOptions: source.fieldOptions,
+      sourceKind: widget.sourceKind,
+      sourceNodeId: widget.sourceNodeId
+    };
+  }
 
   if (widget.widgetType === "table") {
     const defaultFields = source.fieldOptions.slice(0, 3).map((field) => field.id);

@@ -58,8 +58,7 @@ export function TopBar({
     !documentationModeActive &&
     !workspaceSettingsOpen;
   const isDesktopActive =
-    workspaceMode === "grid" &&
-    workspaceFocusMode !== "execution" &&
+    (workspaceMode === "grid" || workspaceMode === "timeline") &&
     !libraryModeActive &&
     !documentationModeActive &&
     !workspaceSettingsOpen;

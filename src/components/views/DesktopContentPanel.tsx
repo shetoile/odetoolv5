@@ -8,11 +8,15 @@ import {
   type MouseEvent as ReactMouseEvent,
   type RefObject
 } from "react";
-import { NodeGlyph, UploadGlyphSmall } from "@/components/Icons";
+import { NodeGlyph, SettingsGlyphSmall, UploadGlyphSmall } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import { QuickAppIcon } from "@/components/quick-apps/QuickAppIcon";
+import { ChantierWorkspacePanel } from "@/components/views/ChantierWorkspacePanel";
 import { DashboardPanel } from "@/components/views/DashboardPanel";
 import { ReusableLibraryPanel } from "@/components/views/ReusableLibraryPanel";
 import { getChantierLinkedNADisplay, isChantierNode, readChantierProfile } from "@/features/ode/chantierProfile";
+import type { WorkspaceNavigationState } from "@/features/workspace/navigation";
+import type { DesktopViewMode, SelectionSurface, WorkspaceFocusMode } from "@/features/workspace/viewMode";
 import { getLocaleForLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
 import { NA_CATALOG, NA_CATALOG_VERSION, getNAPathLabel } from "@/lib/naCatalog";
 import { getNodeDisplayName } from "@/lib/nodeDisplay";
@@ -30,13 +34,12 @@ import type {
   ODEChantierStatus
 } from "@/lib/types";
 import { isFileLikeNode } from "@/lib/types";
+import { getNodeQuickApps, type NodeQuickAppItem } from "@/lib/nodeQuickApps";
 import type { ODELibraryKind, ReusableLibraryIndexItem } from "@/lib/reusableLibraries";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
-type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 type MindMapOrientation = "horizontal" | "vertical";
 type MindMapContentMode = "quick_access" | "node_tree";
-type SelectionSurface = "tree" | "grid" | "timeline";
 type DropPosition = "before" | "inside" | "after";
 type QuickAccessMindMapGroup = {
   id: string;
@@ -83,6 +86,36 @@ function splitPortfolioTokens(value: string | null | undefined) {
     .split(/[\n,;|/]+/g)
     .map((token) => token.trim())
     .filter(Boolean);
+}
+
+function getWorkspaceHubCopy(language: LanguageCode) {
+  return language === "fr"
+    ? {
+        title: "Hub apps",
+        summary:
+          "Gardez ici la structure, les donnees partagees et les liens. Utilisez Applications pour lancer les outils externes du chantier, puis ODE pour la base, la bibliotheque et l'editeur gouverne.",
+        linkedApps: "Applications liees",
+        directItems: "Elements directs",
+        files: "Fichiers",
+        folders: "Dossiers",
+        manageApps: "Gerer les apps",
+        openTimeline: "Ouvrir timeline",
+        emptyApps: "Aucune application reliee pour le moment. Ajoutez un lien, une app locale ou un outil web dans les Quick Apps de ce noeud.",
+        open: "Ouvrir"
+      }
+    : {
+        title: "Apps Hub",
+        summary:
+          "Keep structure, shared data, and links here. Use Apps to launch external chantier tools, then use ODE for governed data, library content, and the editor.",
+        linkedApps: "Linked apps",
+        directItems: "Direct items",
+        files: "Files",
+        folders: "Folders",
+        manageApps: "Manage apps",
+        openTimeline: "Open timeline",
+        emptyApps: "No linked apps yet. Add a link, local app, or web tool through this node's Quick Apps.",
+        open: "Open"
+      };
 }
 
 function getChantierStatusCopy(
@@ -655,7 +688,7 @@ interface DesktopContentPanelProps {
   t: TranslateFn;
   language: LanguageCode;
   showChantierInsights?: boolean;
-  desktopViewMode: DesktopViewMode;
+  navigationState: Pick<WorkspaceNavigationState, "desktopViewMode" | "workspaceFocusMode" | "mainPaneTargetNode">;
   mindMapOrientation: MindMapOrientation;
   mindMapContentMode: MindMapContentMode;
   quickAccessMindMapRootLabel: string;
@@ -667,7 +700,7 @@ interface DesktopContentPanelProps {
   quickAccessMindMapGroups: QuickAccessMindMapGroup[];
   quickAccessMindMapDirectFavorites: AppNode[];
   activeFavoriteGroupId: string;
-  currentFolderNode: AppNode | null;
+  executionRootNode: AppNode | null;
   allNodes: AppNode[];
   byParent: Map<string, AppNode[]>;
   gridNodes: AppNode[];
@@ -748,6 +781,16 @@ interface DesktopContentPanelProps {
   onSelectReusableLibraryItem: (itemId: string, options?: { range?: boolean; toggle?: boolean }) => void;
   onOpenReusableLibraryItem: (itemId: string) => Promise<void> | void;
   onOpenReusableLibraryItemContextMenu: (event: ReactMouseEvent<HTMLElement>, itemId: string) => void;
+  onSaveNodeDescription: (nodeId: string, description: string | null) => Promise<void> | void;
+  onSaveNodeProperties: (nodeId: string, properties: Record<string, unknown>) => Promise<void> | void;
+  onLaunchQuickApp: (
+    item: NodeQuickAppItem,
+    launchContext?: { scope?: "global" | "workspace" | "node"; sourceNodeId?: string | null }
+  ) => Promise<void> | void;
+  onManageNodeQuickApps: (nodeId: string) => void;
+  onOpenNodeTimeline: (nodeId: string) => void;
+  currentUserDisplayName?: string | null;
+  onCreateChantierModuleFromTemplate: (itemId: string, chantierNodeId: string) => Promise<void> | void;
   onTriggerUpload: () => void;
   onSetEditingValue: (value: string) => void;
   onOpenInlineEditContextMenu: (event: ReactMouseEvent<HTMLInputElement>) => void;
@@ -759,7 +802,7 @@ export function DesktopContentPanel({
   t,
   language,
   showChantierInsights = true,
-  desktopViewMode,
+  navigationState,
   mindMapOrientation,
   mindMapContentMode,
   quickAccessMindMapRootLabel,
@@ -771,7 +814,7 @@ export function DesktopContentPanel({
   quickAccessMindMapGroups,
   quickAccessMindMapDirectFavorites,
   activeFavoriteGroupId,
-  currentFolderNode,
+  executionRootNode,
   allNodes,
   byParent,
   gridNodes,
@@ -852,17 +895,42 @@ export function DesktopContentPanel({
   onSelectReusableLibraryItem,
   onOpenReusableLibraryItem,
   onOpenReusableLibraryItemContextMenu,
+  onSaveNodeDescription,
+  onSaveNodeProperties,
+  onLaunchQuickApp,
+  onManageNodeQuickApps,
+  onOpenNodeTimeline,
+  currentUserDisplayName,
+  onCreateChantierModuleFromTemplate,
   onTriggerUpload,
   onSetEditingValue,
   onOpenInlineEditContextMenu,
   onCommitInlineEdit,
   onCancelInlineEdit
 }: DesktopContentPanelProps) {
+  const { desktopViewMode, workspaceFocusMode, mainPaneTargetNode: currentFolderNode } = navigationState;
   const effectiveRootDropTargetId = currentFolderDropTargetId ?? scopedRootDropTargetId;
   const rootInteractiveSelector =
     ".ode-grid-card, .ode-details-row, .ode-quick-mind-favorite, .ode-quick-mind-group-card, .ode-quick-mind-group-branch, .ode-mind-root-button";
-  const dashboardRootChildren = currentFolderNode ? byParent.get(currentFolderNode.id) ?? [] : [];
   const chantierStatusCopy = useMemo(() => getChantierStatusCopy(language), [language]);
+  const workspaceHubCopy = useMemo(() => getWorkspaceHubCopy(language), [language]);
+  const chantierOverviewNode =
+    currentFolderNode && !isFileLikeNode(currentFolderNode) && isChantierNode(currentFolderNode) ? currentFolderNode : null;
+  const showSimpleDashboardHub =
+    desktopViewMode === "dashboard" &&
+    Boolean(
+      currentFolderNode &&
+        !isFileLikeNode(currentFolderNode) &&
+        currentFolderNode.properties?.odeDashboardWidget !== true &&
+        !chantierOverviewNode
+    );
+  const chantierExecutionNode =
+    workspaceFocusMode === "execution" &&
+    executionRootNode &&
+    !isFileLikeNode(executionRootNode) &&
+    isChantierNode(executionRootNode)
+      ? executionRootNode
+      : null;
   const detailsScrollRef = useRef<HTMLDivElement | null>(null);
   const verticalBranchesRef = useRef<HTMLDivElement | null>(null);
   const [detailsScrollTop, setDetailsScrollTop] = useState(0);
@@ -2653,6 +2721,61 @@ export function DesktopContentPanel({
     );
   };
 
+  const renderSimpleDashboardHub = () => {
+    if (!showSimpleDashboardHub || !currentFolderNode || isFileLikeNode(currentFolderNode)) return null;
+    const nodeQuickApps = getNodeQuickApps(currentFolderNode);
+    return (
+      <section className="mb-5 rounded-[22px] border border-[rgba(110,211,255,0.16)] bg-[linear-gradient(180deg,rgba(7,34,54,0.82),rgba(4,23,38,0.88))] px-4 py-4 shadow-[0_0_0_1px_rgba(10,92,130,0.08)]">
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0 flex items-center gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[16px] border border-[rgba(88,197,255,0.18)] bg-[rgba(8,41,62,0.78)] text-[var(--ode-text)]">
+              <NodeGlyph
+                node={currentFolderNode}
+                active
+                folderState={folderNodeStateById.get(currentFolderNode.id)}
+                showExecutionOwnerGlyph={executionOwnerNodeIds.has(currentFolderNode.id)}
+              />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--ode-accent)]">
+                {workspaceHubCopy.title}
+              </div>
+              <div className="mt-1 truncate text-[1.18rem] font-semibold text-[var(--ode-text)]">
+                {currentFolderNode.name}
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {nodeQuickApps.map((item) => (
+              <OdeTooltip key={item.id} label={item.label} side="bottom">
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-[14px] border border-[rgba(88,197,255,0.18)] bg-[rgba(8,41,62,0.78)] text-[var(--ode-text)] transition hover:-translate-y-[1px] hover:border-[rgba(106,212,255,0.32)] hover:bg-[rgba(10,56,83,0.92)]"
+                  onClick={() => {
+                    void onLaunchQuickApp(item, { scope: "node", sourceNodeId: currentFolderNode.id });
+                  }}
+                  aria-label={item.label}
+                >
+                  <QuickAppIcon item={item} variant="dock" />
+                </button>
+              </OdeTooltip>
+            ))}
+            <OdeTooltip label={workspaceHubCopy.manageApps} side="bottom">
+              <button
+                type="button"
+                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[14px] border border-[rgba(88,197,255,0.18)] bg-[rgba(8,41,62,0.78)] text-[var(--ode-text)] transition hover:border-[rgba(106,212,255,0.32)] hover:bg-[rgba(10,56,83,0.92)]"
+                onClick={() => onManageNodeQuickApps(currentFolderNode.id)}
+                aria-label={workspaceHubCopy.manageApps}
+              >
+                <SettingsGlyphSmall />
+              </button>
+            </OdeTooltip>
+          </div>
+        </div>
+      </section>
+    );
+  };
+
   const renderQuickAccessFavoriteCard = (
     node: AppNode,
     className = "",
@@ -3138,6 +3261,35 @@ export function DesktopContentPanel({
     currentFolderNode.properties?.odeDashboardWidget !== true &&
     desktopViewMode === "dashboard"
   ) {
+    if (chantierOverviewNode) {
+      return (
+        <div
+          className="flex-1 min-h-0 overflow-auto px-5 py-6"
+          data-ode-surface="grid"
+          onMouseDownCapture={onActivateGridSurface}
+          onContextMenu={onOpenSurfaceContextMenu}
+        >
+          <ChantierWorkspacePanel
+            t={t}
+            language={language}
+            mode="overview"
+            chantierNode={chantierOverviewNode}
+            allNodes={allNodes}
+            byParent={byParent}
+            databaseTemplates={databaseTemplates}
+            currentUserDisplayName={currentUserDisplayName}
+            onSaveNodeDescription={onSaveNodeDescription}
+            onSaveNodeProperties={onSaveNodeProperties}
+            onLaunchQuickApp={onLaunchQuickApp}
+            onManageQuickApps={onManageNodeQuickApps}
+            onOpenTimeline={onOpenNodeTimeline}
+            onCreateModuleFromTemplate={onCreateChantierModuleFromTemplate}
+          />
+        </div>
+      );
+    }
+
+    const dashboardChildNodes = byParent.get(currentFolderNode.id) ?? [];
     return (
       <div
         className="flex-1 min-h-0 overflow-auto px-5 py-6"
@@ -3151,9 +3303,10 @@ export function DesktopContentPanel({
         }}
         onContextMenu={onOpenSurfaceContextMenu}
       >
+        {renderSimpleDashboardHub()}
         <DashboardPanel
           rootNode={currentFolderNode}
-          childNodes={dashboardRootChildren}
+          childNodes={dashboardChildNodes}
           allNodes={allNodes}
           onCreateWidget={onCreateDashboardWidget}
           onRenameWidget={onRenameDashboardWidget}
@@ -3161,6 +3314,19 @@ export function DesktopContentPanel({
           onMoveWidget={onMoveDashboardWidget}
           onDeleteWidget={onDeleteDashboardWidget}
         />
+        {gridFileNodes.length > 0 ? (
+          <section className="ode-file-trailing-section mt-6 ode-file-trailing-section-separated">
+            <div className="ode-file-trailing-title">
+              {workspaceHubCopy.files} ({gridFileNodes.length})
+            </div>
+            <div
+              className="grid gap-6"
+              style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
+            >
+              {gridFileNodes.map((node) => renderDesktopGridCard(node))}
+            </div>
+          </section>
+        ) : null}
       </div>
     );
   }
@@ -3227,6 +3393,26 @@ export function DesktopContentPanel({
       ) : null}
       {dropIndicator?.targetId === effectiveRootDropTargetId ? (
         <div className="ode-root-drop-hint">{t("tree.drop_to_root")}</div>
+      ) : null}
+      {renderSimpleDashboardHub()}
+      {chantierExecutionNode && desktopViewMode === "grid" ? (
+        <ChantierWorkspacePanel
+          t={t}
+          language={language}
+          mode="execution"
+          chantierNode={chantierExecutionNode}
+          browseNode={currentFolderNode}
+          allNodes={allNodes}
+          byParent={byParent}
+          databaseTemplates={databaseTemplates}
+          currentUserDisplayName={currentUserDisplayName}
+          onSaveNodeDescription={onSaveNodeDescription}
+          onSaveNodeProperties={onSaveNodeProperties}
+          onLaunchQuickApp={onLaunchQuickApp}
+          onManageQuickApps={onManageNodeQuickApps}
+          onOpenTimeline={onOpenNodeTimeline}
+          onCreateModuleFromTemplate={onCreateChantierModuleFromTemplate}
+        />
       ) : null}
       {desktopViewMode === "grid" || desktopViewMode === "dashboard" ? (
         <>

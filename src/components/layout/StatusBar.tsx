@@ -8,6 +8,8 @@ import {
 } from "@/components/Icons";
 import { NodeQuickAppDock } from "@/components/layout/NodeQuickAppDock";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import type { WorkspaceNavigationState } from "@/features/workspace/navigation";
+import type { WorkspaceScopeContext } from "@/features/workspace/scope";
 import { buildAppStorageKey } from "@/lib/appIdentity";
 import type { TranslationParams } from "@/lib/i18n";
 import type { MirrorStatus } from "@/lib/types";
@@ -17,9 +19,6 @@ import { deriveUserProfileInitials } from "@/lib/userProfile";
 type TranslateFn = (key: string, params?: TranslationParams) => string;
 
 type BranchClipboardLike = { mode: "copy" | "cut" };
-type WorkspaceMode = "grid" | "timeline";
-type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
-type WorkspaceFocusMode = "structure" | "data" | "execution";
 type QaChecklistHealth = "pending" | "passed" | "failed";
 type QaChecklistSummary = {
   total: number;
@@ -36,22 +35,16 @@ interface StatusBarProps {
   t: TranslateFn;
   branchClipboard: BranchClipboardLike | null;
   mirrorStatus: MirrorStatus;
-  workspaceMode: WorkspaceMode;
-  desktopViewMode: DesktopViewMode;
-  workspaceFocusMode: WorkspaceFocusMode;
-  documentationModeActive: boolean;
-  showExecutionMode?: boolean;
-  workareaAvailable: boolean;
-  workspaceEmptyOnly: boolean;
-  onSelectWorkspaceFocusMode: (mode: WorkspaceFocusMode) => void;
-  onToggleWorkspaceEmptyOnly: () => void;
+  navigationState: Pick<WorkspaceNavigationState, "workspaceMode" | "desktopViewMode" | "workspaceFocusMode">;
+  scopeContext: Pick<WorkspaceScopeContext, "documentationModeActive" | "executionModeActive">;
   qaChecklistSummary: QaChecklistSummary;
   qaChecklistHealth: QaChecklistHealth;
-  quickAppNodeLabel: string | null;
-  quickApps: NodeQuickAppItem[];
-  onLaunchQuickApp: (item: NodeQuickAppItem) => void;
-  onReorderQuickApps: (quickApps: NodeQuickAppItem[]) => void;
-  onManageQuickApps: () => void;
+  nodeSummaryBadges?: Array<{ key: string; label: string; value: number; onClick?: () => void; disabled?: boolean }>;
+  globalQuickAppsLabel: string | null;
+  globalQuickApps: NodeQuickAppItem[];
+  onLaunchGlobalQuickApp: (item: NodeQuickAppItem) => void;
+  onReorderGlobalQuickApps: (quickApps: NodeQuickAppItem[]) => void;
+  onManageGlobalQuickApps: () => void;
   onOpenReleaseNotes: () => void;
   onOpenHelp: () => void;
   onOpenQaChecklist: () => void;
@@ -188,11 +181,12 @@ export function StatusBar({
   t,
   qaChecklistSummary,
   qaChecklistHealth,
-  quickAppNodeLabel,
-  quickApps,
-  onLaunchQuickApp,
-  onReorderQuickApps,
-  onManageQuickApps,
+  nodeSummaryBadges = [],
+  globalQuickAppsLabel,
+  globalQuickApps,
+  onLaunchGlobalQuickApp,
+  onReorderGlobalQuickApps,
+  onManageGlobalQuickApps,
   onOpenReleaseNotes,
   onOpenHelp,
   onOpenQaChecklist,
@@ -650,17 +644,36 @@ export function StatusBar({
       <footer ref={footerRef} className="ode-statusbar">
         <NodeQuickAppDock
           t={t}
-          nodeLabel={quickAppNodeLabel}
-          quickApps={quickApps}
-          onLaunchQuickApp={onLaunchQuickApp}
-          onReorderQuickApps={onReorderQuickApps}
-          onManageQuickApps={onManageQuickApps}
+          dockLabel={globalQuickAppsLabel}
+          quickApps={globalQuickApps}
+          onLaunchQuickApp={onLaunchGlobalQuickApp}
+          onReorderQuickApps={onReorderGlobalQuickApps}
+          onManageQuickApps={onManageGlobalQuickApps}
           leadingSlot={userProfileMenu}
         />
 
         <div className="flex items-center gap-2 px-3">
+          {nodeSummaryBadges.length > 0 ? (
+            <div className="hidden items-center gap-1.5 md:flex">
+              {nodeSummaryBadges.map((item) => (
+                <button
+                  type="button"
+                  key={`footer-node-summary-${item.label}`}
+                  className={`rounded-full border border-[rgba(95,220,255,0.18)] bg-[rgba(8,52,82,0.42)] px-2.5 py-1 text-[0.68rem] text-[rgba(220,244,255,0.88)] transition ${
+                    item.onClick && !item.disabled
+                      ? "hover:border-[rgba(106,212,255,0.34)] hover:bg-[rgba(10,62,98,0.7)]"
+                      : "cursor-default opacity-85"
+                  }`}
+                  onClick={item.onClick}
+                  disabled={item.disabled || !item.onClick}
+                >
+                  {item.label}: {item.value}
+                </button>
+              ))}
+            </div>
+          ) : null}
           {updateStatusLabel ? (
-            <span className={`ode-statusbar-update-pill ode-statusbar-update-pill-${updateStatusTone}`}>
+            <span className="hidden rounded-full border border-[rgba(95,220,255,0.24)] bg-[rgba(8,52,82,0.5)] px-3 py-1 text-[0.68rem] text-[rgba(220,244,255,0.92)] md:inline-flex">
               {updateStatusLabel}
             </span>
           ) : null}

@@ -81,11 +81,75 @@ export function buildAiPlanPreview(
   if (actionId === "database_create_section") {
     const sectionName = parseArgsString(args, "section_name");
     const fields = parseArgsList(args, "fields");
+    const fieldSpecs = Array.isArray(args?.field_specs) ? args?.field_specs : [];
     return [
       sectionName
-        ? `Create database section "${sectionName}" in the selected context (${selectedLabel}).`
-        : `Add aligned database fields in the selected context (${selectedLabel}).`,
-      fields.length > 0 ? `Fields: ${fields.join(", ")}` : "Fields: infer or add from the request."
+        ? `Create database section "${sectionName}" in the Database workspace${selectedLabel ? ` (current selection: ${selectedLabel})` : ""}.`
+        : `Add aligned database fields in the Database workspace${selectedLabel ? ` (current selection: ${selectedLabel})` : ""}.`,
+      fields.length > 0
+        ? `Fields: ${fields.join(", ")}`
+        : fieldSpecs.length > 0
+          ? `Fields: ${fieldSpecs.length} structured field spec(s).`
+          : "Fields: infer or add from the request.",
+      "Fields can stay dynamic with types, formulas, relations, priority scales, auto values, and workflow roles."
+    ];
+  }
+  if (actionId === "database_seed_examples") {
+    const sectionName = parseArgsString(args, "section_name") || selectedLabel;
+    const count = parseArgsString(args, "count") || "3";
+    const scenario = parseArgsString(args, "scenario");
+    return [
+      `Create ${count} example record(s) in "${sectionName}".`,
+      scenario ? `Scenario: ${scenario}` : "Scenario: infer realistic examples from the section fields and current workspace context.",
+      "Append the example rows without deleting existing records."
+    ];
+  }
+  if (actionId === "dashboard_widget_create") {
+    const title = parseArgsString(args, "title") || "New Widget";
+    const widgetType = parseArgsString(args, "widget_type") || "metric";
+    const sourceRef = parseArgsString(args, "source_ref");
+    const groupField = parseArgsString(args, "group_field");
+    const secondaryGroupField = parseArgsString(args, "secondary_group_field");
+    return [
+      `Create a ${widgetType} widget named "${title}" under the current node (${selectedLabel}).`,
+      sourceRef ? `Source: ${sourceRef}` : "Source: infer the best current table or execution context.",
+      groupField && secondaryGroupField
+        ? `Fields: ${groupField} x ${secondaryGroupField}`
+        : groupField
+          ? `Field: ${groupField}`
+          : "Fields: infer the best grouping/filter fields from the request."
+    ];
+  }
+  if (actionId === "governance_framework_generate") {
+    const frameworkName = parseArgsString(args, "framework_name") || selectedLabel || "Governance Framework";
+    const modules = parseArgsList(args, "modules");
+    const goal = parseArgsString(args, "goal");
+    return [
+      `Generate a dynamic governance framework for "${frameworkName}".`,
+      goal ? `Goal: ${goal}` : "Goal: infer from the request and current context.",
+      modules.length > 0
+        ? `Modules: ${modules.join(", ")}`
+        : "Modules: infer the right registers, controls, actions, reviews, and insights from the request.",
+      "Create a framework root with dynamic sections, priority fields, scoring config, and dashboard widgets. Save the framework definition on the node for reuse."
+    ];
+  }
+  if (actionId === "execution_task_create") {
+    const title = parseArgsString(args, "title");
+    const names = parseArgsNames(args);
+    const scenario = parseArgsString(args, "scenario");
+    const deliverableTitle = parseArgsString(args, "deliverable_title");
+    const dueDate = parseArgsString(args, "due_date");
+    const status = parseArgsString(args, "status") || "planned";
+    return [
+      title
+        ? `Create execution task "${title}"${deliverableTitle ? ` in deliverable "${deliverableTitle}"` : ""}.`
+        : names.length > 0
+        ? `Create ${names.length} execution task(s)${deliverableTitle ? ` in deliverable "${deliverableTitle}"` : ""}.`
+          : scenario
+            ? `Create follow-up execution task(s) for "${scenario}"${deliverableTitle ? ` in deliverable "${deliverableTitle}"` : ""}.`
+            : `Create execution task(s) in the current workarea context (${selectedLabel}).`,
+      `Status: ${status}${dueDate ? ` | Due: ${dueDate}` : ""}`,
+      "Update structured deliverables and sync the execution projection nodes."
     ];
   }
   if (actionId === "tree_create_topic") {

@@ -11,7 +11,7 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 import { getVersion } from "@tauri-apps/api/app";
-import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { listen } from "@tauri-apps/api/event";
 import { currentMonitor, getAllWindows, getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
@@ -24,14 +24,6 @@ import {
 } from "@/ai/core/aiOrchestrator";
 import { callNative } from "@/lib/tauriApi";
 import { translate, getLocaleForLanguage, isRtlLanguage, type LanguageCode, type TranslationParams } from "@/lib/i18n";
-import {
-  APP_UPDATER_EVENT,
-  checkForAppUpdates,
-  isUpdaterBusy,
-  resolveUpdaterStatusLabel,
-  resolveUpdaterStatusTone,
-  type AppUpdaterStatusPayload
-} from "@/lib/appUpdater";
 import { REGRESSION_CHECKLIST_ITEMS, type RegressionChecklistItem } from "@/lib/regressionChecklist";
 import { getLocalizedRegressionChecklistItem } from "@/lib/regressionChecklistLocalization";
 import {
@@ -97,11 +89,14 @@ import {
 import { getSpellSuggestions } from "@/lib/spellcheckService";
 import {
   buildAiPlannerPrompts,
+  coerceAiDatabaseFieldSpecs,
+  extractFirstJsonObject,
   inferAiCommandArgs,
   normalizeAiCommandActionId,
   parseAiPlannerPayload,
   shouldSkipAiPlannerForCommand,
-  type AiCommandActionId
+  type AiCommandActionId,
+  type AiDatabaseFieldSpec
 } from "@/features/ai/commandPlanner";
 import {
   buildAiCommandContext,
@@ -148,8 +143,23 @@ import {
 import { formatWbsNodesForPrompt } from "@/features/ai/documentAdvisorPrompt";
 import {
   executeAiCommandActionWithHandlers,
-  type AiCommandExecutionHandlers
+  type AiCommandExecutionHandlers,
+  type AiCommandExecutionResult
 } from "@/features/ai/commandExecution";
+import {
+  buildGovernanceFrameworkGenerationPrompts,
+  buildGovernanceFrameworkSummary,
+  parseGovernanceFrameworkDefinition,
+  GOVERNANCE_FRAMEWORK_PROPERTY_KEY,
+  GOVERNANCE_FRAMEWORK_RAW_RESPONSE_PROPERTY_KEY,
+  GOVERNANCE_FRAMEWORK_REQUEST_PROPERTY_KEY,
+  GOVERNANCE_FRAMEWORK_SCHEMA_VERSION,
+  GOVERNANCE_FRAMEWORK_VERSION_PROPERTY_KEY,
+  type GovernanceDashboardPreset,
+  type GovernanceFieldDefinition,
+  type GovernanceFrameworkDefinition,
+  type GovernanceModuleDefinition
+} from "@/features/ode/governanceFramework";
 import {
   areAllTimelinePrioritiesSelected as areAllTimelinePriorityFiltersSelected,
   areAllTimelineStatusesSelected as areAllTimelineStatusFiltersSelected,
@@ -205,16 +215,37 @@ import {
   resolveNodeStateFiltersForWorkspaceFocusMode,
   resolvePreferredViewForNodeStateFilters,
   toggleEmptyOnlyNodeStateFilters,
-  toggleNodeStateFilterSelection
+  toggleNodeStateFilterSelection,
+  type DesktopViewMode,
+  type SelectionSurface,
+  type WorkspaceFocusMode,
+  type WorkspaceMode
 } from "@/features/workspace/viewMode";
 import {
   buildScopedNumbering,
   canResolveInitialWorkspaceView as canResolveInitialWorkspaceViewState,
   collectProjectScopedNodeIds,
+  createWorkspaceScopeContext,
   hasLinkedWorkspaceFolder,
   isInternalWorkspaceRootPath,
   resolveActiveProject
 } from "@/features/workspace/scope";
+import {
+  buildWorkspaceNavigationState,
+  canOpenNodeInDesktopTab,
+  closeWorkspaceTabEntry,
+  createEmptyWorkspaceTabSession,
+  readWorkspaceTabSessions,
+  resolveBreadcrumbNavigationTarget,
+  resolveRestorableWorkspaceTabEntry,
+  resolveWorkspaceSearchNavigationPlan,
+  sanitizeWorkspaceTabSession,
+  upsertWorkspaceTabEntry,
+  type WorkspaceNavigationActions,
+  type WorkspaceNavigationController,
+  type WorkspaceTabSession,
+  type WorkspaceTabSessions
+} from "@/features/workspace/navigation";
 import {
   buildFilteredWorkspaceTreeRows,
   resolveWorkspaceGridNodes
@@ -253,8 +284,7 @@ import {
   buildSidebarSearchResults,
   buildTimelineSearchResults,
   collectAncestorNodeIds,
-  resolveSearchResultNavigationParentId,
-  resolveSearchResultSelectionSurface
+  resolveSearchResultNavigationParentId
 } from "@/features/workspace/search";
 import {
   ACCESS_ROLE_VALUES,
@@ -358,12 +388,33 @@ import {
   buildAppStorageKey
 } from "@/lib/appIdentity";
 import {
+  APP_UPDATER_EVENT,
+  checkForAppUpdates,
+  isUpdaterBusy,
+  resolveUpdaterStatusLabel,
+  resolveUpdaterStatusTone,
+  type AppUpdaterStatusPayload
+} from "@/lib/appUpdater";
+import {
   PROCEDURE_RECORDS_PROPERTY_KEY,
+  buildDefaultProcedurePriorityOptions,
   buildProcedureDatabaseModel,
   buildProcedureExecutionAutomationPlans,
+  computeProcedurePreviewRecordValues,
   computeProcedureFormulaUpdates,
+  inferProcedureAutomationRoleFromLabel,
+  inferProcedureFieldAutoValueFromLabel,
   inferProcedureFieldTypeFromLabel,
+  isProcedureFormulaFieldType,
   isProcedureFieldNode,
+  isProcedureRelationFieldType,
+  normalizeProcedureFieldType,
+  type ProcedurePriorityOption,
+  type ProcedureFieldDefinition,
+  type ProcedureFieldAutoValue,
+  type ProcedureTableDefinition,
+  type ProcedureRecord,
+  type ProcedureRecordValue,
   type ProcedureExecutionAutomationPlan
 } from "@/lib/procedureDatabase";
 import { isDashboardWidgetNode } from "@/lib/dashboard";
@@ -422,6 +473,7 @@ import { DeleteConfirmModal } from "@/components/modals/DeleteConfirmModal";
 import type { DocumentActionModalItem } from "@/components/modals/DocumentActionModal";
 import { HelpModal } from "@/components/modals/HelpModal";
 import { MindMapFileReviewModal } from "@/components/modals/MindMapFileReviewModal";
+import { HtmlAppTemplatesModal } from "@/components/modals/HtmlAppTemplatesModal";
 import { NodeQuickAppsModal } from "@/components/modals/NodeQuickAppsModal";
 import { NodeTooltipEditModal } from "@/components/modals/NodeTooltipEditModal";
 import { ODEImportPreviewModal } from "@/components/modals/ODEImportPreviewModal";
@@ -429,6 +481,7 @@ import { QaChecklistModal } from "@/components/modals/QaChecklistModal";
 import { ReleaseNotesModal } from "@/components/modals/ReleaseNotesModal";
 import { TaskScheduleModal } from "@/components/modals/TaskScheduleModal";
 import { UserAccountsModal } from "@/components/modals/UserAccountsModal";
+import { WorkspaceContentModal } from "@/components/modals/WorkspaceContentModal";
 import { WorkspaceSettingsModal } from "@/components/modals/WorkspaceSettingsModal";
 import {
   CreateChantierModal,
@@ -440,6 +493,7 @@ import { MainPaneHeader } from "@/components/views/MainPaneHeader";
 import { TimelineHeaderBar } from "@/components/views/TimelineHeaderBar";
 import { DesktopContentPanel } from "@/components/views/DesktopContentPanel";
 import { DesktopNodeTabBar } from "@/components/views/DesktopNodeTabBar";
+import { HtmlNodeTabPanel } from "@/components/views/HtmlNodeTabPanel";
 import { ProcedureBuilderPanel } from "@/components/views/ProcedureBuilderPanel";
 import { TimelineContentPanel } from "@/components/views/TimelineContentPanel";
 import { SidebarPanel } from "@/components/views/SidebarPanel";
@@ -478,6 +532,7 @@ import {
   moveNode,
   openExternalUrl,
   openLocalPath,
+  openQuickAppWindow,
   openNodeFile,
   openNodeFileLocation,
   openNodeFileWith,
@@ -494,12 +549,24 @@ import {
   updateNodeProperties
 } from "@/lib/nodeService";
 import {
+  createHtmlAppTemplate,
+  isHtmlTemplatePath,
+  normalizeHtmlAppTemplates,
+  type HtmlAppTemplate
+} from "@/lib/htmlAppTemplates";
+import {
+  buildScopedQuickAppsProperties,
   buildNodeQuickAppsProperties,
+  canQuickAppTargetOpenInOdeWindow,
   createNodeQuickAppItem,
   getQuickAppTargetLeafName,
+  getScopedQuickApps,
   getNodeQuickApps,
   normalizeNodeQuickApps,
+  resolveQuickAppLaunchMode,
   resolveQuickAppLaunchTarget,
+  WORKSPACE_QUICK_APPS_PROPERTY,
+  type NodeQuickAppKind,
   type NodeQuickAppItem
 } from "@/lib/nodeQuickApps";
 import { createNodeNumberingLevelState, resolveNodeTreeNumbering } from "@/lib/nodeNumbering";
@@ -604,17 +671,11 @@ import latestQaMeta from "../quality/reports/latest.json";
 import releaseLogData from "../quality/release-log.json";
 import qaFeedbackData from "../quality/qa-feedback.json";
 
-type WorkspaceMode = "grid" | "timeline";
-type DesktopViewMode = "grid" | "mindmap" | "details" | "dashboard" | "library" | "procedure";
 type MindMapOrientation = "horizontal" | "vertical";
 type MindMapContentMode = "quick_access" | "node_tree";
 type NodeStateFilter = "empty" | "filled" | "task" | "execution" | "data";
-type WorkspaceFocusMode = "structure" | "data" | "execution";
 type ExpansionContext = "organization" | "workarea" | "timeline";
 type KeyboardSurface = "tree" | "grid" | "timeline" | "procedure";
-
-
-type SelectionSurface = "tree" | "grid" | "timeline";
 type WorkspaceStructureMutationScope = "organization" | "workarea" | "content";
 
 type DesktopWindowRestoreBounds = {
@@ -946,7 +1007,7 @@ const TIMELINE_ROW_HEIGHT = 38;
 const LANGUAGE_CODES: LanguageCode[] = ["FR", "EN", "DE", "ES"];
 const FOLDER_NODE_STATE_ORDER: FolderNodeState[] = ["empty", "task_only", "data_only", "filled"];
 const QA_FILE_OUTPUTS_ENABLED = false;
-const DESKTOP_WINDOW_WORKAREA_MARGIN_PX = 10;
+const DESKTOP_WINDOW_WORKAREA_MARGIN_PX = 0;
 const DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX = 0;
 const DESKTOP_WINDOW_MAXIMIZED_TOLERANCE_PX = 24;
 const DESKTOP_WINDOW_HEADER_DRAG_THRESHOLD_PX = 6;
@@ -1031,6 +1092,103 @@ function readWindowSearchParam(name: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function sanitizeQuickAppWindowLabelPart(value: string, fallback = "app"): string {
+  const normalized = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized || fallback;
+}
+
+function buildQuickAppWindowLabel(item: NodeQuickAppItem, target: string, sourceNodeId?: string | null): string {
+  const idPart = sanitizeQuickAppWindowLabelPart(item.id, "item");
+  const leafPart = sanitizeQuickAppWindowLabelPart(getQuickAppTargetLeafName(target), "target");
+  const nodePart = sourceNodeId ? sanitizeQuickAppWindowLabelPart(sourceNodeId, "node") : "global";
+  return `${QUICK_APP_WINDOW_LABEL_PREFIX}-${nodePart}-${idPart}-${leafPart}`;
+}
+
+function convertLocalPathToFileUrl(target: string): string | null {
+  const normalizedTarget = target.trim().replace(/\\/g, "/");
+  if (!normalizedTarget) return null;
+  if (/^[a-zA-Z]:\//.test(normalizedTarget)) {
+    return encodeURI(`file:///${normalizedTarget}`);
+  }
+  if (normalizedTarget.startsWith("//")) {
+    return encodeURI(`file:${normalizedTarget}`);
+  }
+  if (normalizedTarget.startsWith("/")) {
+    return encodeURI(`file://${normalizedTarget}`);
+  }
+  return null;
+}
+
+function resolveQuickAppEmbeddedSrc(kind: NodeQuickAppKind, target: string): string | null {
+  const normalizedTarget = resolveQuickAppLaunchTarget({ kind, target });
+  if (!normalizedTarget) return null;
+  return kind === "local_path" ? convertLocalPathToFileUrl(normalizedTarget) : normalizedTarget;
+}
+
+function isHtmlQuickAppTarget(kind: NodeQuickAppKind, target: string): boolean {
+  if (kind !== "local_path") return false;
+  const leaf = getQuickAppTargetLeafName(target);
+  const dotIndex = leaf.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === leaf.length - 1) return false;
+  const extension = leaf.slice(dotIndex + 1).toLowerCase();
+  return extension === "html" || extension === "htm";
+}
+
+function appendQuickAppContextParams(
+  src: string,
+  params: Record<string, string | null | undefined>
+): string {
+  if (!src.trim()) return src;
+  try {
+    const url = new URL(src);
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === "string" && value.trim().length > 0) {
+        url.searchParams.set(key, value);
+      }
+    }
+    return url.toString();
+  } catch {
+    return src;
+  }
+}
+
+function buildQuickAppWindowCopy(language: LanguageCode) {
+  if (language === "FR") {
+    return {
+      openExternal: "Ouvrir a l'exterieur",
+      reload: "Recharger",
+      unavailable: "Cette application externe ne peut pas etre affichee dans une fenetre ODE.",
+      hint: "ODE reste la coquille et cette vue integre l'application externe dans la fenetre."
+    };
+  }
+  if (language === "DE") {
+    return {
+      openExternal: "Extern oeffnen",
+      reload: "Neu laden",
+      unavailable: "Diese externe App kann nicht in einem ODE-Fenster angezeigt werden.",
+      hint: "ODE bleibt die Huelle und diese Ansicht zeigt die externe App im Fenster."
+    };
+  }
+  if (language === "ES") {
+    return {
+      openExternal: "Abrir fuera de ODE",
+      reload: "Recargar",
+      unavailable: "Esta aplicacion externa no puede mostrarse dentro de una ventana ODE.",
+      hint: "ODE sigue siendo la capa principal y esta vista integra la app externa dentro de la ventana."
+    };
+  }
+  return {
+    openExternal: "Open externally",
+    reload: "Reload",
+    unavailable: "This external app cannot be shown inside an ODE window.",
+    hint: "ODE stays as the shell and this view hosts the external app inside the window."
+  };
+}
+
 type WindowsLanguageSnapshot = {
   inputLocale?: string | null;
   uiLocale?: string | null;
@@ -1075,6 +1233,8 @@ const FAVORITE_GROUP_TREE_FILTER_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("
 const WORKSPACE_ROOT_NUMBERING_STORAGE_KEY = buildAppStorageKey("workspaceRootNumbering.v1");
 const NODE_TOOLTIP_VISIBILITY_STORAGE_KEY = buildAppStorageKey("nodeTooltips.visible.v1");
 const WORKSPACE_NODE_TABS_STORAGE_KEY = buildAppStorageKey("workspaceNodeTabs.v1");
+const GLOBAL_QUICK_APPS_STORAGE_KEY = buildAppStorageKey("globalQuickApps.v1");
+const HTML_APP_TEMPLATES_STORAGE_KEY = buildAppStorageKey("htmlAppTemplates.v1");
 const NODE_STATE_FILTER_PARENTS_STORAGE_KEY = buildAppStorageKey("nodeStateFilter.parents.v1");
 const TIMELINE_FILTER_PARENTS_STORAGE_KEY = buildAppStorageKey("timelineFilter.parents.v1");
 const ACTIVE_ACCESS_ROLE_STORAGE_KEY = buildAppStorageKey("accessRole.active.v1");
@@ -1085,12 +1245,38 @@ const LINKED_NODE_WINDOW_NODE_QUERY_PARAM = "linkedNodeId";
 const LINKED_NODE_WINDOW_PROJECT_QUERY_PARAM = "linkedProjectId";
 const FIELD_ORDER_WINDOW_NODE_QUERY_PARAM = "fieldOrderNodeId";
 const FIELD_ORDER_WINDOW_PROJECT_QUERY_PARAM = "fieldOrderProjectId";
+const QUICK_APP_WINDOW_KIND_QUERY_PARAM = "quickAppKind";
+const QUICK_APP_WINDOW_TARGET_QUERY_PARAM = "quickAppTarget";
+const QUICK_APP_WINDOW_LABEL_QUERY_PARAM = "quickAppLabel";
+const QUICK_APP_WINDOW_LABEL_PREFIX = "odetool-quick-app";
 const FAVORITE_ALL_GROUP_ID = "__all__";
 const WORKSPACE_SCOPE_KIND_PROPERTY = "odeWorkspaceScopeKind";
 const DOCUMENTATION_SCOPE_KIND = "documentation_root";
 const DOCUMENTATION_SCOPE_DEFAULT_NAME = "Database";
 const PROCEDURE_INLINE_ASSET_PROPERTY = "odeProcedureInlineAsset";
 const LEGACY_DOCUMENTATION_SCOPE_NAMES = new Set(["database", "documentation"]);
+
+function readStoredQuickAppCollection(storageKey: string): NodeQuickAppItem[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [];
+    return normalizeNodeQuickApps(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+function readStoredHtmlAppTemplates(storageKey: string): HtmlAppTemplate[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) return [];
+    return normalizeHtmlAppTemplates(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
 const IMAGE_PREVIEW_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp", "svg", "avif"]);
 const VIDEO_PREVIEW_EXTENSIONS = new Set(["mp4", "webm", "mov", "m4v", "avi", "mkv"]);
 const REMEMBER_PASSWORD_DURATION_UNITS: RememberPasswordDurationUnit[] = ["hour", "day", "week", "month", "year"];
@@ -1357,18 +1543,119 @@ function findDocumentationWorkspaceAncestor(
   return null;
 }
 
-function buildAiDatabaseFieldProperties(title: string, existingNode?: AppNode | null): Record<string, unknown> {
+function buildAiDatabaseFieldProperties(
+  title: string,
+  existingNode?: AppNode | null,
+  fieldSpec?: AiDatabaseFieldSpec | null
+): Record<string, unknown> {
   const existingFieldType =
     typeof existingNode?.properties?.odeProcedureFieldType === "string" &&
     existingNode.properties.odeProcedureFieldType.trim().length > 0
-      ? existingNode.properties.odeProcedureFieldType.trim()
+      ? normalizeProcedureFieldType(existingNode.properties.odeProcedureFieldType)
       : inferProcedureFieldTypeFromLabel(title);
+  const resolvedFieldType = fieldSpec?.type ?? existingFieldType;
   const existingShowInMasterList = existingNode?.properties?.odeProcedureShowInMasterList;
+  const existingRequired = existingNode?.properties?.odeProcedureRequired;
+  const existingPlaceholder =
+    typeof existingNode?.properties?.odeProcedurePlaceholder === "string"
+      ? existingNode.properties.odeProcedurePlaceholder
+      : "";
+  const existingOptions = Array.isArray(existingNode?.properties?.odeProcedureOptions)
+    ? existingNode.properties.odeProcedureOptions.filter(
+        (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+      )
+    : [];
+  const existingAutoValue =
+    typeof existingNode?.properties?.odeProcedureAutoValue === "string" &&
+    existingNode.properties.odeProcedureAutoValue.trim().length > 0
+      ? (existingNode.properties.odeProcedureAutoValue.trim() as ProcedureFieldAutoValue)
+      : inferProcedureFieldAutoValueFromLabel(title, resolvedFieldType);
+  const resolvedAutoValue =
+    fieldSpec?.autoValue ??
+    existingAutoValue ??
+    inferProcedureFieldAutoValueFromLabel(title, resolvedFieldType);
+  const existingPriorityOptions = Array.isArray(existingNode?.properties?.odeProcedurePriorityOptions)
+    ? (existingNode?.properties?.odeProcedurePriorityOptions.filter(
+        (entry): entry is Record<string, unknown> =>
+          Boolean(entry) && typeof entry === "object" && !Array.isArray(entry)
+      ) as ProcedurePriorityOption[])
+    : [];
+  const priorityOptions =
+    resolvedFieldType === "priority"
+      ? fieldSpec?.priorityOptions && fieldSpec.priorityOptions.length > 0
+        ? fieldSpec.priorityOptions
+        : existingPriorityOptions.length > 0
+          ? existingPriorityOptions
+          : buildDefaultProcedurePriorityOptions(fieldSpec?.options)
+      : [];
+  const selectOptions =
+    resolvedFieldType === "priority"
+      ? priorityOptions.map((option) => option.value)
+      : fieldSpec?.options && fieldSpec.options.length > 0
+        ? fieldSpec.options
+        : existingOptions;
+  const inferredAutomationRole = inferProcedureAutomationRoleFromLabel(title, resolvedFieldType);
+  const existingAutomationRole =
+    typeof existingNode?.properties?.odeProcedureAutomationRole === "string" &&
+    existingNode.properties.odeProcedureAutomationRole.trim().length > 0
+      ? existingNode.properties.odeProcedureAutomationRole.trim()
+      : inferredAutomationRole;
+  const resolvedAutomationRole = fieldSpec?.automationRole ?? existingAutomationRole ?? "none";
+
   return {
     odeProcedureItemType: "field",
-    odeProcedureFieldType: existingFieldType,
+    odeProcedureFieldType: resolvedFieldType,
+    odeProcedureAutoValue: resolvedAutoValue,
     odeProcedureShowInMasterList:
-      typeof existingShowInMasterList === "boolean" ? existingShowInMasterList : true
+      typeof fieldSpec?.showInMasterList === "boolean"
+        ? fieldSpec.showInMasterList
+        : typeof existingShowInMasterList === "boolean"
+          ? existingShowInMasterList
+          : true,
+    odeProcedureRequired:
+      typeof fieldSpec?.required === "boolean"
+        ? fieldSpec.required
+        : typeof existingRequired === "boolean"
+          ? existingRequired
+          : false,
+    odeProcedurePlaceholder:
+      typeof fieldSpec?.placeholder === "string" ? fieldSpec.placeholder : existingPlaceholder,
+    odeProcedureOptions: selectOptions,
+    odeProcedurePriorityOptions: priorityOptions,
+    odeProcedurePriorityDefaultValue:
+      resolvedFieldType === "priority"
+        ? fieldSpec?.priorityOptions?.[0]?.value ??
+          (typeof existingNode?.properties?.odeProcedurePriorityDefaultValue === "string"
+            ? existingNode.properties.odeProcedurePriorityDefaultValue
+            : "")
+        : "",
+    odeProcedurePriorityTooltip:
+      resolvedFieldType === "priority"
+        ? fieldSpec?.placeholder ??
+          (typeof existingNode?.properties?.odeProcedurePriorityTooltip === "string"
+            ? existingNode.properties.odeProcedurePriorityTooltip
+            : "")
+        : "",
+    odeProcedureFormulaExpression:
+      resolvedFieldType === "formula"
+        ? fieldSpec?.formulaExpression?.trim() ??
+          (typeof existingNode?.properties?.odeProcedureFormulaExpression === "string"
+            ? existingNode.properties.odeProcedureFormulaExpression
+            : "")
+        : "",
+    odeProcedureRelationTargetNodeId:
+      isProcedureRelationFieldType(resolvedFieldType) &&
+      typeof existingNode?.properties?.odeProcedureRelationTargetNodeId === "string"
+        ? existingNode.properties.odeProcedureRelationTargetNodeId
+        : "",
+    odeProcedureRelationDisplayFieldIds:
+      isProcedureRelationFieldType(resolvedFieldType) &&
+      Array.isArray(existingNode?.properties?.odeProcedureRelationDisplayFieldIds)
+        ? existingNode.properties.odeProcedureRelationDisplayFieldIds.filter(
+            (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
+          )
+        : [],
+    odeProcedureAutomationRole: resolvedAutomationRole
   };
 }
 
@@ -1421,6 +1708,148 @@ function buildAiGeneratedDocumentationNodeProperties({
   return buildAiDatabaseFieldProperties(title, existingNode);
 }
 
+function sanitizeGovernanceNodeTitle(value: string, fallback: string): string {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
+function buildGovernanceFrameworkRootProperties(
+  definition: GovernanceFrameworkDefinition,
+  requestText: string,
+  rawResponse: string,
+  existingProperties?: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...mergeNodeMetaCapabilities(existingProperties, ["structure", "data", "insight"]),
+    odeDashboard: true,
+    odeGovernanceFramework: true,
+    [GOVERNANCE_FRAMEWORK_VERSION_PROPERTY_KEY]: GOVERNANCE_FRAMEWORK_SCHEMA_VERSION,
+    [GOVERNANCE_FRAMEWORK_REQUEST_PROPERTY_KEY]: requestText,
+    [GOVERNANCE_FRAMEWORK_RAW_RESPONSE_PROPERTY_KEY]: rawResponse,
+    [GOVERNANCE_FRAMEWORK_PROPERTY_KEY]: definition
+  };
+}
+
+function buildGovernanceModuleNodeProperties(
+  moduleDefinition: GovernanceModuleDefinition,
+  existingProperties?: Record<string, unknown>
+): Record<string, unknown> {
+  const base = {
+    ...(existingProperties ?? {}),
+    odeGovernanceModule: true,
+    odeGovernanceModuleId: moduleDefinition.id,
+    odeGovernanceModuleIcon: moduleDefinition.icon,
+    odeGovernanceModuleTooltip: moduleDefinition.tooltip,
+    odeGovernanceModuleItemType: moduleDefinition.itemType
+  };
+  if (moduleDefinition.itemType === "table" || moduleDefinition.fields.length > 0) {
+    return {
+      ...base,
+      odeProcedureItemType: "section"
+    };
+  }
+  return base;
+}
+
+function buildGovernanceFieldNodeProperties(
+  fieldDefinition: GovernanceFieldDefinition,
+  existingNode?: AppNode | null,
+  options?: {
+    relationTargetNodeId?: string | null;
+    relationDisplayFieldIds?: string[];
+  }
+): Record<string, unknown> {
+  const base = buildAiDatabaseFieldProperties(fieldDefinition.label, existingNode, {
+    label: fieldDefinition.label,
+    type: fieldDefinition.type,
+    required: fieldDefinition.required,
+    placeholder: fieldDefinition.placeholder,
+    options: fieldDefinition.options,
+    priorityOptions: fieldDefinition.priorityOptions,
+    formulaExpression: fieldDefinition.formulaExpression,
+    automationRole: fieldDefinition.automationRole,
+    autoValue: fieldDefinition.autoValue,
+    showInMasterList:
+      typeof fieldDefinition.settings?.showInMasterList === "boolean"
+        ? fieldDefinition.settings.showInMasterList
+        : undefined
+  });
+  return {
+    ...base,
+    odeGovernanceField: true,
+    odeGovernanceFieldId: fieldDefinition.id,
+    odeGovernanceFieldIcon: fieldDefinition.icon,
+    odeGovernanceFieldTooltip: fieldDefinition.tooltip,
+    odeProcedureFieldType: fieldDefinition.type,
+    odeProcedureRequired: fieldDefinition.required,
+    odeProcedurePlaceholder: fieldDefinition.placeholder ?? "",
+    odeProcedureOptions:
+      fieldDefinition.type === "priority"
+        ? (fieldDefinition.priorityOptions ?? []).map((option) => option.value)
+        : fieldDefinition.options ?? [],
+    odeProcedurePriorityOptions:
+      fieldDefinition.type === "priority" ? fieldDefinition.priorityOptions ?? [] : [],
+    odeProcedurePriorityDefaultValue:
+      fieldDefinition.type === "priority"
+        ? fieldDefinition.settings && typeof fieldDefinition.settings.defaultValue === "string"
+          ? fieldDefinition.settings.defaultValue
+          : ""
+        : "",
+    odeProcedurePriorityTooltip: fieldDefinition.type === "priority" ? fieldDefinition.tooltip : "",
+    odeProcedureFormulaExpression:
+      fieldDefinition.type === "formula" ? fieldDefinition.formulaExpression ?? "" : "",
+    odeProcedureRelationTargetNodeId:
+      isProcedureRelationFieldType(fieldDefinition.type) && options?.relationTargetNodeId
+        ? options.relationTargetNodeId
+        : "",
+    odeProcedureRelationDisplayFieldIds:
+      isProcedureRelationFieldType(fieldDefinition.type) ? options?.relationDisplayFieldIds ?? [] : [],
+    odeProcedureAutomationRole: fieldDefinition.automationRole ?? base.odeProcedureAutomationRole ?? "none",
+    odeProcedureAutoValue: fieldDefinition.autoValue ?? base.odeProcedureAutoValue,
+    odeProcedureShowInMasterList:
+      typeof fieldDefinition.settings?.showInMasterList === "boolean"
+        ? fieldDefinition.settings.showInMasterList
+        : true
+  };
+}
+
+function buildGovernanceWidgetNodeProperties(
+  preset: GovernanceDashboardPreset,
+  sourceNodeId: string,
+  fieldNodeIdByFrameworkFieldId: Map<string, string>
+): Record<string, unknown> {
+  const mapFieldId = (fieldId?: string) => {
+    if (!fieldId) return "";
+    return fieldNodeIdByFrameworkFieldId.get(fieldId) ?? "";
+  };
+  const displayFieldIds = (preset.displayFieldIds ?? [])
+    .map((fieldId) => mapFieldId(fieldId))
+    .filter((fieldId) => fieldId.length > 0);
+  const firstFilter = preset.filters?.[0];
+  return {
+    ...mergeNodeMetaCapabilities(undefined, ["insight"]),
+    odeDashboardWidget: true,
+    odeDashboardWidgetType: preset.widgetType,
+    odeDashboardSourceKind: "database_records",
+    odeDashboardSourceNodeId: sourceNodeId,
+    odeDashboardAggregation: preset.aggregation,
+    odeDashboardMeasureFieldId: mapFieldId(preset.measureFieldId),
+    odeDashboardGroupFieldId: mapFieldId(preset.groupFieldId),
+    odeDashboardSecondaryGroupFieldId: mapFieldId(preset.secondaryGroupFieldId),
+    odeDashboardDisplayFieldIds: displayFieldIds,
+    odeDashboardFilterFieldId: mapFieldId(firstFilter?.fieldId),
+    odeDashboardFilterOperator: firstFilter?.operator ?? "equals",
+    odeDashboardFilterValue: firstFilter?.value ?? "",
+    odeDashboardLimit:
+      typeof preset.settings?.limit === "number" && Number.isFinite(preset.settings.limit)
+        ? Math.max(1, Math.floor(preset.settings.limit))
+        : 6,
+    odeGovernanceWidget: true,
+    odeGovernanceWidgetId: preset.id,
+    odeGovernanceWidgetIcon: preset.icon
+  };
+}
+
 function isProcedureInlineAssetNode(node: AppNode | null | undefined): boolean {
   return node?.properties?.[PROCEDURE_INLINE_ASSET_PROPERTY] === true;
 }
@@ -1447,28 +1876,25 @@ function resolveNearestProcedureDisplayNode(
   return null;
 }
 
-type WorkspaceNodeTabEntry = {
-  nodeId: string;
-  lastSelectedNodeId: string | null;
+type EmbeddedQuickAppState = {
+  item: NodeQuickAppItem;
+  target: string;
 };
 
-type WorkspaceNodeTabSession = {
-  openTabs: WorkspaceNodeTabEntry[];
-  activeTabId: string | null;
+type QuickAppLaunchScope = "global" | "workspace" | "node";
+type QuickAppLaunchContext = {
+  scope?: QuickAppLaunchScope;
+  sourceNodeId?: string | null;
 };
 
-type WorkspaceNodeTabSessions = Record<string, WorkspaceNodeTabSession>;
+const HTML_FILE_EXTENSIONS = new Set(["html", "htm"]);
 
-function readWorkspaceNodeTabSessions(): WorkspaceNodeTabSessions {
-  try {
-    const raw = localStorage.getItem(WORKSPACE_NODE_TABS_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as WorkspaceNodeTabSessions;
-    if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
-  } catch {
-    return {};
-  }
+function isHtmlFileName(name: string): boolean {
+  return HTML_FILE_EXTENSIONS.has(extractFileExtensionLower(name));
+}
+
+function isHtmlFileNode(node: AppNode | null | undefined): boolean {
+  return Boolean(node && isFileLikeNode(node) && isHtmlFileName(node.name));
 }
 
 function getPathFileName(path: string): string {
@@ -1935,13 +2361,21 @@ export default function App() {
     () => readWindowSearchParam(FIELD_ORDER_WINDOW_PROJECT_QUERY_PARAM),
     []
   );
+  const quickAppKindFromQuery = useMemo<NodeQuickAppKind | null>(() => {
+    const value = readWindowSearchParam(QUICK_APP_WINDOW_KIND_QUERY_PARAM);
+    return value === "url" || value === "local_path" ? value : null;
+  }, []);
+  const quickAppTargetFromQuery = useMemo(() => readWindowSearchParam(QUICK_APP_WINDOW_TARGET_QUERY_PARAM), []);
+  const quickAppLabelFromQuery = useMemo(() => readWindowSearchParam(QUICK_APP_WINDOW_LABEL_QUERY_PARAM), []);
   const isUtilityPanelWindow = utilityPanelFromQuery !== null;
   const isDedicatedLinkedNodeWindow = linkedNodeIdFromQuery !== null;
   const isDedicatedFieldOrderWindow = fieldOrderNodeIdFromQuery !== null;
+  const isDedicatedQuickAppWindow = quickAppKindFromQuery !== null && quickAppTargetFromQuery !== null;
   const store = useExplorerStore();
   const [appWindow, setAppWindow] = useState<TauriWindow | null>(null);
   const [isDesktopRuntime, setIsDesktopRuntime] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+  const [quickAppWindowReloadKey, setQuickAppWindowReloadKey] = useState(0);
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("grid");
   const [desktopViewMode, setDesktopViewMode] = useState<DesktopViewMode>("grid");
   const [documentationModeActive, setDocumentationModeActive] = useState(false);
@@ -2089,8 +2523,8 @@ export default function App() {
     if (raw === null) return true;
     return raw === "1" || raw.toLowerCase() === "true";
   });
-  const [workspaceNodeTabSessions, setWorkspaceNodeTabSessions] = useState<WorkspaceNodeTabSessions>(() =>
-    readWorkspaceNodeTabSessions()
+  const [workspaceNodeTabSessions, setWorkspaceNodeTabSessions] = useState<WorkspaceTabSessions>(() =>
+    readWorkspaceTabSessions(WORKSPACE_NODE_TABS_STORAGE_KEY)
   );
   const [favoriteGroupsByObjectiveState, setFavoriteGroupsByObjectiveState] = useState<
     Record<FavoriteObjectiveKey, FavoriteGroup[]>
@@ -2235,6 +2669,61 @@ export default function App() {
   const [projectPathInput, setProjectPathInput] = useState("");
 
   useEffect(() => {
+    if (!AI_COMMAND_BAR_ENABLED) {
+      if (commandBarOpen) setCommandBarOpen(false);
+      if (assistantDeliverableProposalState) setAssistantDeliverableProposalState(null);
+      if (assistantIntegratedPlanProposalState) setAssistantIntegratedPlanProposalState(null);
+    }
+    if (!LEGACY_AI_SURFACE_ENABLED && settingsOpen) setSettingsOpen(false);
+    if (!DOCUMENT_REVIEW_SURFACE_ENABLED && documentAdvisorOpen) setDocumentAdvisorOpen(false);
+  }, [
+    assistantDeliverableProposalState,
+    assistantIntegratedPlanProposalState,
+    commandBarOpen,
+    settingsOpen,
+    documentAdvisorOpen
+  ]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_ACCESS_ROLE_STORAGE_KEY, activeAccessRole);
+    } catch {
+      // Access role persistence is best-effort only.
+    }
+  }, [activeAccessRole]);
+  useEffect(() => {
+    try {
+      if (rememberedAuthUserId) {
+        localStorage.setItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY, rememberedAuthUserId);
+      } else {
+        localStorage.removeItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY);
+      }
+    } catch {
+      // Remembered auth state persistence is best-effort only.
+    }
+  }, [rememberedAuthUserId]);
+  useEffect(() => {
+    try {
+      if (rememberedAuthSessionToken) {
+        localStorage.setItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY, rememberedAuthSessionToken);
+      } else {
+        localStorage.removeItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY);
+      }
+    } catch {
+      // Remembered session persistence is best-effort only.
+    }
+  }, [rememberedAuthSessionToken]);
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        REMEMBERED_AUTH_SESSION_PREFERENCE_STORAGE_KEY,
+        JSON.stringify(normalizeRememberPasswordPreference(rememberPasswordPreference))
+      );
+    } catch {
+      // Remembered sign-in preference persistence is best-effort only.
+    }
+  }, [rememberPasswordPreference]);
+
+  useEffect(() => {
     if (!isTauri()) return;
 
     let cancelled = false;
@@ -2335,61 +2824,6 @@ export default function App() {
       setManualUpdateCheckPending(false);
     });
   }, []);
-
-  useEffect(() => {
-    if (!AI_COMMAND_BAR_ENABLED) {
-      if (commandBarOpen) setCommandBarOpen(false);
-      if (assistantDeliverableProposalState) setAssistantDeliverableProposalState(null);
-      if (assistantIntegratedPlanProposalState) setAssistantIntegratedPlanProposalState(null);
-    }
-    if (!LEGACY_AI_SURFACE_ENABLED && settingsOpen) setSettingsOpen(false);
-    if (!DOCUMENT_REVIEW_SURFACE_ENABLED && documentAdvisorOpen) setDocumentAdvisorOpen(false);
-  }, [
-    assistantDeliverableProposalState,
-    assistantIntegratedPlanProposalState,
-    commandBarOpen,
-    settingsOpen,
-    documentAdvisorOpen
-  ]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(ACTIVE_ACCESS_ROLE_STORAGE_KEY, activeAccessRole);
-    } catch {
-      // Access role persistence is best-effort only.
-    }
-  }, [activeAccessRole]);
-  useEffect(() => {
-    try {
-      if (rememberedAuthUserId) {
-        localStorage.setItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY, rememberedAuthUserId);
-      } else {
-        localStorage.removeItem(REMEMBERED_AUTH_USER_ID_STORAGE_KEY);
-      }
-    } catch {
-      // Remembered auth state persistence is best-effort only.
-    }
-  }, [rememberedAuthUserId]);
-  useEffect(() => {
-    try {
-      if (rememberedAuthSessionToken) {
-        localStorage.setItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY, rememberedAuthSessionToken);
-      } else {
-        localStorage.removeItem(REMEMBERED_AUTH_SESSION_TOKEN_STORAGE_KEY);
-      }
-    } catch {
-      // Remembered session persistence is best-effort only.
-    }
-  }, [rememberedAuthSessionToken]);
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        REMEMBERED_AUTH_SESSION_PREFERENCE_STORAGE_KEY,
-        JSON.stringify(normalizeRememberPasswordPreference(rememberPasswordPreference))
-      );
-    } catch {
-      // Remembered sign-in preference persistence is best-effort only.
-    }
-  }, [rememberPasswordPreference]);
   const refreshUserAccountState = useCallback(
     async (options?: { currentUserId?: string | null }) => {
       const state = await getUserAccountState();
@@ -2516,6 +2950,22 @@ export default function App() {
   const [quickAppsModalNodeId, setQuickAppsModalNodeId] = useState<string | null>(null);
   const [quickAppsDraftItems, setQuickAppsDraftItems] = useState<NodeQuickAppItem[]>([]);
   const [quickAppsSaving, setQuickAppsSaving] = useState(false);
+  const [workspaceQuickAppsModalRootId, setWorkspaceQuickAppsModalRootId] = useState<string | null>(null);
+  const [workspaceQuickAppsDraftItems, setWorkspaceQuickAppsDraftItems] = useState<NodeQuickAppItem[]>([]);
+  const [workspaceQuickAppsSaving, setWorkspaceQuickAppsSaving] = useState(false);
+  const [globalQuickApps, setGlobalQuickApps] = useState<NodeQuickAppItem[]>(() =>
+    readStoredQuickAppCollection(GLOBAL_QUICK_APPS_STORAGE_KEY)
+  );
+  const [globalQuickAppsModalOpen, setGlobalQuickAppsModalOpen] = useState(false);
+  const [globalQuickAppsDraftItems, setGlobalQuickAppsDraftItems] = useState<NodeQuickAppItem[]>([]);
+  const [globalQuickAppsSaving, setGlobalQuickAppsSaving] = useState(false);
+  const [htmlAppTemplates, setHtmlAppTemplates] = useState<HtmlAppTemplate[]>(() =>
+    readStoredHtmlAppTemplates(HTML_APP_TEMPLATES_STORAGE_KEY)
+  );
+  const [htmlAppTemplatesModalOpen, setHtmlAppTemplatesModalOpen] = useState(false);
+  const [htmlAppTemplatesDraftItems, setHtmlAppTemplatesDraftItems] = useState<HtmlAppTemplate[]>([]);
+  const [htmlAppTemplatesSaving, setHtmlAppTemplatesSaving] = useState(false);
+  const [workspaceContentModalKind, setWorkspaceContentModalKind] = useState<"nodes" | "files" | null>(null);
   const [desktopUploadSessionActive, setDesktopUploadSessionActive] = useState(false);
   const [textEditContextMenu, setTextEditContextMenu] = useState<TextEditContextMenuState | null>(null);
   const [branchClipboard, setBranchClipboard] = useState<BranchClipboard | null>(null);
@@ -2652,6 +3102,10 @@ export default function App() {
     favoriteAssignModalOpen ||
     userAccountsModalOpen ||
     Boolean(quickAppsModalNodeId) ||
+    Boolean(workspaceQuickAppsModalRootId) ||
+    globalQuickAppsModalOpen ||
+    htmlAppTemplatesModalOpen ||
+    Boolean(workspaceContentModalKind) ||
     documentAdvisorOpen ||
     naWorkspaceModalOpen ||
     naDistributionModalOpen;
@@ -5591,13 +6045,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow) return;
+    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || isDedicatedQuickAppWindow) return;
     if (activeProjectId) {
       localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, activeProjectId);
     } else {
       localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
     }
-  }, [activeProjectId, isDedicatedFieldOrderWindow, isDedicatedLinkedNodeWindow]);
+  }, [activeProjectId, isDedicatedFieldOrderWindow, isDedicatedLinkedNodeWindow, isDedicatedQuickAppWindow]);
 
   useEffect(() => {
     if (defaultProjectId) {
@@ -5862,11 +6316,11 @@ export default function App() {
   const aiRebuildRuntime = useMemo(() => createDefaultAiRebuildRuntime(), []);
   const activeProjectRootId = activeProject?.rootNodeId ?? null;
   const activeProjectHasLinkedFolder = hasLinkedWorkspaceFolder(activeProject);
-  const activeWorkspaceNodeTabSession = useMemo<WorkspaceNodeTabSession>(
+  const activeWorkspaceNodeTabSession = useMemo<WorkspaceTabSession>(
     () =>
       activeProjectRootId
-        ? workspaceNodeTabSessions[activeProjectRootId] ?? { openTabs: [], activeTabId: null }
-        : { openTabs: [], activeTabId: null },
+        ? workspaceNodeTabSessions[activeProjectRootId] ?? createEmptyWorkspaceTabSession()
+        : createEmptyWorkspaceTabSession(),
     [activeProjectRootId, workspaceNodeTabSessions]
   );
   useEffect(() => {
@@ -6246,28 +6700,63 @@ export default function App() {
     () => collectProjectScopedNodeIds(documentationWorkspaceRootId, byParent),
     [documentationWorkspaceRootId, byParent]
   );
-  const projectScopedNodeIds = useMemo(() => {
-    if (!fullProjectScopedNodeIds) return null;
-    if (!documentationWorkspaceRootId || !documentationScopedNodeIds) {
-      return fullProjectScopedNodeIds;
-    }
-    if (documentationModeActive) {
-      return documentationScopedNodeIds;
-    }
-    const visibleIds = new Set(fullProjectScopedNodeIds);
-    documentationScopedNodeIds.forEach((nodeId) => {
-      visibleIds.delete(nodeId);
-    });
-    return visibleIds;
-  }, [
-    documentationModeActive,
-    documentationScopedNodeIds,
-    documentationWorkspaceRootId,
-    fullProjectScopedNodeIds
-  ]);
-  const activeWorkspaceRootId = documentationModeActive
-    ? documentationWorkspaceRootId ?? activeProjectRootId
-    : activeProjectRootId;
+  const collectDocumentationScopedNodes = useCallback(
+    (nodes: AppNode[]): AppNode[] => {
+      if (!activeProjectRootId) return [];
+      const byParentLocal = new Map<string, AppNode[]>();
+      for (const node of nodes) {
+        const parentId = node.parentId as string;
+        const siblings = byParentLocal.get(parentId) ?? [];
+        siblings.push(node);
+        byParentLocal.set(parentId, siblings);
+      }
+      const documentationRoot = findDocumentationWorkspaceRootNode(byParentLocal.get(activeProjectRootId) ?? []);
+      if (!documentationRoot) return [];
+      const scopedIds = collectProjectScopedNodeIds(documentationRoot.id, byParentLocal);
+      if (!scopedIds) {
+        return [documentationRoot];
+      }
+      return nodes.filter((node) => scopedIds.has(node.id));
+    },
+    [activeProjectRootId]
+  );
+  const documentationScopedNodes = useMemo(
+    () => collectDocumentationScopedNodes(store.allNodes),
+    [collectDocumentationScopedNodes, store.allNodes]
+  );
+  const documentationProcedureModel = useMemo(
+    () => buildProcedureDatabaseModel(documentationScopedNodes),
+    [documentationScopedNodes]
+  );
+  const workspaceScopeContext = useMemo(
+    () =>
+      createWorkspaceScopeContext({
+        activeProject,
+        activeProjectId,
+        activeProjectRootId,
+        documentationModeActive,
+        documentationWorkspaceRootId,
+        fullProjectScopedNodeIds,
+        documentationScopedNodeIds,
+        workspaceMode,
+        desktopViewMode,
+        workspaceFocusMode: deriveWorkspaceFocusMode(activeNodeStateFilters)
+      }),
+    [
+      activeProject,
+      activeProjectId,
+      activeProjectRootId,
+      desktopViewMode,
+      documentationModeActive,
+      documentationScopedNodeIds,
+      documentationWorkspaceRootId,
+      fullProjectScopedNodeIds,
+      activeNodeStateFilters,
+      workspaceMode
+    ]
+  );
+  const projectScopedNodeIds = workspaceScopeContext.projectScopedNodeIds;
+  const activeWorkspaceRootId = workspaceScopeContext.activeWorkspaceRootId;
   const resolveScopedCreationSurface = useCallback(
     (surface: SelectionSurface): SelectionSurface => {
       if (documentationModeActive) {
@@ -6301,58 +6790,57 @@ export default function App() {
     }
     return activeWorkspaceRootId;
   }, [activeWorkspaceRootId, byParent, documentationWorkspaceRootId]);
-  useEffect(() => {
-    if (!activeProjectRootId || !activeProjectRootExists) return;
-    if (documentationWorkspaceRootNode && !documentationWorkspaceRootNeedsMigration) {
+  const ensureDocumentationWorkspaceRootNode = useCallback(async (): Promise<AppNode | null> => {
+    if (!activeProjectRootId || !activeProjectRootExists) return null;
+    const nodeByIdLocal = new Map(store.allNodes.map((node) => [node.id, node]));
+    const existingRoot =
+      documentationWorkspaceRootNode ??
+      (documentationWorkspaceRootId
+        ? nodeByIdLocal.get(documentationWorkspaceRootId) ?? (await getNode(documentationWorkspaceRootId)) ?? null
+        : null);
+    if (existingRoot && !documentationWorkspaceRootNeedsMigration) {
       documentationRootProvisioningRef.current.delete(activeProjectRootId);
-      return;
+      return existingRoot;
     }
-    if (documentationRootProvisioningRef.current.has(activeProjectRootId)) return;
+    if (documentationRootProvisioningRef.current.has(activeProjectRootId)) {
+      return existingRoot;
+    }
 
     documentationRootProvisioningRef.current.add(activeProjectRootId);
-    let cancelled = false;
-    let keepProvisioningLock = false;
-
-    void (async () => {
-      try {
-        const targetRoot =
-          documentationWorkspaceRootNode ??
-          (await createNode(activeProjectRootId, DOCUMENTATION_SCOPE_DEFAULT_NAME, "folder"));
-        const nextProperties: Record<string, unknown> = {
-          ...(targetRoot.properties ?? {}),
-          [WORKSPACE_SCOPE_KIND_PROPERTY]: DOCUMENTATION_SCOPE_KIND
-        };
-        await updateNodeProperties(targetRoot.id, nextProperties);
-        if (cancelled) return;
-        await store.refreshTree();
-        setExpandedIds((prev) => {
-          if (prev.has(activeProjectRootId)) return prev;
-          const next = new Set(prev);
-          next.add(activeProjectRootId);
-          return next;
-        });
-        keepProvisioningLock = true;
-      } catch (error) {
-        if (!cancelled) {
-          setProjectNotice(null);
-          setProjectError(error instanceof Error ? error.message : String(error));
+    try {
+      const targetRoot =
+        existingRoot ??
+        (await createNode(activeProjectRootId, DOCUMENTATION_SCOPE_DEFAULT_NAME, "folder"));
+      const nextProperties: Record<string, unknown> = {
+        ...(targetRoot.properties ?? {}),
+        [WORKSPACE_SCOPE_KIND_PROPERTY]: DOCUMENTATION_SCOPE_KIND
+      };
+      await updateNodeProperties(targetRoot.id, nextProperties);
+      await store.refreshTree();
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        next.add(activeProjectRootId);
+        return next;
+      });
+      return (
+        nodeByIdLocal.get(targetRoot.id) ??
+        (await getNode(targetRoot.id)) ?? {
+          ...targetRoot,
+          properties: nextProperties
         }
-      } finally {
-        if (cancelled || !keepProvisioningLock) {
-          documentationRootProvisioningRef.current.delete(activeProjectRootId);
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+      );
+    } finally {
+      documentationRootProvisioningRef.current.delete(activeProjectRootId);
+    }
   }, [
     activeProjectRootExists,
     activeProjectRootId,
     createNode,
+    documentationWorkspaceRootId,
     documentationWorkspaceRootNeedsMigration,
     documentationWorkspaceRootNode,
+    getNode,
+    store.allNodes,
     store.refreshTree,
     updateNodeProperties
   ]);
@@ -6396,7 +6884,7 @@ export default function App() {
   }, [timelineDayRanges]);
 
   useEffect(() => {
-    if (!isDesktopRuntime || isUtilityPanelWindow || isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || !activeProjectRootId) return;
+    if (!isDesktopRuntime || isUtilityPanelWindow || isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || isDedicatedQuickAppWindow || !activeProjectRootId) return;
 
     const releaseIds = qaAiPlan.releaseEntries.map((entry) => entry.id);
     const feedbackIds = qaFeedbackEntries.map((entry) => entry.id);
@@ -6489,11 +6977,29 @@ export default function App() {
     void (async () => {
       await syncWindowState();
 
-      if (!isUtilityPanelWindow && !isDedicatedLinkedNodeWindow && !isDedicatedFieldOrderWindow) {
-        await fitDesktopWindowToWorkArea({
-          preferCenter: true,
-          margin: DESKTOP_WINDOW_WORKAREA_MARGIN_PX
-        });
+      if (!isUtilityPanelWindow && !isDedicatedLinkedNodeWindow && !isDedicatedFieldOrderWindow && !isDedicatedQuickAppWindow) {
+        const [nativeMaximized, effectiveMaximized] = await Promise.all([
+          currentWindow.isMaximized().catch(() => false),
+          isDesktopWindowEffectivelyMaximized(currentWindow)
+        ]);
+
+        if (effectiveMaximized && !nativeMaximized) {
+          const upgradedToNativeMaximize =
+            (await maximizeWindowsDesktopPrimaryWindow(currentWindow)) ||
+            (await currentWindow.maximize().then(() => true).catch(() => false));
+          if (!upgradedToNativeMaximize) {
+            await fitDesktopWindowToWorkArea({
+              fillWorkArea: true,
+              coverTaskbar: false,
+              margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
+            });
+          }
+        } else if (!nativeMaximized) {
+          await fitDesktopWindowToWorkArea({
+            preferCenter: true,
+            margin: DESKTOP_WINDOW_WORKAREA_MARGIN_PX
+          });
+        }
         await syncWindowState();
       }
 
@@ -6515,7 +7021,7 @@ export default function App() {
       unlistenMoved?.();
       unlistenFocusChanged?.();
     };
-  }, [isDedicatedFieldOrderWindow, isDedicatedLinkedNodeWindow, isUtilityPanelWindow]);
+  }, [isDedicatedFieldOrderWindow, isDedicatedLinkedNodeWindow, isDedicatedQuickAppWindow, isUtilityPanelWindow]);
 
   useEffect(() => {
     void (async () => {
@@ -6589,6 +7095,10 @@ export default function App() {
       ? activeWorkspaceRootId
     : workspaceMode === "grid" && deriveWorkspaceFocusMode(activeNodeStateFilters) === "execution"
       ? executionBrowseNodeId ?? store.currentFolderId
+    : workspaceMode === "grid" &&
+        desktopViewMode === "dashboard" &&
+        deriveWorkspaceFocusMode(activeNodeStateFilters) !== "execution"
+      ? activeWorkspaceNodeTabSession.activeTabId ?? store.currentFolderId
       : store.currentFolderId;
   const desktopMirrorParentId =
     desktopMirrorRootId ?? (hasActiveFavoriteGroupTreeFiltering ? activeWorkspaceRootId ?? ROOT_PARENT_ID : ROOT_PARENT_ID);
@@ -6598,6 +7108,13 @@ export default function App() {
   );
   const procedureBaseRootNode = useMemo(() => {
     const nodeByIdLocal = new Map(store.allNodes.map((node) => [node.id, node]));
+    if (documentationModeActive) {
+      if (!documentationWorkspaceRootId) return null;
+      const documentationRoot = nodeByIdLocal.get(documentationWorkspaceRootId) ?? documentationWorkspaceRootNode ?? null;
+      return documentationRoot
+        ? resolveNearestProcedureDisplayNode(documentationRoot, nodeByIdLocal, documentationWorkspaceRootId) ?? documentationRoot
+        : null;
+    }
     const requestedRootNode =
       desktopMirrorRootId ? (nodeByIdLocal.get(desktopMirrorRootId) ?? null) : null;
     const workspaceRootNode =
@@ -6610,7 +7127,14 @@ export default function App() {
       ) ??
       resolveNearestProcedureDisplayNode(workspaceRootNode, nodeByIdLocal)
     );
-  }, [activeWorkspaceRootId, desktopMirrorRootId, store.allNodes]);
+  }, [
+    activeWorkspaceRootId,
+    desktopMirrorRootId,
+    documentationModeActive,
+    documentationWorkspaceRootId,
+    documentationWorkspaceRootNode,
+    store.allNodes
+  ]);
   const procedureRootNode = useMemo(() => {
     if (!procedureBaseRootNode) return null;
     const isProjectRootProcedure =
@@ -6709,15 +7233,6 @@ export default function App() {
   useEffect(() => {
     if (desktopViewMode !== "dashboard") return;
     if (workspaceMode !== "grid") {
-      setDesktopViewMode("grid");
-      return;
-    }
-    const currentFolderNode = store.currentNode;
-    if (
-      !currentFolderNode ||
-      isFileLikeNode(currentFolderNode) ||
-      currentFolderNode.properties?.odeDashboardWidget === true
-    ) {
       setDesktopViewMode("grid");
     }
   }, [desktopViewMode, store.currentNode, workspaceMode]);
@@ -6865,6 +7380,14 @@ export default function App() {
     }
     return map;
   }, [store.allNodes]);
+  const activeProjectRootNode = useMemo(
+    () => (activeProjectRootId ? nodeById.get(activeProjectRootId) ?? null : null),
+    [activeProjectRootId, nodeById]
+  );
+  const workspaceQuickApps = useMemo(
+    () => getScopedQuickApps(activeProjectRootNode, WORKSPACE_QUICK_APPS_PROPERTY),
+    [activeProjectRootNode]
+  );
   const shouldHideDocumentationNodeInOrganizationView = useCallback(
     (node: AppNode | null | undefined) =>
       Boolean(
@@ -7088,20 +7611,6 @@ export default function App() {
       ),
     [byParent, dashboardLibraryTargetNode, nodeById]
   );
-  const footerQuickAppTargetNode = useMemo(() => {
-    const currentFolderNode =
-      store.currentFolderId && store.currentFolderId !== ROOT_PARENT_ID
-        ? nodeById.get(store.currentFolderId) ?? null
-        : null;
-    if (selectedNode) return selectedNode;
-    if (currentFolderNode) return currentFolderNode;
-    if (activeProjectRootId) return nodeById.get(activeProjectRootId) ?? null;
-    return null;
-  }, [activeProjectRootId, nodeById, selectedNode, store.currentFolderId]);
-  const footerQuickApps = useMemo(
-    () => getNodeQuickApps(footerQuickAppTargetNode),
-    [footerQuickAppTargetNode]
-  );
   const resolveNodeForAccess = useCallback(
     (nodeId: string | null | undefined) =>
       nodeId
@@ -7175,42 +7684,6 @@ export default function App() {
     if (canReadNodeForActiveRole(mindMapReviewNodeId)) return;
     setMindMapReviewNodeId(null);
   }, [canReadNodeForActiveRole, mindMapReviewNodeId]);
-  const reorderFooterQuickApps = useCallback(
-    async (nextQuickApps: NodeQuickAppItem[]) => {
-      const node = footerQuickAppTargetNode;
-      if (!node) return;
-      if (!ensureNodeAccessAllowed([node.id], "write")) return;
-
-      const normalizedQuickApps = normalizeNodeQuickApps(nextQuickApps);
-      const currentQuickApps = getNodeQuickApps(node);
-      const currentOrder = currentQuickApps.map((item) => item.id).join("|");
-      const nextOrder = normalizedQuickApps.map((item) => item.id).join("|");
-      if (currentOrder === nextOrder) return;
-
-      const previousProperties = node.properties;
-      const nextProperties = buildNodeQuickAppsProperties(previousProperties, normalizedQuickApps);
-      store.patchNode(node.id, {
-        properties: nextProperties,
-        updatedAt: Date.now()
-      });
-
-      try {
-        await updateNodeProperties(node.id, nextProperties);
-      } catch (error) {
-        store.patchNode(node.id, {
-          properties: previousProperties,
-          updatedAt: Date.now()
-        });
-        setProjectError(
-          t("quick_apps.launch_failed", {
-            name: node.name,
-            reason: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
-    },
-    [footerQuickAppTargetNode, store, t]
-  );
   const workspaceStructureLocked = Boolean(
     activeProjectRootId && isNodeStructureLockOwner(nodeById.get(activeProjectRootId) ?? null)
   );
@@ -7264,12 +7737,14 @@ export default function App() {
     async (nodeId: string, locked: boolean) => {
       const node = nodeById.get(nodeId) ?? null;
       if (!node) return;
-      if (!locked && node.id !== activeProjectRootId && !isNodeStructureLockOwner(node)) return;
-      if (locked && node.id !== activeProjectRootId) return;
-      const targetNode =
-        locked && activeProjectRootId
-          ? nodeById.get(activeProjectRootId) ?? node
-          : node;
+      const lockOwner = getStructureLockOwner(node.id);
+      if (!locked && !isNodeStructureLockOwner(node)) return;
+      if (locked && lockOwner && lockOwner.id !== node.id) {
+        setProjectNotice(null);
+        setProjectError(t("structure_lock.blocked_notice", { name: lockOwner.name }));
+        return;
+      }
+      const targetNode = node;
       if (!ensureNodeAccessAllowed([targetNode.id], "manage")) return;
       const nextProperties = applyNodeStructureLock(
         targetNode.properties as Record<string, unknown> | undefined,
@@ -7287,7 +7762,7 @@ export default function App() {
           : t("structure_lock.unlocked_notice", { name: targetNode.name })
       );
     },
-    [activeProjectRootId, ensureNodeAccessAllowed, nodeById, store, t]
+    [ensureNodeAccessAllowed, getStructureLockOwner, nodeById, store, t]
   );
   const openNodeAccessPolicyEditor = useCallback(
     (nodeId: string) => {
@@ -7589,6 +8064,14 @@ export default function App() {
     () => (quickAppsModalNodeId ? nodeById.get(quickAppsModalNodeId) ?? null : null),
     [nodeById, quickAppsModalNodeId]
   );
+  const workspaceQuickAppsModalRootNode = useMemo(
+    () => (workspaceQuickAppsModalRootId ? nodeById.get(workspaceQuickAppsModalRootId) ?? null : null),
+    [nodeById, workspaceQuickAppsModalRootId]
+  );
+  const htmlAppTemplatesById = useMemo(
+    () => new Map(htmlAppTemplates.map((template) => [template.id, template])),
+    [htmlAppTemplates]
+  );
   const accessPolicyEditorNode = useMemo(
     () => (accessPolicyEditorNodeId ? nodeById.get(accessPolicyEditorNodeId) ?? null : null),
     [accessPolicyEditorNodeId, nodeById]
@@ -7616,11 +8099,30 @@ export default function App() {
     },
     [ensureNodeAccessAllowed, nodeById]
   );
+  const openWorkspaceQuickAppsModal = useCallback(() => {
+    const node = activeProjectRootNode;
+    if (!node) return;
+    if (!ensureNodeAccessAllowed([node.id], "write")) return;
+    const nextQuickApps = getScopedQuickApps(node, WORKSPACE_QUICK_APPS_PROPERTY);
+    setWorkspaceQuickAppsModalRootId(node.id);
+    setWorkspaceQuickAppsDraftItems(
+      nextQuickApps.length > 0
+        ? nextQuickApps.map((item) => ({
+            ...item
+          }))
+        : [createNodeQuickAppItem()]
+    );
+  }, [activeProjectRootNode, ensureNodeAccessAllowed]);
   const closeNodeQuickAppsModal = useCallback(() => {
     if (quickAppsSaving) return;
     setQuickAppsModalNodeId(null);
     setQuickAppsDraftItems([]);
   }, [quickAppsSaving]);
+  const closeWorkspaceQuickAppsModal = useCallback(() => {
+    if (workspaceQuickAppsSaving) return;
+    setWorkspaceQuickAppsModalRootId(null);
+    setWorkspaceQuickAppsDraftItems([]);
+  }, [workspaceQuickAppsSaving]);
 
   useEffect(() => {
     if (!tooltipEditorNodeId || tooltipEditorNode || tooltipEditorSaving) return;
@@ -7639,6 +8141,39 @@ export default function App() {
     setQuickAppsModalNodeId(null);
     setQuickAppsDraftItems([]);
   }, [canWriteNodeForActiveRole, quickAppsModalNode, quickAppsModalNodeId]);
+  useEffect(() => {
+    if (!workspaceQuickAppsModalRootId || workspaceQuickAppsModalRootNode || workspaceQuickAppsSaving) return;
+    setWorkspaceQuickAppsModalRootId(null);
+    setWorkspaceQuickAppsDraftItems([]);
+  }, [workspaceQuickAppsModalRootId, workspaceQuickAppsModalRootNode, workspaceQuickAppsSaving]);
+  useEffect(() => {
+    if (!workspaceQuickAppsModalRootId || !workspaceQuickAppsModalRootNode) return;
+    if (canWriteNodeForActiveRole(workspaceQuickAppsModalRootNode.id)) return;
+    setWorkspaceQuickAppsModalRootId(null);
+    setWorkspaceQuickAppsDraftItems([]);
+  }, [canWriteNodeForActiveRole, workspaceQuickAppsModalRootId, workspaceQuickAppsModalRootNode]);
+  useEffect(() => {
+    try {
+      if (globalQuickApps.length > 0) {
+        window.localStorage.setItem(GLOBAL_QUICK_APPS_STORAGE_KEY, JSON.stringify(globalQuickApps));
+      } else {
+        window.localStorage.removeItem(GLOBAL_QUICK_APPS_STORAGE_KEY);
+      }
+    } catch {
+      // Global apps are best-effort persisted locally.
+    }
+  }, [globalQuickApps]);
+  useEffect(() => {
+    try {
+      if (htmlAppTemplates.length > 0) {
+        window.localStorage.setItem(HTML_APP_TEMPLATES_STORAGE_KEY, JSON.stringify(htmlAppTemplates));
+      } else {
+        window.localStorage.removeItem(HTML_APP_TEMPLATES_STORAGE_KEY);
+      }
+    } catch {
+      // HTML templates are best-effort persisted locally.
+    }
+  }, [htmlAppTemplates]);
   useEffect(() => {
     if (!accessPolicyEditorNodeId || accessPolicyEditorNode || accessPolicySaving) return;
     setAccessPolicyEditorNodeId(null);
@@ -8282,6 +8817,9 @@ export default function App() {
   );
 
   const treeRows = useMemo(() => {
+    if (documentationModeActive && !documentationWorkspaceRootId) {
+      return [];
+    }
     const rows: TreeRow[] = [];
     const splitTreeChildrenForDisplay = (nodes: AppNode[]) =>
       nodes.filter((node) => !isFileLikeNode(node));
@@ -8363,6 +8901,9 @@ export default function App() {
   ]);
 
   const timelineRows = useMemo(() => {
+    if (documentationModeActive && !documentationWorkspaceRootId) {
+      return [];
+    }
     return buildTimelineTreeRows({
       activeProjectRootId: activeWorkspaceRootId,
       nodeById,
@@ -8381,6 +8922,8 @@ export default function App() {
   }, [
     activeWorkspaceRootId,
     byParent,
+    documentationModeActive,
+    documentationWorkspaceRootId,
     expandedIds,
     nodeById,
     scopedNumbering,
@@ -8678,7 +9221,9 @@ export default function App() {
   useEffect(() => {
     if (workareaAvailable || workspaceFocusMode !== "execution") return;
     setExecutionQuickOpenDeliverableId(null);
+    setExecutionBrowseNodeId(null);
     setContextMenu((current) => (current?.workareaMode ? null : current));
+    setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("structure"));
   }, [workareaAvailable, workspaceFocusMode]);
   const executionOwnerNodeIds = useMemo(() => {
     const ownerIds = collectExecutionOwnerNodeIds({
@@ -9327,6 +9872,96 @@ export default function App() {
           : null,
     [activeWorkspaceRootId, desktopMirrorRootId, hideWorkspaceContainerRow, nodeById]
   );
+  const mainPaneTargetNode = nodeTreeMindMapRootNode ?? store.currentNode ?? null;
+  const workspaceNavigationState = useMemo(
+    () =>
+      buildWorkspaceNavigationState({
+        activeProject,
+        activeProjectId,
+        activeProjectRootId,
+        activeWorkspaceRootId,
+        workspaceMode,
+        desktopViewMode,
+        workspaceFocusMode,
+        selectionSurface,
+        currentFolderId: store.currentFolderId,
+        currentFolderNode: store.currentNode ?? null,
+        mainPaneTargetNode,
+        selectedNodeId: store.selectedNodeId ?? null,
+        selectedNodeIds,
+        treeSelectedNodeId: effectiveTreeSelectedNodeId,
+        treeSelectedNodeIds: effectiveTreeSelectedNodeIds,
+        breadcrumbNodes: mainPaneBreadcrumbNodes,
+        tabSession: activeWorkspaceNodeTabSession
+      }),
+    [
+      activeProject,
+      activeProjectId,
+      activeProjectRootId,
+      activeWorkspaceNodeTabSession,
+      activeWorkspaceRootId,
+      desktopViewMode,
+      effectiveTreeSelectedNodeId,
+      effectiveTreeSelectedNodeIds,
+      mainPaneBreadcrumbNodes,
+      mainPaneTargetNode,
+      selectedNodeIds,
+      selectionSurface,
+      store.currentFolderId,
+      store.currentNode,
+      store.selectedNodeId,
+      workspaceFocusMode,
+      workspaceMode
+    ]
+  );
+  const activeHtmlTabNode = useMemo(
+    () =>
+      workspaceMode === "grid" &&
+      !documentationModeActive &&
+      desktopViewMode !== "library" &&
+      isHtmlFileNode(mainPaneTargetNode)
+        ? mainPaneTargetNode
+        : null,
+    [desktopViewMode, documentationModeActive, mainPaneTargetNode, workspaceMode]
+  );
+  const activeHtmlTabSrc = useMemo(() => {
+    if (!activeHtmlTabNode) return null;
+    const filePath = getNodePreferredFileLocationPath(activeHtmlTabNode) ?? getNodePreferredFileActionPath(activeHtmlTabNode);
+    if (!filePath) return null;
+    const embeddedSrc = resolveQuickAppEmbeddedSrc("local_path", filePath);
+    if (!embeddedSrc) return null;
+    const parentNode =
+      activeHtmlTabNode.parentId && activeHtmlTabNode.parentId !== ROOT_PARENT_ID
+        ? nodeById.get(activeHtmlTabNode.parentId) ??
+          store.allNodes.find((node) => node.id === activeHtmlTabNode.parentId) ??
+          null
+        : null;
+    const contextNodeId = parentNode && !isFileLikeNode(parentNode) ? parentNode.id : activeHtmlTabNode.id;
+    return appendQuickAppContextParams(embeddedSrc, {
+      odeNodeId: contextNodeId,
+      odeFileNodeId: activeHtmlTabNode.id,
+      odeProjectId: activeProjectId,
+      odeWorkspaceRootId: activeProjectRootId,
+      odeQuickAppId: activeHtmlTabNode.id,
+      odeQuickAppLabel: activeHtmlTabNode.name,
+      odeDataScope: "node",
+      odeDataKey: `${activeProjectId ?? "project"}::${contextNodeId}::html-file::${activeHtmlTabNode.id}`
+    });
+  }, [activeHtmlTabNode, activeProjectId, activeProjectRootId, nodeById, store.allNodes]);
+  const footerContentTargetNode =
+    desktopViewMode === "library" || !mainPaneTargetNode || isFileLikeNode(mainPaneTargetNode) ? null : mainPaneTargetNode;
+  const footerDirectChildren = useMemo(
+    () => (footerContentTargetNode ? byParent.get(footerContentTargetNode.id) ?? [] : []),
+    [byParent, footerContentTargetNode]
+  );
+  const footerDirectNodeChildren = useMemo(
+    () => footerDirectChildren.filter((node) => !isFileLikeNode(node)),
+    [footerDirectChildren]
+  );
+  const footerDirectFileChildren = useMemo(
+    () => footerDirectChildren.filter((node) => isFileLikeNode(node)),
+    [footerDirectChildren]
+  );
   const nodeTreeMindMapRootLevel = desktopMirrorRootId
     ? hideWorkspaceContainerRow &&
       activeWorkspaceRootId !== null &&
@@ -9334,6 +9969,25 @@ export default function App() {
       ? 1
       : nodeLevelById.get(desktopMirrorRootId) ?? 1
     : 1;
+  const footerNodeSummaryBadges = useMemo(() => {
+    const isFrench = String(language).toLowerCase() === "fr";
+    return [
+      {
+        key: "nodes",
+        label: isFrench ? "Noeuds" : "Nodes",
+        value: footerDirectNodeChildren.length,
+        onClick: footerContentTargetNode ? () => setWorkspaceContentModalKind("nodes") : undefined,
+        disabled: !footerContentTargetNode || footerDirectNodeChildren.length === 0
+      },
+      {
+        key: "files",
+        label: isFrench ? "Fichiers" : "Files",
+        value: footerDirectFileChildren.length,
+        onClick: footerContentTargetNode ? () => setWorkspaceContentModalKind("files") : undefined,
+        disabled: !footerContentTargetNode || footerDirectFileChildren.length === 0
+      }
+    ];
+  }, [footerContentTargetNode, footerDirectFileChildren.length, footerDirectNodeChildren.length, language]);
 
   const gridNodes = useMemo(() => {
     if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
@@ -9663,11 +10317,11 @@ export default function App() {
   const updateWorkspaceNodeTabSession = useCallback(
     (
       workspaceRootId: string | null,
-      updater: (current: WorkspaceNodeTabSession) => WorkspaceNodeTabSession | null
+      updater: (current: WorkspaceTabSession) => WorkspaceTabSession | null
     ) => {
       if (!workspaceRootId) return;
       setWorkspaceNodeTabSessions((prev) => {
-        const current = prev[workspaceRootId] ?? { openTabs: [], activeTabId: null };
+        const current = prev[workspaceRootId] ?? createEmptyWorkspaceTabSession();
         const next = updater(current);
         if (!next || next.openTabs.length === 0) {
           if (!(workspaceRootId in prev)) return prev;
@@ -9684,6 +10338,26 @@ export default function App() {
     []
   );
 
+  const activateDesktopGridBrowseSurface = useCallback((options?: { preserveTreeSurface?: boolean }) => {
+    const useProcedureSurface =
+      documentationModeActive || desktopViewModeRef.current === "procedure";
+    setWorkspaceMode("grid");
+    if (useProcedureSurface) {
+      setDesktopViewMode("procedure");
+      setSelectionSurface("tree");
+      setKeyboardSurface("procedure");
+      return;
+    }
+    setDesktopViewMode("dashboard");
+    if (options?.preserveTreeSurface) {
+      setSelectionSurface("tree");
+      setKeyboardSurface("tree");
+      return;
+    }
+    setSelectionSurface("grid");
+    setKeyboardSurface("grid");
+  }, [documentationModeActive]);
+
   const openNodeInDesktopTab = useCallback(
     async (
       nodeId: string,
@@ -9692,48 +10366,22 @@ export default function App() {
       }
     ) => {
       const node = nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null;
-      if (!node || node.type !== "folder" || isFileLikeNode(node)) return;
+      if (!canOpenNodeInDesktopTab(node)) return;
 
       const resolvedSelectedNodeId =
         options?.selectedNodeId && isNodeWithinTabScope(node.id, options.selectedNodeId)
           ? options.selectedNodeId
           : node.id;
 
-      updateWorkspaceNodeTabSession(activeProjectRootId, (current) => {
-        const existingEntry = current.openTabs.find((entry) => entry.nodeId === node.id) ?? null;
-        const nextOpenTabs = existingEntry
-          ? current.openTabs.map((entry) =>
-              entry.nodeId === node.id
-                ? {
-                    ...entry,
-                    lastSelectedNodeId: resolvedSelectedNodeId
-                  }
-                : entry
-            )
-          : [
-              ...current.openTabs,
-              {
-                nodeId: node.id,
-                lastSelectedNodeId: resolvedSelectedNodeId
-              }
-            ];
-        return {
-          openTabs: nextOpenTabs,
-          activeTabId: node.id
-        };
+      updateWorkspaceNodeTabSession(activeProjectRootId, (current) =>
+        upsertWorkspaceTabEntry(current, node.id, resolvedSelectedNodeId)
+      );
+
+      const browseSelectionSurface: SelectionSurface =
+        documentationModeActive || desktopViewModeRef.current === "procedure" ? "tree" : "grid";
+      activateDesktopGridBrowseSurface({
+        preserveTreeSurface: browseSelectionSurface === "tree"
       });
-
-      const nextDesktopViewMode =
-        desktopViewModeRef.current === "procedure"
-          ? desktopBrowseViewModeRef.current === "procedure"
-            ? "grid"
-            : desktopBrowseViewModeRef.current
-          : desktopViewModeRef.current;
-
-      setWorkspaceMode("grid");
-      setDesktopViewMode(nextDesktopViewMode);
-      setSelectionSurface("grid");
-      setKeyboardSurface("grid");
       await store.navigateTo(node.id);
       updateExpandedIdsForContext("organization", (prev) => {
         const next = new Set(prev);
@@ -9743,10 +10391,12 @@ export default function App() {
         }
         return next;
       });
-      setPrimarySelection(resolvedSelectedNodeId, "grid");
+      setPrimarySelection(resolvedSelectedNodeId, browseSelectionSurface);
     },
     [
       activeProjectRootId,
+      activateDesktopGridBrowseSurface,
+      documentationModeActive,
       isNodeWithinTabScope,
       nodeById,
       store,
@@ -9936,23 +10586,10 @@ export default function App() {
       const currentSession = workspaceNodeTabSessions[activeProjectRootId];
       if (!currentSession) return;
 
-      const tabIndex = currentSession.openTabs.findIndex((entry) => entry.nodeId === nodeId);
-      if (tabIndex === -1) return;
+      const { session: nextSession, nextActiveEntry } = closeWorkspaceTabEntry(currentSession, nodeId);
+      if (nextSession === currentSession) return;
 
-      const remainingTabs = currentSession.openTabs.filter((entry) => entry.nodeId !== nodeId);
-      const nextActiveEntry =
-        currentSession.activeTabId === nodeId
-          ? remainingTabs[Math.max(0, tabIndex - 1)] ?? remainingTabs[0] ?? null
-          : remainingTabs.find((entry) => entry.nodeId === currentSession.activeTabId) ?? remainingTabs[0] ?? null;
-
-      updateWorkspaceNodeTabSession(activeProjectRootId, () =>
-        remainingTabs.length > 0
-          ? {
-              openTabs: remainingTabs,
-              activeTabId: nextActiveEntry?.nodeId ?? null
-            }
-          : null
-      );
+      updateWorkspaceNodeTabSession(activeProjectRootId, () => nextSession);
 
       if (nextActiveEntry) {
         await openNodeInDesktopTab(nextActiveEntry.nodeId, {
@@ -10026,34 +10663,21 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || !activeProjectRootId || store.allNodes.length === 0) return;
+    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || isDedicatedQuickAppWindow || !activeProjectRootId || store.allNodes.length === 0) return;
     const currentSession = workspaceNodeTabSessions[activeProjectRootId];
     if (!currentSession || currentSession.openTabs.length === 0) return;
 
-    const validOpenTabs: WorkspaceNodeTabEntry[] = [];
-    for (const entry of currentSession.openTabs) {
-      const rootNode = nodeById.get(entry.nodeId) ?? null;
-      if (!rootNode || rootNode.type !== "folder" || isFileLikeNode(rootNode)) continue;
-      if (projectScopedNodeIds && !projectScopedNodeIds.has(rootNode.id)) continue;
-
-      const nextSelectedNodeId =
-        entry.lastSelectedNodeId && isNodeWithinTabScope(rootNode.id, entry.lastSelectedNodeId)
-          ? entry.lastSelectedNodeId
-          : rootNode.id;
-      validOpenTabs.push({
-        nodeId: rootNode.id,
-        lastSelectedNodeId: nextSelectedNodeId
-      });
-    }
-
-    const nextActiveTabId =
-      currentSession.activeTabId && validOpenTabs.some((entry) => entry.nodeId === currentSession.activeTabId)
-        ? currentSession.activeTabId
-        : validOpenTabs[0]?.nodeId ?? null;
+    const sanitizedSession = sanitizeWorkspaceTabSession({
+      session: currentSession,
+      nodeById,
+      projectScopedNodeIds,
+      isNodeWithinTabScope
+    });
 
     const changed =
-      validOpenTabs.length !== currentSession.openTabs.length ||
-      validOpenTabs.some((entry, index) => {
+      !sanitizedSession ||
+      sanitizedSession.openTabs.length !== currentSession.openTabs.length ||
+      sanitizedSession.openTabs.some((entry, index) => {
         const currentEntry = currentSession.openTabs[index];
         return (
           !currentEntry ||
@@ -10061,18 +10685,11 @@ export default function App() {
           currentEntry.lastSelectedNodeId !== entry.lastSelectedNodeId
         );
       }) ||
-      nextActiveTabId !== currentSession.activeTabId;
+      sanitizedSession.activeTabId !== currentSession.activeTabId;
 
     if (!changed) return;
 
-    updateWorkspaceNodeTabSession(activeProjectRootId, () =>
-      validOpenTabs.length > 0
-        ? {
-            openTabs: validOpenTabs,
-            activeTabId: nextActiveTabId
-          }
-        : null
-    );
+    updateWorkspaceNodeTabSession(activeProjectRootId, () => sanitizedSession);
   }, [
     activeProjectRootId,
     isDedicatedFieldOrderWindow,
@@ -10086,7 +10703,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || !activeProjectRootId || store.allNodes.length === 0) return;
+    if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow || isDedicatedQuickAppWindow || !activeProjectRootId || store.allNodes.length === 0) return;
     if (restoredWorkspaceNodeTabsRef.current === activeProjectRootId) return;
 
     const currentSession = workspaceNodeTabSessions[activeProjectRootId];
@@ -10095,18 +10712,11 @@ export default function App() {
       return;
     }
 
-    const validOpenTabs = currentSession.openTabs.filter((entry) => {
-      const rootNode = nodeById.get(entry.nodeId) ?? null;
-      return Boolean(
-        rootNode &&
-          rootNode.type === "folder" &&
-          !isFileLikeNode(rootNode) &&
-          (!projectScopedNodeIds || projectScopedNodeIds.has(rootNode.id))
-      );
+    const activeTabEntry = resolveRestorableWorkspaceTabEntry({
+      session: currentSession,
+      nodeById,
+      projectScopedNodeIds
     });
-
-    const activeTabEntry =
-      validOpenTabs.find((entry) => entry.nodeId === currentSession.activeTabId) ?? validOpenTabs[0] ?? null;
     if (!activeTabEntry || !nodeById.has(activeTabEntry.nodeId)) {
       restoredWorkspaceNodeTabsRef.current = activeProjectRootId;
       return;
@@ -11047,13 +11657,6 @@ export default function App() {
     );
   }, [activeProjectRootId, updateWorkspaceNodeTabSession]);
 
-  const activateDesktopGridBrowseSurface = useCallback(() => {
-    setWorkspaceMode("grid");
-    setDesktopViewMode("grid");
-    setSelectionSurface("grid");
-    setKeyboardSurface("grid");
-  }, []);
-
   const browseTreeNodeInGrid = useCallback(
     async (nodeId: string, options?: { preserveTreeSurface?: boolean }) => {
       const target = nodeById.get(nodeId) ?? store.allNodes.find((node) => node.id === nodeId) ?? null;
@@ -11066,26 +11669,24 @@ export default function App() {
         await openNodeInWorkareaRef.current?.(nodeId);
         return;
       }
-      if (preserveTreeSurface) {
-        setWorkspaceMode("grid");
-        setDesktopViewMode("grid");
-      } else {
-        activateDesktopGridBrowseSurface();
-      }
+      const browseSelectionSurface: SelectionSurface =
+        documentationModeActive || preserveTreeSurface ? "tree" : "grid";
+      activateDesktopGridBrowseSurface({
+        preserveTreeSurface: browseSelectionSurface === "tree"
+      });
       await store.navigateTo(isFileLikeNode(target) ? resolveSearchResultNavigationParentId(target) : target.id);
-      setPrimarySelection(nodeId, preserveTreeSurface ? "tree" : "grid");
-      if (preserveTreeSurface) {
+      setPrimarySelection(nodeId, browseSelectionSurface);
+      if (browseSelectionSurface === "tree" && !documentationModeActive) {
         setKeyboardSurface("tree");
       }
     },
     [
       activateDesktopGridBrowseSurface,
       clearActiveDesktopNodeTab,
+      documentationModeActive,
       ensureNodeAccessAllowed,
       nodeById,
-      setDesktopViewMode,
       setKeyboardSurface,
-      setWorkspaceMode,
       store,
       workspaceFocusMode
     ]
@@ -11370,9 +11971,29 @@ export default function App() {
   const openFilePreview = useCallback(
     (nodeId: string) => {
       if (!ensureNodeAccessAllowed([nodeId], "read")) return;
+      const node = nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null;
+      if (node && isHtmlFileNode(node)) {
+        void openNodeInDesktopTab(node.id, {
+          selectedNodeId: node.id
+        });
+        return;
+      }
       setMindMapReviewNodeId(nodeId);
     },
-    [ensureNodeAccessAllowed]
+    [ensureNodeAccessAllowed, nodeById, openNodeInDesktopTab, store.allNodes]
+  );
+  const openWorkspaceContentModalItem = useCallback(
+    async (nodeId: string) => {
+      const node = nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null;
+      setWorkspaceContentModalKind(null);
+      if (!node) return;
+      if (isFileLikeNode(node)) {
+        openFilePreview(node.id);
+        return;
+      }
+      await openNodeInDesktopTab(node.id);
+    },
+    [nodeById, openFilePreview, openNodeInDesktopTab, store.allNodes]
   );
 
   const materializeSpreadsheetTreeNodes = async (
@@ -11688,6 +12309,15 @@ export default function App() {
   };
 
   const resolveDesktopUploadTargetId = useCallback((): string | null => {
+    if (
+      workspaceMode === "grid" &&
+      desktopViewMode === "dashboard" &&
+      workspaceFocusMode !== "execution" &&
+      activeWorkspaceNodeTabSession.activeTabId
+    ) {
+      return activeWorkspaceNodeTabSession.activeTabId;
+    }
+
     const fallbackUploadTargetId =
       workspaceMode === "grid" && workspaceFocusMode === "execution"
         ? desktopWorkareaBrowseNodeId ?? desktopWorkareaOwnerNodeId ?? activeWorkspaceRootId ?? null
@@ -11745,7 +12375,9 @@ export default function App() {
 
     return fallbackUploadTargetId;
   }, [
+    activeWorkspaceNodeTabSession.activeTabId,
     activeWorkspaceRootId,
+    desktopViewMode,
     desktopMirrorRootId,
     desktopWorkareaBrowseNodeId,
     desktopWorkareaOwnerNodeId,
@@ -11759,7 +12391,16 @@ export default function App() {
   ]);
 
   const triggerDesktopUpload = async (targetNodeId?: string | null) => {
-    const uploadTargetId = targetNodeId ?? resolveDesktopUploadTargetId();
+    const explicitTargetNode =
+      targetNodeId !== null && targetNodeId !== undefined
+        ? nodeById.get(targetNodeId) ?? store.allNodes.find((node) => node.id === targetNodeId) ?? null
+        : null;
+    const uploadTargetId =
+      explicitTargetNode && isFileLikeNode(explicitTargetNode)
+        ? explicitTargetNode.parentId && explicitTargetNode.parentId !== ROOT_PARENT_ID
+          ? explicitTargetNode.parentId
+          : activeWorkspaceRootId ?? null
+        : targetNodeId ?? resolveDesktopUploadTargetId();
     pendingDesktopUploadTargetIdRef.current = uploadTargetId;
     if (isDesktopRuntime) {
       let shouldFallbackToHtmlInput = false;
@@ -12082,11 +12723,10 @@ export default function App() {
     }
   ) => {
     if (documentationModeActive) {
+      const ensuredProcedureRoot = procedureRootNode ?? (await ensureDocumentationWorkspaceRootNode());
       const anchorNodeId =
         procedureSelectedNode?.id ??
-        procedureRootNode?.id ??
-        documentationWorkspaceRootId ??
-        activeWorkspaceRootId ??
+        ensuredProcedureRoot?.id ??
         null;
       if (anchorNodeId) {
         await createProcedureDocumentItem(anchorNodeId, "section", "inside");
@@ -12286,7 +12926,7 @@ export default function App() {
         : "";
     if (!sourceTableNodeId || !sourceRecordId) return false;
 
-    const procedureModel = buildProcedureDatabaseModel(store.allNodes);
+    const procedureModel = documentationProcedureModel;
     const sourceTable = procedureModel.tablesById.get(sourceTableNodeId) ?? null;
     if (!sourceTable) return false;
 
@@ -13136,6 +13776,26 @@ export default function App() {
     }
   };
 
+  const maximizeWindowsDesktopPrimaryWindow = async (win: TauriWindow): Promise<boolean> => {
+    if (!isTauri() || !isWindowsDesktopPlatform() || win.label !== "main") return false;
+    try {
+      await callNative<void>("maximize_windows_primary_window");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const restoreWindowsDesktopPrimaryWindow = async (win: TauriWindow): Promise<boolean> => {
+    if (!isTauri() || !isWindowsDesktopPlatform() || win.label !== "main") return false;
+    try {
+      await callNative<void>("restore_windows_primary_window");
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const minimizeWindowsDesktopPrimaryWindow = async (win: TauriWindow): Promise<boolean> => {
     if (!isTauri() || !isWindowsDesktopPlatform() || win.label !== "main") return false;
     try {
@@ -13491,17 +14151,10 @@ export default function App() {
   ) => {
     const nextX = Math.round(session.latestScreenX - session.moveOffsetX);
     const nextY = Math.round(session.latestScreenY - session.moveOffsetY);
-    const clamped = clampDesktopWindowBoundsToWorkArea(
-      nextX,
-      nextY,
-      session.outerWidth,
-      session.outerHeight,
-      session.workAreaBounds
-    );
     if (isWindowsDesktopPlatform()) {
       const updatedLayout = await setWindowsDesktopWindowBounds({
-        x: clamped.x,
-        y: clamped.y,
+        x: nextX,
+        y: nextY,
         width: session.outerWidth,
         height: session.outerHeight
       });
@@ -13512,6 +14165,13 @@ export default function App() {
         return;
       }
     }
+    const clamped = clampDesktopWindowBoundsToWorkArea(
+      nextX,
+      nextY,
+      session.outerWidth,
+      session.outerHeight,
+      session.workAreaBounds
+    );
     await win.setPosition(new PhysicalPosition(clamped.x, clamped.y));
   };
 
@@ -13682,13 +14342,15 @@ export default function App() {
         const clampedRatioX = Math.min(0.88, Math.max(0.12, pointerRatioX));
         const nextX = Math.round(activeSession.latestScreenX - restoreBounds.width * clampedRatioX);
         const nextY = Math.round(activeSession.latestScreenY - activeSession.headerOffsetY);
-        const clampedBounds = clampDesktopWindowBoundsToWorkArea(
-          nextX,
-          nextY,
-          restoreBounds.width,
-          restoreBounds.height,
-          workAreaBounds
-        );
+        const restoreTargetBounds = isWindowsDesktopPlatform()
+          ? { x: nextX, y: nextY }
+          : clampDesktopWindowBoundsToWorkArea(
+              nextX,
+              nextY,
+              restoreBounds.width,
+              restoreBounds.height,
+              workAreaBounds
+            );
 
         if (await getWindowsDesktopPrimaryWindowFullscreenState(win)) {
           await setDesktopWindowFullscreen(win, false);
@@ -13704,26 +14366,37 @@ export default function App() {
 
         await restoreDesktopWindowBounds(win, {
           ...restoreBounds,
-          x: clampedBounds.x,
-          y: clampedBounds.y
+          x: restoreTargetBounds.x,
+          y: restoreTargetBounds.y
         });
         setIsWindowMaximized(false);
+
+        const restoredLayout = isWindowsDesktopPlatform() ? await getWindowsDesktopWindowLayoutState() : null;
+        const appliedBounds = restoredLayout?.currentBounds ?? {
+          x: restoreTargetBounds.x,
+          y: restoreTargetBounds.y,
+          width: restoreBounds.width,
+          height: restoreBounds.height
+        };
+        const appliedWorkAreaBounds = restoredLayout?.workAreaBounds ?? workAreaBounds;
 
         const updatedSession = desktopWindowHeaderDragRef.current;
         if (!updatedSession) return;
         updatedSession.pointerRatioX = clampedRatioX;
-        updatedSession.workAreaBounds = workAreaBounds;
-        updatedSession.outerWidth = restoreBounds.width;
-        updatedSession.outerHeight = restoreBounds.height;
-        updatedSession.moveOffsetX = updatedSession.latestScreenX - clampedBounds.x;
-        updatedSession.moveOffsetY = updatedSession.latestScreenY - clampedBounds.y;
+        updatedSession.workAreaBounds = appliedWorkAreaBounds;
+        updatedSession.outerWidth = appliedBounds.width;
+        updatedSession.outerHeight = appliedBounds.height;
+        updatedSession.moveOffsetX = updatedSession.latestScreenX - appliedBounds.x;
+        updatedSession.moveOffsetY = updatedSession.latestScreenY - appliedBounds.y;
 
         try {
           clearDesktopWindowHeaderDragSession();
           desktopWindowRestoreBoundsRef.current = {
             ...restoreBounds,
-            x: clampedBounds.x,
-            y: clampedBounds.y
+            width: appliedBounds.width,
+            height: appliedBounds.height,
+            x: appliedBounds.x,
+            y: appliedBounds.y
           };
           await win.startDragging();
         } catch {
@@ -14122,6 +14795,259 @@ export default function App() {
     setQuickAppsDraftItems((current) => current.filter((item) => item.id !== itemId));
   }, []);
 
+  const pickQuickAppLocalPath = useCallback(async (itemId: string) => {
+    try {
+      const picked = await pickWindowsFilesForImport();
+      const selectedPath = picked[0] ?? "";
+      if (!selectedPath) return;
+
+      setQuickAppsDraftItems((current) =>
+        current.map((item) => {
+          if (item.id !== itemId) return item;
+          const shouldDefaultToOdeWindow =
+            item.target.trim().length === 0 &&
+            canQuickAppTargetOpenInOdeWindow({ kind: "local_path" }, selectedPath);
+          return {
+            ...item,
+            kind: "local_path",
+            target: selectedPath,
+            label: item.label.trim().length > 0 ? item.label : getQuickAppTargetLeafName(selectedPath),
+            launchMode: shouldDefaultToOdeWindow ? "ode_window" : item.launchMode
+          };
+        })
+      );
+    } catch {
+      // File picking is best-effort; keep the modal open if the user cancels or the picker is unavailable.
+    }
+  }, []);
+
+  const addWorkspaceQuickAppDraftItem = useCallback(() => {
+    setWorkspaceQuickAppsDraftItems((current) => [...current, createNodeQuickAppItem()]);
+  }, []);
+
+  const updateWorkspaceQuickAppDraftItem = useCallback((itemId: string, patch: Partial<NodeQuickAppItem>) => {
+    setWorkspaceQuickAppsDraftItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              ...patch
+            }
+          : item
+      )
+    );
+  }, []);
+
+  const moveWorkspaceQuickAppDraftItem = useCallback((itemId: string, direction: "up" | "down") => {
+    setWorkspaceQuickAppsDraftItems((current) => {
+      const itemIndex = current.findIndex((item) => item.id === itemId);
+      if (itemIndex < 0) return current;
+
+      const targetIndex = direction === "up" ? itemIndex - 1 : itemIndex + 1;
+      if (targetIndex < 0 || targetIndex >= current.length) return current;
+
+      const nextItems = [...current];
+      const [movedItem] = nextItems.splice(itemIndex, 1);
+      nextItems.splice(targetIndex, 0, movedItem);
+      return nextItems;
+    });
+  }, []);
+
+  const removeWorkspaceQuickAppDraftItem = useCallback((itemId: string) => {
+    setWorkspaceQuickAppsDraftItems((current) => current.filter((item) => item.id !== itemId));
+  }, []);
+
+  const pickWorkspaceQuickAppLocalPath = useCallback(async (itemId: string) => {
+    try {
+      const picked = await pickWindowsFilesForImport();
+      const selectedPath = picked[0] ?? "";
+      if (!selectedPath) return;
+
+      setWorkspaceQuickAppsDraftItems((current) =>
+        current.map((item) => {
+          if (item.id !== itemId) return item;
+          const shouldDefaultToOdeWindow =
+            item.target.trim().length === 0 &&
+            canQuickAppTargetOpenInOdeWindow({ kind: "local_path" }, selectedPath);
+          return {
+            ...item,
+            kind: "local_path",
+            target: selectedPath,
+            label: item.label.trim().length > 0 ? item.label : getQuickAppTargetLeafName(selectedPath),
+            launchMode: shouldDefaultToOdeWindow ? "ode_window" : item.launchMode
+          };
+        })
+      );
+    } catch {
+      // File picking is best-effort; keep the modal open if the user cancels or the picker is unavailable.
+    }
+  }, []);
+
+  const openGlobalQuickAppsModal = useCallback(() => {
+    setGlobalQuickAppsModalOpen(true);
+    setGlobalQuickAppsDraftItems(
+      globalQuickApps.length > 0
+        ? globalQuickApps.map((item) => ({
+            ...item
+          }))
+        : [createNodeQuickAppItem()]
+    );
+  }, [globalQuickApps]);
+
+  const closeGlobalQuickAppsModal = useCallback(() => {
+    if (globalQuickAppsSaving) return;
+    setGlobalQuickAppsModalOpen(false);
+    setGlobalQuickAppsDraftItems([]);
+  }, [globalQuickAppsSaving]);
+
+  const openHtmlAppTemplatesModal = useCallback(() => {
+    setHtmlAppTemplatesModalOpen(true);
+    setHtmlAppTemplatesDraftItems(
+      htmlAppTemplates.length > 0
+        ? htmlAppTemplates.map((template) => ({
+            ...template
+          }))
+        : [createHtmlAppTemplate()]
+    );
+  }, [htmlAppTemplates]);
+
+  const closeHtmlAppTemplatesModal = useCallback(() => {
+    if (htmlAppTemplatesSaving) return;
+    setHtmlAppTemplatesModalOpen(false);
+    setHtmlAppTemplatesDraftItems([]);
+  }, [htmlAppTemplatesSaving]);
+
+  const addHtmlAppTemplateDraftItem = useCallback(() => {
+    setHtmlAppTemplatesDraftItems((current) => [...current, createHtmlAppTemplate()]);
+  }, []);
+
+  const updateHtmlAppTemplateDraftItem = useCallback((templateId: string, patch: Partial<HtmlAppTemplate>) => {
+    setHtmlAppTemplatesDraftItems((current) =>
+      current.map((template) =>
+        template.id === templateId
+          ? {
+              ...template,
+              ...patch
+            }
+          : template
+      )
+    );
+  }, []);
+
+  const removeHtmlAppTemplateDraftItem = useCallback((templateId: string) => {
+    setHtmlAppTemplatesDraftItems((current) => current.filter((template) => template.id !== templateId));
+  }, []);
+
+  const pickHtmlAppTemplateEntryPath = useCallback(async (templateId: string) => {
+    try {
+      const picked = await pickWindowsFilesForImport();
+      const selectedPath = picked[0] ?? "";
+      if (!selectedPath || !isHtmlTemplatePath(selectedPath)) return;
+
+      setHtmlAppTemplatesDraftItems((current) =>
+        current.map((template) => {
+          if (template.id !== templateId) return template;
+          return {
+            ...template,
+            entryPath: selectedPath,
+            label: template.label.trim().length > 0 ? template.label : createHtmlAppTemplate({ entryPath: selectedPath }).label,
+            version: template.entryPath && template.entryPath !== selectedPath ? template.version + 1 : template.version,
+            updatedAt: Date.now()
+          };
+        })
+      );
+    } catch {
+      // File picking is best-effort; keep the modal open if the user cancels or the picker is unavailable.
+    }
+  }, []);
+
+  const addGlobalQuickAppDraftItem = useCallback(() => {
+    setGlobalQuickAppsDraftItems((current) => [...current, createNodeQuickAppItem()]);
+  }, []);
+
+  const updateGlobalQuickAppDraftItem = useCallback((itemId: string, patch: Partial<NodeQuickAppItem>) => {
+    setGlobalQuickAppsDraftItems((current) =>
+      current.map((item) =>
+        item.id === itemId
+          ? {
+              ...item,
+              ...patch
+            }
+          : item
+      )
+    );
+  }, []);
+
+  const moveGlobalQuickAppDraftItem = useCallback((itemId: string, direction: "up" | "down") => {
+    setGlobalQuickAppsDraftItems((current) => {
+      const itemIndex = current.findIndex((item) => item.id === itemId);
+      if (itemIndex < 0) return current;
+
+      const targetIndex = direction === "up" ? itemIndex - 1 : itemIndex + 1;
+      if (targetIndex < 0 || targetIndex >= current.length) return current;
+
+      const nextItems = [...current];
+      const [movedItem] = nextItems.splice(itemIndex, 1);
+      nextItems.splice(targetIndex, 0, movedItem);
+      return nextItems;
+    });
+  }, []);
+
+  const removeGlobalQuickAppDraftItem = useCallback((itemId: string) => {
+    setGlobalQuickAppsDraftItems((current) => current.filter((item) => item.id !== itemId));
+  }, []);
+
+  const pickGlobalQuickAppLocalPath = useCallback(async (itemId: string) => {
+    try {
+      const picked = await pickWindowsFilesForImport();
+      const selectedPath = picked[0] ?? "";
+      if (!selectedPath) return;
+
+      setGlobalQuickAppsDraftItems((current) =>
+        current.map((item) => {
+          if (item.id !== itemId) return item;
+          const shouldDefaultToOdeWindow =
+            item.target.trim().length === 0 &&
+            canQuickAppTargetOpenInOdeWindow({ kind: "local_path" }, selectedPath);
+          return {
+            ...item,
+            kind: "local_path",
+            target: selectedPath,
+            label: item.label.trim().length > 0 ? item.label : getQuickAppTargetLeafName(selectedPath),
+            launchMode: shouldDefaultToOdeWindow ? "ode_window" : item.launchMode
+          };
+        })
+      );
+    } catch {
+      // File picking is best-effort; keep the modal open if the user cancels or the picker is unavailable.
+    }
+  }, []);
+
+  const warmLocalQuickAppIcons = useCallback(async (items: NodeQuickAppItem[]) => {
+    const localAutoQuickApps = items.filter(
+      (item) => item.kind === "local_path" && item.iconKey === "auto" && !item.customIconDataUrl
+    );
+    if (localAutoQuickApps.length === 0) return;
+
+    const uniqueIconRequests = new Map<string, { target: string; fileName: string }>();
+    for (const item of localAutoQuickApps) {
+      const fileName = getQuickAppTargetLeafName(item.target) || item.label || "app";
+      const cacheKey = buildWindowsFileIconCacheKey(item.target, fileName, 32);
+      if (!uniqueIconRequests.has(cacheKey)) {
+        uniqueIconRequests.set(cacheKey, {
+          target: item.target,
+          fileName
+        });
+      }
+    }
+
+    await Promise.allSettled(
+      Array.from(uniqueIconRequests.values()).map(({ target, fileName }) =>
+        resolveWindowsFileIcon(target, fileName, 32)
+      )
+    );
+  }, []);
+
   const saveQuickAppsModal = useCallback(async () => {
     if (!quickAppsModalNodeId) return;
     const node = nodeById.get(quickAppsModalNodeId) ?? null;
@@ -14130,9 +15056,6 @@ export default function App() {
 
     const nextQuickApps = normalizeNodeQuickApps(quickAppsDraftItems);
     const nextProperties = buildNodeQuickAppsProperties(node.properties, nextQuickApps);
-    const localAutoQuickApps = nextQuickApps.filter(
-      (item) => item.kind === "local_path" && item.iconKey === "auto" && !item.customIconDataUrl
-    );
     setQuickAppsSaving(true);
     try {
       await updateNodeProperties(node.id, nextProperties);
@@ -14141,36 +15064,156 @@ export default function App() {
         updatedAt: Date.now()
       });
 
-      if (localAutoQuickApps.length > 0) {
-        const uniqueIconRequests = new Map<string, { target: string; fileName: string }>();
-        for (const item of localAutoQuickApps) {
-          const fileName = getQuickAppTargetLeafName(item.target) || item.label || "app";
-          const cacheKey = buildWindowsFileIconCacheKey(item.target, fileName, 32);
-          if (!uniqueIconRequests.has(cacheKey)) {
-            uniqueIconRequests.set(cacheKey, {
-              target: item.target,
-              fileName
-            });
-          }
-        }
-
-        await Promise.allSettled(
-          Array.from(uniqueIconRequests.values()).map(({ target, fileName }) =>
-            resolveWindowsFileIcon(target, fileName, 32)
-          )
-        );
-      }
+      await warmLocalQuickAppIcons(nextQuickApps);
 
       setQuickAppsModalNodeId(null);
       setQuickAppsDraftItems([]);
     } finally {
       setQuickAppsSaving(false);
     }
-  }, [ensureNodeAccessAllowed, nodeById, quickAppsDraftItems, quickAppsModalNodeId, store]);
+  }, [ensureNodeAccessAllowed, nodeById, quickAppsDraftItems, quickAppsModalNodeId, store, warmLocalQuickAppIcons]);
+
+  const saveWorkspaceQuickAppsModal = useCallback(async () => {
+    if (!workspaceQuickAppsModalRootId) return;
+    const node = nodeById.get(workspaceQuickAppsModalRootId) ?? null;
+    if (!node) return;
+    if (!ensureNodeAccessAllowed([node.id], "write")) return;
+
+    const nextQuickApps = normalizeNodeQuickApps(workspaceQuickAppsDraftItems);
+    const nextProperties = buildScopedQuickAppsProperties(
+      node.properties,
+      nextQuickApps,
+      WORKSPACE_QUICK_APPS_PROPERTY
+    );
+    setWorkspaceQuickAppsSaving(true);
+    try {
+      await updateNodeProperties(node.id, nextProperties);
+      store.patchNode(node.id, {
+        properties: nextProperties,
+        updatedAt: Date.now()
+      });
+
+      await warmLocalQuickAppIcons(nextQuickApps);
+
+      setWorkspaceQuickAppsModalRootId(null);
+      setWorkspaceQuickAppsDraftItems([]);
+    } finally {
+      setWorkspaceQuickAppsSaving(false);
+    }
+  }, [
+    ensureNodeAccessAllowed,
+    nodeById,
+    store,
+    warmLocalQuickAppIcons,
+    workspaceQuickAppsDraftItems,
+    workspaceQuickAppsModalRootId
+  ]);
+
+  const saveGlobalQuickAppsModal = useCallback(async () => {
+    const nextQuickApps = normalizeNodeQuickApps(globalQuickAppsDraftItems);
+    setGlobalQuickAppsSaving(true);
+    try {
+      setGlobalQuickApps(nextQuickApps);
+      await warmLocalQuickAppIcons(nextQuickApps);
+      setGlobalQuickAppsModalOpen(false);
+      setGlobalQuickAppsDraftItems([]);
+    } finally {
+      setGlobalQuickAppsSaving(false);
+    }
+  }, [globalQuickAppsDraftItems, warmLocalQuickAppIcons]);
+
+  const saveHtmlAppTemplatesModal = useCallback(async () => {
+    const nextTemplates = normalizeHtmlAppTemplates(htmlAppTemplatesDraftItems).map((template) => {
+      const previous = htmlAppTemplatesById.get(template.id) ?? null;
+      if (!previous) {
+        return {
+          ...template,
+          version: Math.max(1, template.version),
+          updatedAt: template.updatedAt || Date.now()
+        };
+      }
+      if (previous.entryPath !== template.entryPath) {
+        return {
+          ...template,
+          version: previous.version + 1,
+          updatedAt: Date.now()
+        };
+      }
+      return {
+        ...template,
+        version: previous.version,
+        updatedAt: previous.updatedAt
+      };
+    });
+    setHtmlAppTemplatesSaving(true);
+    try {
+      setHtmlAppTemplates(nextTemplates);
+      setHtmlAppTemplatesModalOpen(false);
+      setHtmlAppTemplatesDraftItems([]);
+    } finally {
+      setHtmlAppTemplatesSaving(false);
+    }
+  }, [htmlAppTemplatesById, htmlAppTemplatesDraftItems]);
+
+  const openQuickAppInDedicatedWindow = useCallback(
+    async (item: NodeQuickAppItem, target: string, launchContext?: QuickAppLaunchContext): Promise<boolean> => {
+      if (!isTauri()) return false;
+      if (!canQuickAppTargetOpenInOdeWindow(item, target)) return false;
+
+      const scope = launchContext?.scope ?? (launchContext?.sourceNodeId ? "node" : "global");
+      const sourceNodeId = launchContext?.sourceNodeId ?? null;
+      const label = buildQuickAppWindowLabel(item, target, scope === "global" ? null : sourceNodeId);
+
+      const fallbackToExternal = async () => {
+        if (item.kind === "local_path") {
+          await openLocalPath(target);
+        } else {
+          await openExternalUrl(target);
+        }
+        return false;
+      };
+
+      try {
+        const windowTitle = `${APP_DISPLAY_NAME} - ${item.label.trim() || getQuickAppTargetLeafName(target)}`;
+        const embeddedSrc = resolveQuickAppEmbeddedSrc(item.kind, target);
+        const launchUrl =
+          embeddedSrc && isHtmlQuickAppTarget(item.kind, target)
+            ? appendQuickAppContextParams(embeddedSrc, {
+                odeNodeId: sourceNodeId ?? null,
+                odeProjectId: activeProjectId,
+                odeWorkspaceRootId: activeProjectRootId,
+                odeQuickAppId: item.id,
+                odeQuickAppLabel: item.label.trim() || getQuickAppTargetLeafName(target),
+                odeDataScope: scope,
+                odeDataKey:
+                  scope === "node"
+                    ? `${activeProjectId ?? "project"}::${sourceNodeId ?? "node"}::${item.id}`
+                    : scope === "workspace"
+                      ? `${activeProjectId ?? "project"}::workspace::${item.id}`
+                      : `global::${item.id}`
+              })
+            : target;
+        await openQuickAppWindow({
+          label,
+          title: windowTitle,
+          url: launchUrl,
+          width: 1380,
+          height: 920,
+          minWidth: 960,
+          minHeight: 680
+        });
+        return true;
+      } catch {
+        return await fallbackToExternal();
+      }
+    },
+    [activeProjectId, activeProjectRootId]
+  );
 
   const launchQuickApp = useCallback(
-    async (item: NodeQuickAppItem) => {
-      const target = resolveQuickAppLaunchTarget(item);
+    async (item: NodeQuickAppItem, launchContext?: QuickAppLaunchContext) => {
+      const htmlTemplate = item.kind === "html_template" ? htmlAppTemplatesById.get(item.target) ?? null : null;
+      const target = item.kind === "html_template" ? htmlTemplate?.entryPath ?? "" : resolveQuickAppLaunchTarget(item);
       if (!target) {
         setProjectError(t("quick_apps.target_required"));
         return;
@@ -14195,6 +15238,15 @@ export default function App() {
           } else {
             await openNodeInDedicatedWindow(targetNode.id);
           }
+        } else if (item.kind === "html_template" || resolveQuickAppLaunchMode(item) === "ode_window") {
+          const openedInOdeWindow = await openQuickAppInDedicatedWindow(item, target, launchContext);
+          if (!openedInOdeWindow) {
+            if (item.kind === "local_path" || item.kind === "html_template") {
+              await openLocalPath(target);
+            } else {
+              await openExternalUrl(target);
+            }
+          }
         } else if (item.kind === "local_path") {
           await openLocalPath(target);
         } else {
@@ -14209,7 +15261,7 @@ export default function App() {
         );
       }
     },
-    [openFileNode, openNodeInDedicatedWindow, resolveCachedNodeById, t]
+    [htmlAppTemplatesById, openFileNode, openNodeInDedicatedWindow, openQuickAppInDedicatedWindow, resolveCachedNodeById, t]
   );
 
   const syncExecutionTaskDeletionToOwner = useCallback(
@@ -15461,13 +16513,13 @@ export default function App() {
 
   const openNodeInWorkarea = async (
     targetNodeId?: string | null,
-    options?: { deliverableId?: string | null; openExecution?: boolean }
+    options?: { deliverableId?: string | null; openExecution?: boolean; fallbackOwnerNodeId?: string | null }
   ) => {
     const targetNode =
       targetNodeId !== undefined && targetNodeId !== null
         ? nodeById.get(targetNodeId) ?? store.allNodes.find((node) => node.id === targetNodeId) ?? null
         : null;
-    const ownerNodeId = resolveWorkareaOwnerNodeId(targetNodeId);
+    const ownerNodeId = resolveWorkareaOwnerNodeId(targetNodeId) ?? options?.fallbackOwnerNodeId ?? null;
     if (!ownerNodeId) return;
     if (!ensureNodeAccessAllowed([targetNode?.id ?? ownerNodeId], "read")) return;
     await ensureLegacyWorkareaTreeForOwner(ownerNodeId);
@@ -15549,7 +16601,9 @@ export default function App() {
     );
 
     if (enabled) {
-      await openNodeInWorkarea(node.id);
+      await openNodeInWorkarea(node.id, {
+        fallbackOwnerNodeId: node.id
+      });
     }
   };
 
@@ -16296,7 +17350,13 @@ export default function App() {
       kind: "section" | "text" | "field" | "table" | "attachment",
       position: "after" | "inside"
     ) => {
-      const anchor = store.allNodes.find((item) => item.id === anchorNodeId) ?? null;
+      let anchor = store.allNodes.find((item) => item.id === anchorNodeId) ?? null;
+      if (documentationModeActive) {
+        const documentationAnchor = findDocumentationWorkspaceAncestor(anchor, nodeById);
+        if (!documentationAnchor) {
+          anchor = procedureRootNode ?? (await ensureDocumentationWorkspaceRootNode());
+        }
+      }
       if (!anchor) return null;
 
       const procedureRootId = procedureRootNode?.id ?? null;
@@ -16360,7 +17420,15 @@ export default function App() {
       }
       return newNodeId;
     },
-    [byParent, createNewTopicNode, procedureRootNode?.id, store.allNodes]
+    [
+      byParent,
+      createNewTopicNode,
+      documentationModeActive,
+      ensureDocumentationWorkspaceRootNode,
+      nodeById,
+      procedureRootNode,
+      store.allNodes
+    ]
   );
 
   const attachPickedFilesToProcedureNode = useCallback(
@@ -16659,44 +17727,130 @@ export default function App() {
   const selectFromSearch = async (nodeId: string) => {
     const target = nodeById.get(nodeId);
     if (!target) return;
-    if (desktopViewMode === "library") {
+    const navigationPlan = resolveWorkspaceSearchNavigationPlan({
+      desktopViewMode,
+      workspaceMode,
+      workspaceFocusMode,
+      target,
+      nodeById
+    });
+
+    if (navigationPlan.mode === "library") {
       selectReusableLibraryItem(nodeId, { surface: "tree" });
       store.setSearchQuery("");
       setSearchActiveIndex(0);
       setSearchDropdownOpen(false);
       return;
     }
-    if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
+    if (navigationPlan.mode === "workarea") {
       await openNodeInWorkarea(nodeId);
       store.setSearchQuery("");
       setSearchActiveIndex(0);
       setSearchDropdownOpen(false);
       return;
     }
-    if (workspaceMode === "grid") {
+    if (navigationPlan.shouldClearActiveTab) {
       clearActiveDesktopNodeTab();
+    }
+    if (navigationPlan.shouldActivateBrowseSurface) {
       activateDesktopGridBrowseSurface();
     }
-    const browseTargetId =
-      workspaceMode === "grid"
-        ? isFileLikeNode(target)
-          ? resolveSearchResultNavigationParentId(target)
-          : target.id
-        : resolveSearchResultNavigationParentId(target);
-    await store.navigateTo(browseTargetId);
+    await store.navigateTo(navigationPlan.browseTargetId);
     setExpandedIds((prev) => {
       const next = new Set(prev);
-      for (const ancestorId of collectAncestorNodeIds(nodeId, nodeById)) {
+      for (const ancestorId of navigationPlan.ancestorNodeIds) {
         next.add(ancestorId);
       }
       return next;
     });
-    const preferredSurface = resolveSearchResultSelectionSurface(workspaceMode, target);
-    setPrimarySelection(nodeId, preferredSurface);
+    setPrimarySelection(nodeId, navigationPlan.preferredSurface);
     store.setSearchQuery("");
     setSearchActiveIndex(0);
     setSearchDropdownOpen(false);
   };
+
+  const workspaceNavigationActions = useMemo<WorkspaceNavigationActions>(
+    () => ({
+      activateBrowseSurface: activateDesktopGridBrowseSurface,
+      browseNode: async (nodeId, options) => {
+        if (desktopViewMode === "library") {
+          selectReusableLibraryItem(nodeId, { surface: "tree" });
+          return;
+        }
+        if (documentationModeActive) {
+          setSelectionSurface("tree");
+          setKeyboardSurface("procedure");
+          return;
+        }
+        await browseTreeNodeInGrid(nodeId, {
+          preserveTreeSurface: options?.preserveTreeSurface ?? true
+        });
+      },
+      clearActiveTab: clearActiveDesktopNodeTab,
+      openNodeExecution: (nodeId) => openNodeExecutionView(nodeId),
+      openNodeHome: (nodeId) => openNodeHomeView(nodeId),
+      openNodeTab: async (nodeId, options) => {
+        if (documentationModeActive) {
+          setPrimarySelection(nodeId, "tree");
+          setSelectionSurface("tree");
+          setKeyboardSurface("procedure");
+          setProcedureFieldEditorTargetNodeId(nodeId);
+          return;
+        }
+        if (workspaceFocusMode === "execution") {
+          await openNodeInWorkarea(nodeId);
+          return;
+        }
+        await openNodeInDesktopTab(nodeId, options);
+      },
+      openNodeTimeline: (nodeId) => openNodeTimelineView(nodeId),
+      selectBreadcrumbNode: async (nodeId: string) => {
+        const target = resolveBreadcrumbNavigationTarget({
+          workspaceMode,
+          desktopViewMode,
+          workspaceFocusMode
+        });
+        if (target === "timeline") {
+          await openNodeTimelineView(nodeId);
+          return;
+        }
+        if (target === "execution") {
+          await openNodeExecutionView(nodeId);
+          return;
+        }
+        await openNodeHomeView(nodeId);
+      },
+      selectFromSearch
+    }),
+    [
+      activateDesktopGridBrowseSurface,
+      browseTreeNodeInGrid,
+      clearActiveDesktopNodeTab,
+      desktopViewMode,
+      documentationModeActive,
+      openNodeInWorkarea,
+      openNodeExecutionView,
+      openNodeHomeView,
+      openNodeInDesktopTab,
+      openNodeTimelineView,
+      selectReusableLibraryItem,
+      selectFromSearch,
+      setPrimarySelection,
+      setProcedureFieldEditorTargetNodeId,
+      setSelectionSurface,
+      setKeyboardSurface,
+      workspaceFocusMode,
+      workspaceMode
+    ]
+  );
+  const workspaceNavigationController = useMemo<WorkspaceNavigationController>(
+    () => ({
+      scope: workspaceScopeContext,
+      state: workspaceNavigationState,
+      actions: workspaceNavigationActions
+    }),
+    [workspaceNavigationActions, workspaceNavigationState, workspaceScopeContext]
+  );
 
   const openQuickAccessNode = async (nodeId: string) => {
     const node = nodeById.get(nodeId);
@@ -17687,7 +18841,10 @@ export default function App() {
       }
 
       if (nativeMaximized) {
-        await win.unmaximize();
+        const restoredNatively = await restoreWindowsDesktopPrimaryWindow(win);
+        if (!restoredNatively) {
+          await win.unmaximize();
+        }
         await waitForMs(80);
       }
 
@@ -17704,14 +18861,22 @@ export default function App() {
       scheduleDesktopWindowChromeStateSync(win);
     } else {
       desktopWindowRestoreBoundsRef.current = await captureDesktopWindowRestoreBounds(win);
-      const fittedToWorkArea = await fitDesktopWindowToWorkArea({
-        fillWorkArea: true,
-        coverTaskbar: false,
-        margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
-      });
-      if (!fittedToWorkArea) {
-        await win.maximize().catch(() => {
-          // Native maximize is the safest fallback because it respects the OS work area.
+      let maximizedNatively = false;
+      maximizedNatively = await maximizeWindowsDesktopPrimaryWindow(win);
+      if (!maximizedNatively) {
+        await win.maximize()
+          .then(() => {
+            maximizedNatively = true;
+          })
+          .catch(() => {
+            maximizedNatively = false;
+          });
+      }
+      if (!maximizedNatively) {
+        await fitDesktopWindowToWorkArea({
+          fillWorkArea: true,
+          coverTaskbar: false,
+          margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
         });
       }
       setIsWindowMaximized(await isDesktopWindowEffectivelyMaximized(win));
@@ -21104,6 +22269,38 @@ export default function App() {
       autoOpen: options?.autoOpen ?? true
     });
 
+  const createChantierFromSeedItem = useCallback(
+    async (targetNodeId: string, seedName: string) => {
+      const name = seedName.trim();
+      if (!name) return;
+      await createBlankChantierAtNode(targetNodeId, name, { autoOpen: true });
+    },
+    [createBlankChantierAtNode]
+  );
+
+  const createChantiersFromSeedItems = useCallback(
+    async (targetNodeId: string, seedItems: string[]) => {
+      const orderedNames = seedItems.map((item) => item.trim()).filter((item) => item.length > 0);
+      if (orderedNames.length === 0) return;
+      let lastCreatedId: string | null = null;
+      for (const item of orderedNames) {
+        lastCreatedId = await createBlankChantierAtNode(targetNodeId, item, { autoOpen: false });
+      }
+      const targetNode = nodeById.get(targetNodeId) ?? (await getNode(targetNodeId)) ?? null;
+      if (lastCreatedId && targetNode) {
+        await refreshTreeAndKeepContext(lastCreatedId, [targetNode.id], "grid", targetNode.id);
+        setPrimarySelection(lastCreatedId, "grid");
+        setProjectNotice(
+          t("chantier.create_notice_library_batch", {
+            count: orderedNames.length,
+            target: targetNode.name
+          })
+        );
+      }
+    },
+    [createBlankChantierAtNode, nodeById, refreshTreeAndKeepContext, setPrimarySelection, t]
+  );
+
   const buildChantierTaskNoteFromWbsNode = (node: WBSNode): string | null => {
     const lines = [
       node.description?.trim() || null,
@@ -21392,27 +22589,945 @@ export default function App() {
     }
   };
 
-  const createDatabaseSectionFromCommand = async (args?: Record<string, unknown>) => {
+  const normalizeAiLookupKey = (value: string): string =>
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  const resolveAiDatabaseRootNode = async (options?: { ensure?: boolean }): Promise<AppNode | null> => {
+    const existingRoot =
+      documentationWorkspaceRootNode ??
+      (documentationWorkspaceRootId
+        ? nodeById.get(documentationWorkspaceRootId) ?? (await getNode(documentationWorkspaceRootId)) ?? null
+        : null);
+    if (existingRoot) return existingRoot;
+    if (options?.ensure) {
+      return ensureDocumentationWorkspaceRootNode();
+    }
+    return null;
+  };
+
+  const resolveAiSelectedDatabaseSectionNode = async (): Promise<AppNode | null> => {
+    const selectedDatabaseCandidateIds = Array.from(
+      new Set(
+        [procedureSelectedNode?.id ?? null, store.selectedNodeId, store.currentFolderId].filter(
+          (value): value is string => Boolean(value)
+        )
+      )
+    );
+    for (const candidateId of selectedDatabaseCandidateIds) {
+      const candidateNode = nodeById.get(candidateId) ?? (await getNode(candidateId)) ?? null;
+      if (!candidateNode) continue;
+      if (!findDocumentationWorkspaceAncestor(candidateNode, nodeById)) continue;
+      const normalizedNode =
+        candidateNode.type === "file" &&
+        candidateNode.parentId &&
+        candidateNode.parentId !== ROOT_PARENT_ID
+          ? nodeById.get(candidateNode.parentId) ?? (await getNode(candidateNode.parentId)) ?? null
+          : candidateNode;
+      if (!normalizedNode) continue;
+      const itemType = inferDatabaseTemplateItemType(normalizedNode, byParent);
+      if (
+        itemType === "section" &&
+        !isDocumentationWorkspaceRootNode(normalizedNode) &&
+        !isLegacyDocumentationWorkspaceRootNode(normalizedNode)
+      ) {
+        return normalizedNode;
+      }
+      if (
+        itemType === "field" &&
+        normalizedNode.parentId &&
+        normalizedNode.parentId !== ROOT_PARENT_ID
+      ) {
+        const parentSectionNode =
+          nodeById.get(normalizedNode.parentId) ?? (await getNode(normalizedNode.parentId)) ?? null;
+        if (
+          parentSectionNode &&
+          inferDatabaseTemplateItemType(parentSectionNode, byParent) === "section" &&
+          !isDocumentationWorkspaceRootNode(parentSectionNode) &&
+          !isLegacyDocumentationWorkspaceRootNode(parentSectionNode)
+        ) {
+          return parentSectionNode;
+        }
+      }
+    }
+    return null;
+  };
+
+  const resolveAiProcedureTable = async (args?: Record<string, unknown>): Promise<ProcedureTableDefinition | null> => {
+    const requestedSectionName =
+      parseArgsString(args, "section_name") ||
+      parseArgsString(args, "source_ref") ||
+      parseArgsString(args, "source") ||
+      parseArgsString(args, "section") ||
+      parseArgsString(args, "name") ||
+      parseArgsString(args, "title");
+    const resolveFromNodes = (
+      nodes: AppNode[],
+      sectionName: string | null
+    ): ProcedureTableDefinition | null => {
+      const model = buildProcedureDatabaseModel(collectDocumentationScopedNodes(nodes));
+      if (!sectionName) return null;
+      const requestedKey = normalizeAiLookupKey(sectionName);
+      const exactMatch =
+        model.tables.find((table) => normalizeAiLookupKey(table.node.name) === requestedKey) ?? null;
+      if (exactMatch) return exactMatch;
+      const containsMatch =
+        model.tables.find((table) => normalizeAiLookupKey(table.node.name).includes(requestedKey)) ?? null;
+      return containsMatch;
+    };
+    if (requestedSectionName) {
+      const liveMatch = resolveFromNodes(store.allNodes, requestedSectionName);
+      if (liveMatch) return liveMatch;
+      const freshNodes = await getAllNodes();
+      const freshMatch = resolveFromNodes(freshNodes, requestedSectionName);
+      if (freshMatch) return freshMatch;
+      return null;
+    }
+    const selectedSectionNode = await resolveAiSelectedDatabaseSectionNode();
+    if (selectedSectionNode) {
+      return documentationProcedureModel.tablesById.get(selectedSectionNode.id) ?? null;
+    }
+    return null;
+  };
+
+  const resolveAiProcedureFieldByRef = (
+    table: ProcedureTableDefinition,
+    reference: string | null | undefined
+  ): ProcedureFieldDefinition | null => {
+    const trimmedReference = reference?.trim() ?? "";
+    if (!trimmedReference) return null;
+    const normalizedReference = normalizeAiLookupKey(trimmedReference);
+    if (!normalizedReference) return null;
+    const exactMatch =
+      table.fields.find((field) => normalizeAiLookupKey(field.label) === normalizedReference) ?? null;
+    if (exactMatch) return exactMatch;
+    const containsMatch =
+      table.fields.find((field) => normalizeAiLookupKey(field.label).includes(normalizedReference)) ?? null;
+    if (containsMatch) return containsMatch;
+    return null;
+  };
+
+  const createDatabaseExamplesFromCommand = async (args?: Record<string, unknown>): Promise<AiCommandExecutionResult | void> => {
+    const targetTable = await resolveAiProcedureTable(args);
+    if (!targetTable) {
+      throw new Error("Select a database section first or specify the database section name.");
+    }
+    const writableFields = targetTable.fields.filter((field) => !isProcedureFormulaFieldType(field.type));
+    if (writableFields.length === 0) {
+      throw new Error(`"${targetTable.node.name}" has no writable fields yet.`);
+    }
+    if (!ensureStructureMutationAllowed([targetTable.node.id])) return;
+
+    const requestedCount = Number.parseInt(parseArgsString(args, "count") || "3", 10);
+    const count = Number.isFinite(requestedCount) ? Math.max(1, Math.min(12, requestedCount)) : 3;
+    const originalIntent = parseArgsString(args, "__intent");
+    const scenario = parseArgsString(args, "scenario") || originalIntent || "";
+    const fieldSummary = writableFields
+      .map((field) => {
+        const parts = [`- ${field.label} | type=${field.type}`];
+        if (field.required) parts.push("required");
+        if (field.options.length > 0) parts.push(`options=${field.options.join(" / ")}`);
+        if (field.priorityOptions.length > 0) {
+          parts.push(`priority=${field.priorityOptions.map((option) => option.value).join(" / ")}`);
+        }
+        return parts.join(" | ");
+      })
+      .join("\n");
+
+    const buildFallbackExampleValue = (
+      field: ProcedureFieldDefinition,
+      index: number
+    ): unknown => {
+      const optionValue =
+        field.priorityOptions[index % Math.max(1, field.priorityOptions.length)]?.value ??
+        field.options[index % Math.max(1, field.options.length)] ??
+        "";
+      const fieldKey = normalizeAiLookupKey(field.label);
+      const date = new Date();
+      date.setDate(date.getDate() + index);
+      const isoDate = toIsoDateOnly(date);
+      if (field.type === "identifier") {
+        const prefix = targetTable.node.name.replace(/[^A-Za-z0-9]+/g, "").slice(0, 4).toUpperCase() || "ITEM";
+        return `${prefix}-${String(index + 1).padStart(3, "0")}`;
+      }
+      if (field.type === "number" || field.type === "decimal" || field.type === "percentage" || field.type === "currency") {
+        return String((index + 1) * 10);
+      }
+      if (field.type === "year") return String(new Date().getFullYear());
+      if (field.type === "month") return String(((index % 12) + 1)).padStart(2, "0");
+      if (field.type === "day") return String(((index % 28) + 1)).padStart(2, "0");
+      if (field.type === "date") return isoDate;
+      if (field.type === "datetime") return `${isoDate}T09:00:00.000Z`;
+      if (field.type === "time") return "09:00";
+      if (field.type === "duration") return `${index + 1}d`;
+      if (field.type === "yes_no") return index % 2 === 0 ? "Yes" : "No";
+      if (field.type === "email") return `owner${index + 1}@example.com`;
+      if (field.type === "phone") return `+33 6 00 00 00 ${String(index + 1).padStart(2, "0")}`;
+      if (field.type === "url") return `https://example.com/${targetTable.node.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}/${index + 1}`;
+      if (field.type === "single_select" || field.type === "priority") {
+        return optionValue || `Option ${index + 1}`;
+      }
+      if (field.type === "multi_select" || field.type === "tags") {
+        return optionValue ? [optionValue] : [`tag-${index + 1}`];
+      }
+      if (field.type === "user_ref") return `Owner ${index + 1}`;
+      if (field.type === "user_list") return [`Owner ${index + 1}`];
+      if (field.type === "attachment") return "";
+      if (field.type === "table") return {};
+      if (fieldKey.includes("owner")) return `Owner ${index + 1}`;
+      if (fieldKey.includes("status")) return optionValue || (index % 2 === 0 ? "Open" : "Planned");
+      if (fieldKey.includes("title") || fieldKey.includes("name")) return `${targetTable.node.name} item ${index + 1}`;
+      if (fieldKey.includes("category")) return optionValue || `Category ${index + 1}`;
+      if (fieldKey.includes("note") || field.type === "long_text" || field.type === "rich_text" || field.type === "message") {
+        return scenario
+          ? `${scenario} example ${index + 1}`
+          : `${targetTable.node.name} example note ${index + 1}`;
+      }
+      return `${field.label} ${index + 1}`;
+    };
+
+    const buildFallbackExampleRecords = (): Array<Record<string, unknown>> =>
+      Array.from({ length: count }, (_, index) =>
+        Object.fromEntries(
+          writableFields.map((field) => [field.label, buildFallbackExampleValue(field, index)])
+        )
+      );
+
+    let parsedRecords: Array<Record<string, unknown>> = [];
+    const apiKey = getSavedMistralApiKey();
+    if (apiKey) {
+      try {
+        setProjectNotice(`AI: creating example records for "${targetTable.node.name}"...`);
+        const rawResponse = await runAiPromptAnalysis({
+          apiKey,
+          systemPrompt: [
+            "You generate realistic database example records for ODETool.",
+            "Return exactly one JSON object with shape {\"records\":[{...}]} and no markdown.",
+            "Only use the provided field labels as object keys.",
+            "Do not return explanations."
+          ].join(" "),
+          userPrompt: [
+            `Section: ${targetTable.node.name}`,
+            `Create ${count} example records.`,
+            scenario ? `Scenario: ${scenario}` : "Scenario: infer realistic examples from the section title and field labels.",
+            "",
+            "Fields:",
+            fieldSummary,
+            "",
+            "Return JSON only:",
+            "{\"records\":[{\"Field Label\":\"value\"}]}",
+            "Use short, plausible business values."
+          ].join("\n"),
+          aiEngine: "cloud"
+        });
+        const jsonPayload = extractFirstJsonObject(rawResponse);
+        if (jsonPayload) {
+          const parsed = JSON.parse(jsonPayload) as { records?: unknown };
+          parsedRecords = Array.isArray(parsed.records)
+            ? parsed.records.filter(
+                (entry): entry is Record<string, unknown> =>
+                  Boolean(entry) && typeof entry === "object" && !Array.isArray(entry)
+              )
+            : [];
+        }
+      } catch {
+        parsedRecords = [];
+      }
+    }
+    if (parsedRecords.length === 0) {
+      parsedRecords = buildFallbackExampleRecords();
+    }
+
+    const findRecordValue = (record: Record<string, unknown>, field: ProcedureFieldDefinition): unknown => {
+      const exact = record[field.label];
+      if (exact !== undefined) return exact;
+      const normalizedField = normalizeAiLookupKey(field.label);
+      const matchingKey = Object.keys(record).find((key) => normalizeAiLookupKey(key) === normalizedField);
+      if (matchingKey) return record[matchingKey];
+      const partialKey = Object.keys(record).find((key) =>
+        normalizeAiLookupKey(key).includes(normalizedField) || normalizedField.includes(normalizeAiLookupKey(key))
+      );
+      return partialKey ? record[partialKey] : undefined;
+    };
+
+    const coerceFieldValue = (
+      field: ProcedureFieldDefinition,
+      rawValue: unknown
+    ): ProcedureRecordValue => {
+      if (field.type === "multi_select" || field.type === "tags" || field.type === "user_list" || field.type === "relation_list") {
+        if (Array.isArray(rawValue)) {
+          return rawValue
+            .map((item) => (typeof item === "string" ? item.trim() : String(item ?? "").trim()))
+            .filter((item) => item.length > 0);
+        }
+        if (typeof rawValue === "string") {
+          return rawValue
+            .split(/[,;|]/)
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0);
+        }
+        return [];
+      }
+      if (field.type === "table") {
+        if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) {
+          return {};
+        }
+        return Object.fromEntries(
+          Object.entries(rawValue as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "").trim()])
+        );
+      }
+      if (field.type === "yes_no") {
+        if (typeof rawValue === "boolean") return rawValue ? "Yes" : "No";
+        if (typeof rawValue === "number") return rawValue !== 0 ? "Yes" : "No";
+      }
+      if (Array.isArray(rawValue)) {
+        return rawValue
+          .map((item) => (typeof item === "string" ? item.trim() : String(item ?? "").trim()))
+          .filter((item) => item.length > 0)
+          .join(", ");
+      }
+      if (rawValue && typeof rawValue === "object") {
+        return JSON.stringify(rawValue);
+      }
+      return typeof rawValue === "string" ? rawValue.trim() : String(rawValue ?? "").trim();
+    };
+
+    const resolveAutoValue = (field: ProcedureFieldDefinition): ProcedureRecordValue | null => {
+      if (field.autoValue === "current_user") {
+        return (currentUserAccount?.displayName ?? currentUserAccount?.username ?? "").trim();
+      }
+      if (field.autoValue === "today") {
+        return toIsoDateOnly(new Date());
+      }
+      if (field.autoValue === "now") {
+        const now = new Date();
+        if (field.type === "time") {
+          return now.toISOString().slice(11, 16);
+        }
+        if (field.type === "date") {
+          return toIsoDateOnly(now);
+        }
+        return now.toISOString();
+      }
+      return null;
+    };
+
+    const timestamp = Date.now();
+    const nextRecords: ProcedureRecord[] = parsedRecords.slice(0, count).map((record, index) => {
+      const values: Record<string, ProcedureRecordValue> = {};
+      for (const field of writableFields) {
+        const rawValue = findRecordValue(record, field);
+        if (rawValue !== undefined && rawValue !== null && `${rawValue}`.trim().length > 0) {
+          values[field.nodeId] = coerceFieldValue(field, rawValue);
+          continue;
+        }
+        const autoValue = resolveAutoValue(field);
+        if (autoValue !== null && `${autoValue}`.trim().length > 0) {
+          values[field.nodeId] = autoValue;
+        }
+      }
+      const previewValues = computeProcedurePreviewRecordValues({
+        nodes: store.allNodes,
+        tableNodeId: targetTable.node.id,
+        values
+      });
+      return {
+        id: `record-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: timestamp + index,
+        updatedAt: timestamp + index,
+        values: previewValues
+      };
+    });
+
+    await updateNodeProperties(targetTable.node.id, {
+      ...(targetTable.node.properties ?? {}),
+      [PROCEDURE_RECORDS_PROPERTY_KEY]: [...nextRecords, ...targetTable.records]
+    });
+    await refreshTreeAndKeepContext(targetTable.node.id, [targetTable.node.id], "tree");
+    setPrimarySelection(targetTable.node.id, "tree");
+    setProjectNotice(`Added ${nextRecords.length} example record(s) to "${targetTable.node.name}".`);
+    return {
+      createdSectionName: targetTable.node.name,
+      createdSectionNodeId: targetTable.node.id,
+      databaseRootNodeId: documentationWorkspaceRootId
+    };
+  };
+
+  const createDashboardWidgetFromCommand = async (args?: Record<string, unknown>): Promise<AiCommandExecutionResult | void> => {
+    let parentId = parseArgsString(args, "__command_anchor_parent_id") || resolveCommandParentId();
+    if (!parentId) {
+      throw new Error("Select a target node first.");
+    }
+    let parentNode = nodeById.get(parentId) ?? (await getNode(parentId)) ?? null;
+    if (!parentNode || isFileLikeNode(parentNode)) {
+      throw new Error("Select a folder node first.");
+    }
+    if (
+      activeProjectRootId &&
+      activeProjectRootId !== documentationWorkspaceRootId &&
+      findDocumentationWorkspaceAncestor(parentNode, nodeById)
+    ) {
+      const workspaceHostNode =
+        nodeById.get(activeProjectRootId) ?? (await getNode(activeProjectRootId)) ?? null;
+      if (workspaceHostNode && !isFileLikeNode(workspaceHostNode)) {
+        parentId = workspaceHostNode.id;
+        parentNode = workspaceHostNode;
+      }
+    }
+
+    const originalIntent = parseArgsString(args, "__intent");
+    const rawWidgetType = parseArgsString(args, "widget_type").toLowerCase();
+    const widgetType =
+      rawWidgetType === "distribution" || rawWidgetType === "table" || rawWidgetType === "matrix"
+        ? rawWidgetType
+        : "metric";
+    const title =
+      parseArgsString(args, "title") ||
+      (originalIntent ? originalIntent.split(/[\n.!?]/, 1)[0]?.trim() ?? "" : "") ||
+      "Widget";
+    const sourceKind = parseArgsString(args, "source_kind").toLowerCase() === "execution_items"
+      ? "execution_items"
+      : "database_records";
+    const requestedSourceRef =
+      parseArgsString(args, "source_ref") ||
+      parseArgsString(args, "section_name") ||
+      parseArgsString(args, "section");
+    const table =
+      sourceKind === "database_records"
+        ? await resolveAiProcedureTable({
+            ...(args ?? {}),
+            section_name: requestedSourceRef
+          })
+        : null;
+    const normalizeFieldMatch = (...labels: Array<string | null | undefined>) => {
+      for (const label of labels) {
+        const field = table ? resolveAiProcedureFieldByRef(table, label) : null;
+        if (field) return field;
+      }
+      return null;
+    };
+    const requestedGroupField = parseArgsString(args, "group_field");
+    const requestedSecondaryGroupField = parseArgsString(args, "secondary_group_field");
+    const requestedMeasureField = parseArgsString(args, "measure_field");
+    const requestedFilterField = parseArgsString(args, "filter_field");
+    const requestedFilterValue = parseArgsString(args, "filter_value");
+    const requestedFilterOperator = parseArgsString(args, "filter_operator").toLowerCase();
+    const requestedAggregation = parseArgsString(args, "aggregation").toLowerCase();
+    const requestedLimit = Number.parseInt(parseArgsString(args, "limit") || "", 10);
+    const intentLower = `${title} ${originalIntent}`.toLowerCase();
+
+    const statusField = normalizeFieldMatch("Governance Status", "Action Status", "Status");
+    const categoryField = normalizeFieldMatch("Category");
+    const ownerField = normalizeFieldMatch("Owner", "Assigned Owner", "Owner Name");
+    const dueDateField = normalizeFieldMatch("Due Date", "Review Date", "Next Review");
+    const likelihoodField = normalizeFieldMatch("Likelihood");
+    const impactField = normalizeFieldMatch("Impact");
+    const residualField = normalizeFieldMatch("Residual Severity", "Residual Score", "Priority", "Severity");
+    const titleField = normalizeFieldMatch("Risk Title", "Title", "Name");
+
+    const groupField =
+      normalizeFieldMatch(requestedGroupField) ??
+      (widgetType === "matrix"
+        ? likelihoodField
+        : /\bcategory\b/.test(intentLower)
+          ? categoryField
+          : /\bowner\b/.test(intentLower)
+            ? ownerField
+            : /\bstatus\b|\bopen\b/.test(intentLower)
+              ? statusField
+              : widgetType === "distribution"
+                ? table?.fields[0] ?? null
+                : null);
+    const secondaryGroupField =
+      normalizeFieldMatch(requestedSecondaryGroupField) ??
+      (widgetType === "matrix" ? impactField ?? table?.fields[1] ?? null : null);
+    const measureField =
+      normalizeFieldMatch(requestedMeasureField) ??
+      (requestedAggregation !== "count" ? residualField : null);
+    const displayFields = table
+      ? (() => {
+          const preferredFields = [titleField, categoryField, ownerField, statusField, dueDateField]
+            .filter((field): field is ProcedureFieldDefinition => Boolean(field))
+            .map((field) => field.nodeId);
+          return preferredFields.length > 0
+            ? preferredFields
+            : table.fields.slice(0, 5).map((field) => field.nodeId);
+        })()
+      : [];
+
+    const nextProperties: Record<string, unknown> = {
+      odeDashboardWidget: true,
+      odeDashboardWidgetType: widgetType,
+      odeDashboardSourceKind: sourceKind,
+      odeDashboardAggregation:
+        requestedAggregation === "sum" ||
+        requestedAggregation === "avg" ||
+        requestedAggregation === "min" ||
+        requestedAggregation === "max"
+          ? requestedAggregation
+          : "count",
+      odeDashboardDisplayFieldIds: widgetType === "table" ? displayFields.slice(0, 5) : [],
+      odeDashboardLimit: Number.isFinite(requestedLimit) ? Math.max(1, Math.min(24, requestedLimit)) : widgetType === "table" ? 8 : 6
+    };
+
+    if (sourceKind === "database_records") {
+      if (!table) {
+        throw new Error("Select a database section first or specify the widget source section.");
+      }
+      nextProperties.odeDashboardSourceNodeId = table.node.id;
+      if (groupField) nextProperties.odeDashboardGroupFieldId = groupField.nodeId;
+      if (secondaryGroupField) nextProperties.odeDashboardSecondaryGroupFieldId = secondaryGroupField.nodeId;
+      if (measureField) nextProperties.odeDashboardMeasureFieldId = measureField.nodeId;
+
+      const filterField =
+        normalizeFieldMatch(requestedFilterField) ??
+        (/\boverdue\b/.test(intentLower) ? dueDateField : null) ??
+        (/\bopen\b/.test(intentLower) ? statusField : null) ??
+        (/\bhigh\b|\bcritical\b|\bresidual\b/.test(intentLower) ? residualField : null);
+      const filterValue =
+        requestedFilterValue ||
+        (/\boverdue\b/.test(intentLower) ? toIsoDateOnly(new Date()) : "") ||
+        (/\bopen\b/.test(intentLower) ? "Open" : "") ||
+        (/\bhigh\b|\bcritical\b/.test(intentLower)
+          ? residualField?.priorityOptions.find((option) => option.escalate)?.value ??
+            residualField?.priorityOptions[residualField.priorityOptions.length - 1]?.value ??
+            "High"
+          : "");
+      const filterOperator =
+        requestedFilterOperator === "contains" ||
+        requestedFilterOperator === "gt" ||
+        requestedFilterOperator === "gte" ||
+        requestedFilterOperator === "lt" ||
+        requestedFilterOperator === "lte" ||
+        requestedFilterOperator === "not_equals"
+          ? requestedFilterOperator
+          : /\boverdue\b/.test(intentLower)
+            ? "lt"
+            : /\bopen\b|\bhigh\b|\bcritical\b/.test(intentLower)
+              ? "contains"
+              : "equals";
+      if (filterField && filterValue) {
+        nextProperties.odeDashboardFilterFieldId = filterField.nodeId;
+        nextProperties.odeDashboardFilterOperator = filterOperator;
+        nextProperties.odeDashboardFilterValue = filterValue;
+      }
+    } else {
+      const selectedNode = getPrimarySelectionNode();
+      const anchoredNodeId = parseArgsString(args, "__command_anchor_node_id");
+      const anchoredNode =
+        anchoredNodeId
+          ? nodeById.get(anchoredNodeId) ?? (await getNode(anchoredNodeId)) ?? null
+          : null;
+      const ownerSourceNode = anchoredNode ?? selectedNode;
+      const ownerNodeId = ownerSourceNode
+        ? getWorkareaOwnerNodeId(ownerSourceNode, nodeById) ?? ownerSourceNode.id
+        : parentId;
+      nextProperties.odeDashboardSourceNodeId = ownerNodeId;
+      if (/\bstatus\b|\bopen\b/.test(intentLower)) {
+        nextProperties.odeDashboardGroupFieldId = "status";
+      } else if (/\bowner\b/.test(intentLower)) {
+        nextProperties.odeDashboardGroupFieldId = "owner_name";
+      }
+      if (/\boverdue\b/.test(intentLower)) {
+        nextProperties.odeDashboardFilterFieldId = "due_date";
+        nextProperties.odeDashboardFilterOperator = "lt";
+        nextProperties.odeDashboardFilterValue = toIsoDateOnly(new Date());
+      }
+    }
+
+    const createdWidgetId = await createDashboardWidgetNode(parentId);
+    if (!createdWidgetId) {
+      throw new Error(`Could not create dashboard widget under "${parentNode.name}".`);
+    }
+    await renameProcedureNodeTitle(createdWidgetId, title);
+    await saveDashboardWidgetProperties(createdWidgetId, nextProperties);
+    setProjectNotice(`Created widget "${title}".`);
+    return {
+      createdWidgetNodeId: createdWidgetId,
+      widgetHostNodeId: parentId,
+      createdSectionName: table?.node.name ?? null,
+      createdSectionNodeId: table?.node.id ?? null
+    };
+  };
+
+  const createExecutionTaskFromCommand = async (args?: Record<string, unknown>): Promise<AiCommandExecutionResult | void> => {
+    const requestedNames = Array.from(
+      new Set(
+        [...parseArgsList(args, "names"), ...parseArgsList(args, "tasks")]
+          .map((value) => value.trim())
+          .filter((value) => value.length > 0)
+      )
+    );
+    const requestedTitle = parseArgsString(args, "title");
+    if (requestedTitle) {
+      requestedNames.unshift(requestedTitle);
+    }
+    const requestedScenario = parseArgsString(args, "scenario");
+    const requestedCount = Number.parseInt(parseArgsString(args, "count") || "3", 10);
+    const fallbackTaskCount = Number.isFinite(requestedCount) ? Math.max(1, Math.min(12, requestedCount)) : 3;
+    const taskTitles = Array.from(new Set(requestedNames)).slice(0, 12);
+    if (taskTitles.length === 0 && requestedScenario.trim().length > 0) {
+      const normalizedScenario = requestedScenario
+        .replace(/^(?:for|about|on)\s+/i, "")
+        .replace(/[.;]+$/g, "")
+        .trim();
+      const fallbackSubject = normalizedScenario || "follow-up";
+      taskTitles.push(
+        ...[
+          `Review ${fallbackSubject}`,
+          `Update ${fallbackSubject}`,
+          `Follow up ${fallbackSubject}`,
+          `Validate ${fallbackSubject}`,
+          `Close ${fallbackSubject}`
+        ].slice(0, fallbackTaskCount)
+      );
+    }
+    if (taskTitles.length === 0) {
+      throw new Error("Provide at least one task title.");
+    }
+
+    const requestedOwnerRef = parseArgsString(args, "owner_ref");
+    let ownerNode =
+      requestedOwnerRef
+        ? resolveNodeByCommandRef(requestedOwnerRef, { folderOnly: true })
+        : null;
+    const selectedNode = getPrimarySelectionNode();
+    const anchoredNodeId = parseArgsString(args, "__command_anchor_node_id");
+    const anchoredNode =
+      anchoredNodeId
+        ? nodeById.get(anchoredNodeId) ?? (await getNode(anchoredNodeId)) ?? null
+        : null;
+    if (!ownerNode && selectedNode) {
+      const executionMeta = getExecutionTaskMeta(selectedNode);
+      if (executionMeta) {
+        ownerNode = nodeById.get(executionMeta.ownerNodeId) ?? (await getNode(executionMeta.ownerNodeId)) ?? null;
+      }
+    }
+    if (!ownerNode && anchoredNode) {
+      const executionMeta = getExecutionTaskMeta(anchoredNode);
+      if (executionMeta) {
+        ownerNode = nodeById.get(executionMeta.ownerNodeId) ?? (await getNode(executionMeta.ownerNodeId)) ?? null;
+      }
+    }
+    if (!ownerNode && selectedNode && isWorkareaItemNode(selectedNode)) {
+      const ownerNodeId = getWorkareaOwnerNodeId(selectedNode, nodeById);
+      ownerNode = ownerNodeId ? nodeById.get(ownerNodeId) ?? (await getNode(ownerNodeId)) ?? null : null;
+    }
+    if (!ownerNode && anchoredNode && isWorkareaItemNode(anchoredNode)) {
+      const ownerNodeId = getWorkareaOwnerNodeId(anchoredNode, nodeById);
+      ownerNode = ownerNodeId ? nodeById.get(ownerNodeId) ?? (await getNode(ownerNodeId)) ?? null : null;
+    }
+    if (!ownerNode && selectedNode && !isFileLikeNode(selectedNode)) {
+      ownerNode = selectedNode;
+    }
+    if (!ownerNode && anchoredNode && !isFileLikeNode(anchoredNode)) {
+      ownerNode = anchoredNode;
+    }
+    if (
+      !ownerNode &&
+      activeProjectRootId &&
+      activeProjectRootId !== documentationWorkspaceRootId &&
+      (
+        (selectedNode && findDocumentationWorkspaceAncestor(selectedNode, nodeById)) ||
+        (anchoredNode && findDocumentationWorkspaceAncestor(anchoredNode, nodeById))
+      )
+    ) {
+      ownerNode =
+        nodeById.get(activeProjectRootId) ?? (await getNode(activeProjectRootId)) ?? null;
+    }
+    if (!ownerNode || isFileLikeNode(ownerNode)) {
+      throw new Error("Select a node or workarea owner where the tasks should be created.");
+    }
+    if (!ensureStructureMutationAllowed([ownerNode.id])) return;
+
+    const requestedDeliverableTitle = parseArgsString(args, "deliverable_title");
+    const dueDate = parseArgsString(args, "due_date");
+    let note = parseArgsString(args, "note");
+    if (!note && requestedScenario.trim().length > 0) {
+      note = requestedScenario;
+    }
+    const status = normalizeScheduleStatusArg(parseArgsString(args, "status"));
+    const nextDeliverables = normalizeStructuredDeliverablesForNode(
+      ownerNode.id,
+      ownerNode.properties?.odeStructuredDeliverables
+    ).map((deliverable) => ({
+      ...deliverable,
+      tasks: deliverable.tasks.map((task) => ({ ...task })),
+      notifications: [...deliverable.notifications],
+      data: [...deliverable.data]
+    }));
+
+    let targetDeliverableIndex =
+      requestedDeliverableTitle.trim().length > 0
+        ? nextDeliverables.findIndex(
+            (deliverable) =>
+              normalizeAiLookupKey(deliverable.title) === normalizeAiLookupKey(requestedDeliverableTitle)
+          )
+        : -1;
+    if (targetDeliverableIndex < 0 && selectedNode && isWorkareaItemNode(selectedNode)) {
+      const selectedKind = getWorkareaItemKind(selectedNode, nodeById);
+      if (selectedKind === "deliverable") {
+        targetDeliverableIndex = nextDeliverables.findIndex(
+          (deliverable) => normalizeAiLookupKey(deliverable.title) === normalizeAiLookupKey(selectedNode.name)
+        );
+      } else if (
+        selectedKind === "task" &&
+        selectedNode.parentId &&
+        selectedNode.parentId !== ROOT_PARENT_ID
+      ) {
+        const deliverableNode = nodeById.get(selectedNode.parentId) ?? (await getNode(selectedNode.parentId)) ?? null;
+        if (deliverableNode) {
+          targetDeliverableIndex = nextDeliverables.findIndex(
+            (deliverable) => normalizeAiLookupKey(deliverable.title) === normalizeAiLookupKey(deliverableNode.name)
+          );
+        }
+      }
+    }
+    if (targetDeliverableIndex < 0 && nextDeliverables.length > 0) {
+      targetDeliverableIndex = 0;
+    }
+    if (targetDeliverableIndex < 0) {
+      nextDeliverables.push({
+        id: `deliverable-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        title: requestedDeliverableTitle || "General",
+        tasks: [],
+        notifications: [],
+        data: []
+      });
+      targetDeliverableIndex = nextDeliverables.length - 1;
+    }
+
+    const targetDeliverable = nextDeliverables[targetDeliverableIndex];
+    const createdTaskIds: string[] = [];
+    for (const taskTitle of taskTitles) {
+      const nextTask = createExecutionTaskItem(taskTitle);
+      nextTask.status = status;
+      if (dueDate) {
+        nextTask.dueDate = dueDate;
+      }
+      if (note) {
+        nextTask.note = note;
+      }
+      targetDeliverable.tasks.push(nextTask);
+      createdTaskIds.push(nextTask.id);
+    }
+    nextDeliverables[targetDeliverableIndex] = {
+      ...targetDeliverable,
+      tasks: [...targetDeliverable.tasks]
+    };
+
+    await saveExecutionTaskOwnerDeliverables(ownerNode.id, nextDeliverables);
+    await syncExecutionTaskProjectionNodes(ownerNode.id, nextDeliverables, {
+      refreshAfterSync: false
+    });
+    const createdNodeIds = await resolveExecutionTaskProjectionIds(createdTaskIds);
+    const focusNodeId = createdNodeIds[createdNodeIds.length - 1] ?? ownerNode.id;
+    await refreshTreeAndKeepContext(focusNodeId, [ownerNode.id], "timeline");
+    if (createdNodeIds.length > 0) {
+      setSelectionFromIds(createdNodeIds, focusNodeId, "timeline");
+    } else {
+      setPrimarySelection(ownerNode.id, "tree");
+    }
+    setProjectNotice(
+      `Created ${taskTitles.length} execution task(s) in "${nextDeliverables[targetDeliverableIndex].title}".`
+    );
+    return {
+      executionOwnerNodeId: ownerNode.id,
+      createdTaskNodeIds: createdNodeIds
+    };
+  };
+
+  const createGovernanceFrameworkFromCommand = async (args?: Record<string, unknown>) => {
+    const apiKey = getSavedMistralApiKey();
+    if (!apiKey) {
+      throw new Error(t("assistant.mistral_missing_key"));
+    }
+
+    const parentId = resolveCommandParentId();
+    if (!ensureStructureMutationAllowed([parentId])) return;
+
+    const requestedName =
+      parseArgsString(args, "framework_name") ||
+      parseArgsString(args, "name") ||
+      parseArgsString(args, "title");
+    const goal = parseArgsString(args, "goal");
+    const modules = parseArgsList(args, "modules").slice(0, 12);
+    const originalIntent = parseArgsString(args, "__intent");
+    const selectedLabel = selectedNode
+      ? `${scopedNumbering.get(selectedNode.id) ?? numbering.get(selectedNode.id) ?? "-"} ${selectedNode.name}`
+      : "Current selection";
+    const requestText = [
+      originalIntent || null,
+      requestedName ? `Framework name: ${requestedName}` : null,
+      goal ? `Goal: ${goal}` : null,
+      modules.length > 0 ? `Requested modules: ${modules.join(", ")}` : null
+    ]
+      .filter((entry): entry is string => Boolean(entry))
+      .join("\n");
+    const { systemPrompt, userPrompt } = buildGovernanceFrameworkGenerationPrompts({
+      requestText: requestText || "Create a governance framework for the current context.",
+      workspaceName: activeProject?.name ?? null,
+      selectedLabel
+    });
+
+    setProjectNotice("AI: generating governance framework...");
+    const rawResponse = await runAiPromptAnalysis({
+      apiKey,
+      systemPrompt,
+      userPrompt,
+      aiEngine: "cloud"
+    });
+    const parsedDefinition = parseGovernanceFrameworkDefinition(rawResponse);
+    if (!parsedDefinition) {
+      throw new Error("AI returned an invalid governance framework definition.");
+    }
+
+    const appliedDefinition: GovernanceFrameworkDefinition = {
+      ...parsedDefinition,
+      label: sanitizeGovernanceNodeTitle(requestedName || parsedDefinition.label, "Governance Framework")
+    };
+    const rootNode = await createNode(parentId, appliedDefinition.label, "folder");
+    const nextRootProperties = buildGovernanceFrameworkRootProperties(
+      appliedDefinition,
+      requestText || appliedDefinition.label,
+      rawResponse,
+      rootNode.properties ?? {}
+    );
+    await updateNodeProperties(rootNode.id, nextRootProperties);
+
+    const rootSummary = buildGovernanceFrameworkSummary(appliedDefinition);
+    if (rootSummary.trim().length > 0) {
+      await updateNodeDescription(rootNode.id, rootSummary);
+    }
+
+    const moduleNodeIdByFrameworkId = new Map<string, string>();
+    const fieldNodeIdsByModuleId = new Map<string, Map<string, string>>();
+
+    for (const moduleDefinition of appliedDefinition.modules) {
+      const moduleNode = await createNode(
+        rootNode.id,
+        sanitizeGovernanceNodeTitle(moduleDefinition.label, "Module"),
+        "folder"
+      );
+      await updateNodeProperties(
+        moduleNode.id,
+        buildGovernanceModuleNodeProperties(moduleDefinition, moduleNode.properties ?? {})
+      );
+      if (moduleDefinition.tooltip.trim().length > 0) {
+        await updateNodeDescription(moduleNode.id, moduleDefinition.tooltip);
+      }
+      moduleNodeIdByFrameworkId.set(moduleDefinition.id, moduleNode.id);
+
+      const fieldNodeIdByFrameworkFieldId = new Map<string, string>();
+      for (const fieldDefinition of moduleDefinition.fields) {
+        const fieldNode = await createNode(
+          moduleNode.id,
+          sanitizeGovernanceNodeTitle(fieldDefinition.label, "Field"),
+          "folder"
+        );
+        await updateNodeProperties(
+          fieldNode.id,
+          buildGovernanceFieldNodeProperties(fieldDefinition, fieldNode)
+        );
+        fieldNodeIdByFrameworkFieldId.set(fieldDefinition.id, fieldNode.id);
+      }
+      fieldNodeIdsByModuleId.set(moduleDefinition.id, fieldNodeIdByFrameworkFieldId);
+    }
+
+    for (const moduleDefinition of appliedDefinition.modules) {
+      const fieldNodeIdByFrameworkFieldId = fieldNodeIdsByModuleId.get(moduleDefinition.id) ?? new Map<string, string>();
+      for (const fieldDefinition of moduleDefinition.fields) {
+        if (!isProcedureRelationFieldType(fieldDefinition.type)) continue;
+        const fieldNodeId = fieldNodeIdByFrameworkFieldId.get(fieldDefinition.id);
+        if (!fieldNodeId) continue;
+        const relationTargetNodeId =
+          fieldDefinition.relationTargetModuleId
+            ? moduleNodeIdByFrameworkId.get(fieldDefinition.relationTargetModuleId) ?? null
+            : null;
+        const relationDisplayFieldIds =
+          fieldDefinition.relationTargetModuleId && fieldDefinition.relationDisplayFieldIds
+            ? fieldDefinition.relationDisplayFieldIds
+                .map((fieldId) =>
+                  fieldNodeIdsByModuleId.get(fieldDefinition.relationTargetModuleId ?? "")?.get(fieldId) ?? ""
+                )
+                .filter((value): value is string => value.length > 0)
+            : [];
+        const fieldNode = nodeById.get(fieldNodeId) ?? (await getNode(fieldNodeId)) ?? null;
+        if (!fieldNode) continue;
+        await updateNodeProperties(
+          fieldNode.id,
+          buildGovernanceFieldNodeProperties(fieldDefinition, fieldNode, {
+            relationTargetNodeId,
+            relationDisplayFieldIds
+          })
+        );
+      }
+    }
+
+    let createdWidgetCount = 0;
+    for (const preset of appliedDefinition.dashboardPresets) {
+      const sourceNodeId = moduleNodeIdByFrameworkId.get(preset.sourceModuleId);
+      if (!sourceNodeId) continue;
+      const fieldNodeIdByFrameworkFieldId =
+        fieldNodeIdsByModuleId.get(preset.sourceModuleId) ?? new Map<string, string>();
+      const widgetNode = await createNode(
+        rootNode.id,
+        sanitizeGovernanceNodeTitle(preset.label, "Insight"),
+        "folder"
+      );
+      await updateNodeProperties(
+        widgetNode.id,
+        buildGovernanceWidgetNodeProperties(
+          preset,
+          sourceNodeId,
+          fieldNodeIdByFrameworkFieldId
+        )
+      );
+      createdWidgetCount += 1;
+    }
+
+    setWorkspaceMode("grid");
+    setDesktopViewMode("grid");
+    setSelectionSurface("tree");
+    setKeyboardSurface("tree");
+    await refreshTreeAndKeepContext(
+      rootNode.id,
+      Array.from(new Set([parentId, rootNode.id].filter((value): value is string => Boolean(value)))),
+      "tree"
+    );
+    setPrimarySelection(rootNode.id, "tree");
+    setProjectNotice(
+      `Created "${appliedDefinition.label}" with ${appliedDefinition.modules.length} module(s) and ${createdWidgetCount} widget(s).`
+    );
+  };
+
+  const createDatabaseSectionFromCommand = async (args?: Record<string, unknown>): Promise<AiCommandExecutionResult | void> => {
     const requestedSectionName =
       parseArgsString(args, "section_name") ||
       parseArgsString(args, "name") ||
       parseArgsString(args, "title") ||
       parseArgsString(args, "section");
+    const fieldSpecs = coerceAiDatabaseFieldSpecs(args?.field_specs ?? args?.fieldSpecs);
+    const fieldSpecByKey = new Map(
+      fieldSpecs.map((entry) => [normalizeAiLookupKey(entry.label), entry] as const)
+    );
     const fieldNames = Array.from(
       new Set(
-        [...parseArgsList(args, "fields"), ...parseArgsList(args, "columns")]
+        [...fieldSpecs.map((entry) => entry.label), ...parseArgsList(args, "fields"), ...parseArgsList(args, "columns")]
           .map((value) => value.trim())
           .filter((value) => value.length > 0)
       )
     ).slice(0, 40);
-    const parentId = resolveCommandParentId();
-    const parentNode = parentId ? nodeById.get(parentId) ?? (await getNode(parentId)) ?? null : null;
-    const useExistingSection =
-      !requestedSectionName &&
-      Boolean(parentNode) &&
-      inferDatabaseTemplateItemType(parentNode, byParent) === "section" &&
-      !isDocumentationWorkspaceRootNode(parentNode) &&
-      !isLegacyDocumentationWorkspaceRootNode(parentNode);
+    const databaseRootNode = await resolveAiDatabaseRootNode({ ensure: true });
+    if (!databaseRootNode) {
+      throw new Error("Database workspace root is unavailable.");
+    }
+    const selectedSectionNode = await resolveAiSelectedDatabaseSectionNode();
+
+    const useExistingSection = !requestedSectionName && Boolean(selectedSectionNode);
 
     if (!requestedSectionName && !useExistingSection) {
       throw new Error("Missing database section name.");
@@ -21420,11 +23535,20 @@ export default function App() {
     if (fieldNames.length === 0 && useExistingSection) {
       throw new Error("No database field names provided.");
     }
-    if (!ensureStructureMutationAllowed([parentId])) return;
+    if (!ensureStructureMutationAllowed([databaseRootNode.id])) return;
 
-    let sectionNode = useExistingSection ? parentNode : null;
+    const existingRootSection =
+      requestedSectionName.trim().length > 0
+        ? ((byParent.get(databaseRootNode.id) ?? []).find((child) => {
+            if (child.type === "file") return false;
+            if (inferDatabaseTemplateItemType(child, byParent) !== "section") return false;
+            return child.name.trim().toLowerCase() === requestedSectionName.trim().toLowerCase();
+          }) ?? null)
+        : null;
+
+    let sectionNode = useExistingSection ? selectedSectionNode : existingRootSection;
     if (!sectionNode) {
-      const createdSection = await createNode(parentId, requestedSectionName || "New Database Section", "folder");
+      const createdSection = await createNode(databaseRootNode.id, requestedSectionName || "New Database Section", "folder");
       const nextSectionProperties: Record<string, unknown> = {
         ...(createdSection.properties ?? {}),
         odeProcedureItemType: "section"
@@ -21437,31 +23561,148 @@ export default function App() {
     }
 
     let firstCreatedId: string | null = sectionNode.id;
+    let createdFieldCount = 0;
+    let updatedFieldCount = 0;
+    let skippedFieldCount = 0;
+    const existingSectionChildren = (await getChildren(sectionNode.id)).filter((child) => child.type !== "file");
+    const existingFieldByName = new Map(
+      existingSectionChildren
+        .filter((child) => inferDatabaseTemplateItemType(child, byParent) === "field")
+        .map((child) => [child.name.trim().toLowerCase(), child] as const)
+    );
+    const existingFieldNames = new Set(
+      existingSectionChildren
+        .filter((child) => inferDatabaseTemplateItemType(child, byParent) === "field")
+        .map((child) => child.name.trim().toLowerCase())
+    );
     for (const fieldName of fieldNames) {
+      const normalizedFieldName = fieldName.trim().toLowerCase();
+      const fieldSpec = fieldSpecByKey.get(normalizeAiLookupKey(fieldName)) ?? null;
+      if (existingFieldNames.has(normalizedFieldName)) {
+        if (fieldSpec) {
+          const existingFieldNode = existingFieldByName.get(normalizedFieldName) ?? null;
+          if (existingFieldNode) {
+            const nextFieldProperties: Record<string, unknown> = {
+              ...(existingFieldNode.properties ?? {}),
+              ...buildAiDatabaseFieldProperties(existingFieldNode.name, existingFieldNode, fieldSpec)
+            };
+            const nextFieldType = normalizeProcedureFieldType(nextFieldProperties.odeProcedureFieldType);
+            if (fieldSpec && isProcedureRelationFieldType(nextFieldType)) {
+              const relationTargetRef = fieldSpec.relationTargetRef?.trim() ?? "";
+              if (relationTargetRef.length > 0) {
+                if (normalizeAiLookupKey(relationTargetRef) === normalizeAiLookupKey(sectionNode.name)) {
+                  nextFieldProperties.odeProcedureRelationTargetNodeId = sectionNode.id;
+                  if (fieldSpec.relationDisplayFieldRefs && fieldSpec.relationDisplayFieldRefs.length > 0) {
+                    nextFieldProperties.odeProcedureRelationDisplayFieldIds = fieldSpec.relationDisplayFieldRefs
+                      .map((reference) => existingFieldByName.get(reference.trim().toLowerCase())?.id ?? "")
+                      .filter((value): value is string => value.length > 0);
+                  }
+                } else {
+                  const targetTable = await resolveAiProcedureTable({ section_name: relationTargetRef });
+                  if (targetTable) {
+                    nextFieldProperties.odeProcedureRelationTargetNodeId = targetTable.node.id;
+                    if (fieldSpec.relationDisplayFieldRefs && fieldSpec.relationDisplayFieldRefs.length > 0) {
+                      nextFieldProperties.odeProcedureRelationDisplayFieldIds = fieldSpec.relationDisplayFieldRefs
+                        .map((reference) => resolveAiProcedureFieldByRef(targetTable, reference)?.nodeId ?? "")
+                        .filter((value): value is string => value.length > 0);
+                    }
+                  }
+                }
+              }
+            }
+            await updateNodeProperties(existingFieldNode.id, nextFieldProperties);
+            updatedFieldCount += 1;
+            continue;
+          }
+        }
+        skippedFieldCount += 1;
+        continue;
+      }
       const createdField = await createNode(sectionNode.id, fieldName, "folder");
       const nextFieldProperties: Record<string, unknown> = {
         ...(createdField.properties ?? {}),
-        ...buildAiDatabaseFieldProperties(fieldName)
+        ...buildAiDatabaseFieldProperties(fieldName, createdField, fieldSpec)
       };
+      const nextFieldType = normalizeProcedureFieldType(nextFieldProperties.odeProcedureFieldType);
+      if (fieldSpec && isProcedureRelationFieldType(nextFieldType)) {
+        const relationTargetRef = fieldSpec.relationTargetRef?.trim() ?? "";
+        if (relationTargetRef.length > 0) {
+          if (normalizeAiLookupKey(relationTargetRef) === normalizeAiLookupKey(sectionNode.name)) {
+            nextFieldProperties.odeProcedureRelationTargetNodeId = sectionNode.id;
+            if (fieldSpec.relationDisplayFieldRefs && fieldSpec.relationDisplayFieldRefs.length > 0) {
+              nextFieldProperties.odeProcedureRelationDisplayFieldIds = fieldSpec.relationDisplayFieldRefs
+                .map((reference) => existingFieldByName.get(reference.trim().toLowerCase())?.id ?? "")
+                .filter((value): value is string => value.length > 0);
+            }
+          } else {
+            const targetTable = await resolveAiProcedureTable({ section_name: relationTargetRef });
+            if (targetTable) {
+              nextFieldProperties.odeProcedureRelationTargetNodeId = targetTable.node.id;
+              if (fieldSpec.relationDisplayFieldRefs && fieldSpec.relationDisplayFieldRefs.length > 0) {
+                nextFieldProperties.odeProcedureRelationDisplayFieldIds = fieldSpec.relationDisplayFieldRefs
+                  .map((reference) => resolveAiProcedureFieldByRef(targetTable, reference)?.nodeId ?? "")
+                  .filter((value): value is string => value.length > 0);
+              }
+            }
+          }
+        }
+      }
       await updateNodeProperties(createdField.id, nextFieldProperties);
+      existingFieldNames.add(normalizedFieldName);
+       existingFieldByName.set(normalizedFieldName, createdField);
+      createdFieldCount += 1;
       if (firstCreatedId === sectionNode.id) {
         firstCreatedId = createdField.id;
       }
     }
 
+    setWorkspaceMode("grid");
+    setDesktopViewMode("procedure");
+    setSelectionSurface("tree");
+    setKeyboardSurface("procedure");
     await refreshTreeAndKeepContext(
       firstCreatedId ?? sectionNode.id,
-      Array.from(new Set([parentId ?? ROOT_PARENT_ID, sectionNode.id])),
-      selectionSurface === "grid" ? "grid" : "tree"
+      Array.from(new Set([databaseRootNode.id, sectionNode.id])),
+      "tree"
     );
-    setPrimarySelection(sectionNode.id, selectionSurface === "grid" ? "grid" : "tree");
-    setProjectNotice(
-      useExistingSection
-        ? `Added ${fieldNames.length} database field(s) to "${sectionNode.name}".`
-        : fieldNames.length > 0
-          ? `Created database section "${sectionNode.name}" with ${fieldNames.length} field(s).`
+    setPrimarySelection(sectionNode.id, "tree");
+    const result: AiCommandExecutionResult = {
+      createdSectionName: sectionNode.name,
+      createdSectionNodeId: sectionNode.id,
+      databaseRootNodeId: databaseRootNode.id
+    };
+    if (fieldNames.length === 0) {
+      setProjectNotice(
+        existingRootSection
+          ? `Database section "${sectionNode.name}" already exists.`
           : `Created database section "${sectionNode.name}".`
+      );
+      return result;
+    }
+    if (useExistingSection) {
+      setProjectNotice(
+        skippedFieldCount > 0
+          ? `Added ${createdFieldCount} database field(s) to "${sectionNode.name}", updated ${updatedFieldCount} field(s), and skipped ${skippedFieldCount} existing field(s).`
+          : updatedFieldCount > 0
+            ? `Added ${createdFieldCount} database field(s) to "${sectionNode.name}" and updated ${updatedFieldCount} field(s).`
+            : `Added ${createdFieldCount} database field(s) to "${sectionNode.name}".`
+      );
+      return result;
+    }
+    setProjectNotice(
+      existingRootSection
+        ? skippedFieldCount > 0
+          ? `Updated database section "${sectionNode.name}" with ${createdFieldCount} new field(s), ${updatedFieldCount} updated field(s), and skipped ${skippedFieldCount} existing field(s).`
+          : updatedFieldCount > 0
+            ? `Updated database section "${sectionNode.name}" with ${createdFieldCount} new field(s) and ${updatedFieldCount} updated field(s).`
+            : `Updated database section "${sectionNode.name}" with ${createdFieldCount} new field(s).`
+        : skippedFieldCount > 0
+          ? `Created database section "${sectionNode.name}" with ${createdFieldCount} field(s), updated ${updatedFieldCount} field(s), and skipped ${skippedFieldCount} duplicate field(s).`
+          : updatedFieldCount > 0
+            ? `Created database section "${sectionNode.name}" with ${createdFieldCount} field(s) and updated ${updatedFieldCount} field(s).`
+            : `Created database section "${sectionNode.name}" with ${createdFieldCount} field(s).`
     );
+    return result;
   };
 
   const setTimelineScheduleFromCommand = async (args?: Record<string, unknown>) => {
@@ -22917,6 +25158,10 @@ export default function App() {
     wbsGenerate: (args) => generateWbsFromCommand(args),
     wbsFromDocument: (args) => openDocumentTreeReviewFromCommand(args),
     databaseCreateSection: (args) => createDatabaseSectionFromCommand(args),
+    databaseSeedExamples: (args) => createDatabaseExamplesFromCommand(args),
+    dashboardWidgetCreate: (args) => createDashboardWidgetFromCommand(args),
+    governanceFrameworkGenerate: (args) => createGovernanceFrameworkFromCommand(args),
+    executionTaskCreate: (args) => createExecutionTaskFromCommand(args),
     treeCreateTopic: () => createChildFolder(),
     treeRenameSelected: (args) => renameSelectedNodeFromCommand(args),
     treeMoveSelected: (args) => moveSelectedNodeFromCommand(args),
@@ -22944,6 +25189,31 @@ export default function App() {
     args?: Record<string, unknown>
   ) => executeAiCommandActionWithHandlers(actionId, args, aiCommandExecutionHandlers);
 
+  const buildAiSequencePreview = (
+    actionSequence: Array<{
+      actionId: AiCommandActionId;
+      args: Record<string, unknown>;
+    }>,
+    context: {
+      selectedLabel: string;
+      workspaceName: string;
+    }
+  ): string[] => {
+    if (actionSequence.length === 0) {
+      return buildAiPlanPreview(null, {}, context);
+    }
+    if (actionSequence.length === 1) {
+      return buildAiPlanPreview(actionSequence[0].actionId, actionSequence[0].args, context);
+    }
+    return actionSequence.flatMap((step, stepIndex) =>
+      buildAiPlanPreview(step.actionId, step.args, context).map((line, lineIndex) =>
+        lineIndex === 0
+          ? `Step ${stepIndex + 1}: ${line}`
+          : `Step ${stepIndex + 1} detail: ${line}`
+      )
+    );
+  };
+
   const analyzeAiCommand = async (
     commandText: string,
     options?: AiCommandRequestOptions
@@ -22970,6 +25240,12 @@ export default function App() {
         intent: commandText.trim(),
         actionId: forcedActionId,
         args: forcedArgs,
+        actionSequence: [
+          {
+            actionId: forcedActionId,
+            args: forcedArgs
+          }
+        ],
         reason: "Used the selected AI shortcut action.",
         steps:
           forcedActionId === "wbs_from_document"
@@ -22991,7 +25267,7 @@ export default function App() {
     } = buildInitialAiCommandAnalysis(commandText, {
       preferDocumentWbs
     });
-    let { actionId, args, reason, steps, confidence, plannerSource, fallbackUsed } = initialAnalysis;
+    let { actionId, args, actionSequence, reason, steps, confidence, plannerSource, fallbackUsed } = initialAnalysis;
     const skipPlannerLlm = shouldSkipAiPlannerForCommand(commandText, heuristicAction);
 
     const apiKey = getSavedMistralApiKey();
@@ -23007,11 +25283,12 @@ export default function App() {
           });
           const parsed = parseAiPlannerPayload(raw, commandText);
           if (parsed) {
-            ({ actionId, args, reason, steps, confidence, plannerSource, fallbackUsed } =
+            ({ actionId, args, actionSequence, reason, steps, confidence, plannerSource, fallbackUsed } =
               mergeAiPlannerAnalysisState(
                 {
                   actionId,
                   args,
+                  actionSequence,
                   reason,
                   steps,
                   confidence,
@@ -23034,10 +25311,11 @@ export default function App() {
         }
       }
 
-    ({ actionId, args, reason, steps, confidence, plannerSource, fallbackUsed } =
+    ({ actionId, args, actionSequence, reason, steps, confidence, plannerSource, fallbackUsed } =
       finalizeAiCommandAnalysis({
         actionId,
         args,
+        actionSequence,
         reason,
         steps,
         confidence,
@@ -23049,10 +25327,11 @@ export default function App() {
       intent: commandText,
       actionId,
       args,
+      actionSequence,
       reason,
       steps,
       confidence,
-      previewChanges: buildAiPlanPreview(actionId, args, {
+      previewChanges: buildAiSequencePreview(actionSequence, {
         selectedLabel,
         workspaceName: activeProject?.name ?? "current"
       }),
@@ -23064,7 +25343,7 @@ export default function App() {
     recordAiTelemetryEvent({
       flow: "command_plan",
       source: plannerSource,
-      actionId: plan.actionId,
+      actionId: plan.actionSequence && plan.actionSequence.length > 1 ? "multi_step" : plan.actionId,
       success: Boolean(plan.actionId),
       latencyMs: Date.now() - startedAt,
       fallbackUsed,
@@ -23084,23 +25363,139 @@ export default function App() {
     if (!normalized) {
       throw new Error("No executable action matched this command.");
     }
+    const normalizedSequence =
+      Array.isArray(plan.actionSequence) && plan.actionSequence.length > 0
+        ? plan.actionSequence
+            .map((step) => {
+              const normalizedActionId = normalizeAiCommandActionId(step.actionId);
+              if (!normalizedActionId) return null;
+              return {
+                actionId: normalizedActionId,
+                args: step.args ?? {}
+              };
+            })
+            .filter(
+              (
+                step
+              ): step is {
+                actionId: AiCommandActionId;
+                args: Record<string, unknown>;
+              } => Boolean(step)
+            )
+        : [
+            {
+              actionId: normalized,
+              args: plan.args ?? {}
+            }
+          ];
+    const anchorNode = getPrimarySelectionNode();
+    const anchorParentId = resolveCommandParentId();
+    const readStepStringArg = (source: Record<string, unknown>, key: string): string => {
+      const raw = source[key];
+      return typeof raw === "string" ? raw.trim() : "";
+    };
+    let executionAnchorArgs: Record<string, unknown> = {};
+    const orchestrationState: AiCommandExecutionResult = {};
+    if (anchorNode?.id) executionAnchorArgs.__command_anchor_node_id = anchorNode.id;
+    if (anchorParentId) executionAnchorArgs.__command_anchor_parent_id = anchorParentId;
     try {
-      await executeAiCommandAction(normalized, plan.args);
+      const stepFailures: string[] = [];
+      for (let index = 0; index < normalizedSequence.length; index += 1) {
+        const step = normalizedSequence[index];
+        const stepArgs: Record<string, unknown> = {
+          ...step.args,
+          ...executionAnchorArgs,
+          __intent: plan.intent,
+          __command_step_index: index + 1,
+          __command_step_count: normalizedSequence.length
+        };
+        if (
+          step.actionId === "database_seed_examples" &&
+          !readStepStringArg(stepArgs, "section_name") &&
+          orchestrationState.createdSectionName
+        ) {
+          stepArgs.section_name = orchestrationState.createdSectionName;
+        }
+        if (step.actionId === "dashboard_widget_create") {
+          if (
+            !readStepStringArg(stepArgs, "source_ref") &&
+            !readStepStringArg(stepArgs, "section_name") &&
+            orchestrationState.createdSectionName
+          ) {
+            stepArgs.source_ref = orchestrationState.createdSectionName;
+          }
+          if (
+            !readStepStringArg(stepArgs, "__command_anchor_parent_id") &&
+            orchestrationState.widgetHostNodeId
+          ) {
+            stepArgs.__command_anchor_parent_id = orchestrationState.widgetHostNodeId;
+          }
+        }
+        if (
+          step.actionId === "execution_task_create" &&
+          !readStepStringArg(stepArgs, "owner_ref") &&
+          orchestrationState.executionOwnerNodeId
+        ) {
+          stepArgs.owner_ref = orchestrationState.executionOwnerNodeId;
+        }
+        try {
+          const executionResult = await executeAiCommandAction(step.actionId, stepArgs);
+          if (executionResult && typeof executionResult === "object") {
+            if (executionResult.createdSectionName) {
+              orchestrationState.createdSectionName = executionResult.createdSectionName;
+            }
+            if (executionResult.createdSectionNodeId) {
+              orchestrationState.createdSectionNodeId = executionResult.createdSectionNodeId;
+              executionAnchorArgs.__command_anchor_node_id = executionResult.createdSectionNodeId;
+            }
+            if (executionResult.databaseRootNodeId) {
+              orchestrationState.databaseRootNodeId = executionResult.databaseRootNodeId;
+              executionAnchorArgs.__command_anchor_parent_id = executionResult.databaseRootNodeId;
+            }
+            if (executionResult.widgetHostNodeId) {
+              orchestrationState.widgetHostNodeId = executionResult.widgetHostNodeId;
+            }
+            if (executionResult.executionOwnerNodeId) {
+              orchestrationState.executionOwnerNodeId = executionResult.executionOwnerNodeId;
+            }
+          }
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          const normalizedReason = reason.trim() || "Unknown error";
+          if (index === 0) {
+            throw new Error(`Step 1 (${step.actionId}) failed: ${normalizedReason}`);
+          }
+          stepFailures.push(`Step ${index + 1} (${step.actionId}) failed: ${normalizedReason}`);
+        }
+      }
+      if (stepFailures.length > 0) {
+        const completedCount = normalizedSequence.length - stepFailures.length;
+        throw new Error(
+          `Completed ${completedCount}/${normalizedSequence.length} steps. ${stepFailures.join(" | ")}`
+        );
+      }
       const keepCommandBarOpen =
-        (normalized === "wbs_from_document" && DOCUMENT_REVIEW_SURFACE_ENABLED) ||
-        normalized === "wbs_generate" ||
-        normalized === "database_create_section" ||
-        normalized === "tree_create_topic" ||
-        normalized === "tree_rename_selected" ||
-        normalized === "tree_move_selected" ||
-        normalized === "tree_bulk_create";
+        normalizedSequence.some(
+          (step) =>
+            (step.actionId === "wbs_from_document" && DOCUMENT_REVIEW_SURFACE_ENABLED) ||
+            step.actionId === "wbs_generate" ||
+            step.actionId === "database_create_section" ||
+            step.actionId === "database_seed_examples" ||
+            step.actionId === "dashboard_widget_create" ||
+            step.actionId === "governance_framework_generate" ||
+            step.actionId === "execution_task_create" ||
+            step.actionId === "tree_create_topic" ||
+            step.actionId === "tree_rename_selected" ||
+            step.actionId === "tree_move_selected" ||
+            step.actionId === "tree_bulk_create"
+        );
       if (!keepCommandBarOpen) {
         setCommandBarOpen(false);
       }
       recordAiTelemetryEvent({
         flow: "command_execute",
         source: plan.plannerSource,
-        actionId: normalized,
+        actionId: normalizedSequence.length > 1 ? "multi_step" : normalizedSequence[0]?.actionId ?? normalized,
         success: true,
         latencyMs: Date.now() - startedAt,
         fallbackUsed: false,
@@ -23112,7 +25507,7 @@ export default function App() {
       recordAiTelemetryEvent({
         flow: "command_execute",
         source: plan.plannerSource,
-        actionId: normalized,
+        actionId: normalizedSequence.length > 1 ? "multi_step" : normalizedSequence[0]?.actionId ?? normalized,
         success: false,
         latencyMs: Date.now() - startedAt,
         fallbackUsed: false,
@@ -23709,6 +26104,8 @@ export default function App() {
   const contextMenuNodeIsFile = Boolean(contextMenuNode && isFileLikeNode(contextMenuNode));
   const contextMenuNodeIsExecutionTask = isHiddenExecutionTaskNode(contextMenuNode);
   const contextMenuNodeStructureLocked = isNodeStructureLockOwner(contextMenuNode);
+  const contextMenuStructureLockOwner = contextMenuNode ? getStructureLockOwner(contextMenuNode.id) : null;
+  const contextMenuNodeWorkareaKind = getWorkareaItemKind(contextMenuNode, nodeById);
   const contextMenuNodeCanOpenAccessPolicy = Boolean(
     contextMenuNode && canOpenAccessPolicyForCurrentUser(contextMenuNode.id)
   );
@@ -23717,12 +26114,13 @@ export default function App() {
   );
   const contextMenuCanToggleStructureLock = Boolean(
     contextMenuNode &&
+      contextMenu?.kind === "node" &&
       contextMenuNodeCanManageAccess &&
       !contextMenuNodeIsFile &&
       !contextMenuNodeIsExecutionTask &&
-      ((activeProjectRootId && contextMenuNode.id === activeProjectRootId) || contextMenuNodeStructureLocked)
+      !contextMenuNodeWorkareaKind &&
+      (!contextMenuStructureLockOwner || contextMenuStructureLockOwner.id === contextMenuNode.id)
   );
-  const contextMenuNodeWorkareaKind = getWorkareaItemKind(contextMenuNode, nodeById);
   const contextMenuNodeIsDeclaredWorkareaOwner = isDeclaredWorkareaOwnerNode(contextMenuNode);
   const contextMenuNodeCanOpenWorkarea = Boolean(
     contextMenuNode &&
@@ -23741,6 +26139,9 @@ export default function App() {
       !isNodeInsideLibrary(contextMenuNode, nodeById) &&
       canWriteNodeForActiveRole(contextMenuNode.id)
   );
+  const contextMenuChantierSeedItems = contextMenuNode
+    ? parseChantierSeedItemsFromDescription(contextMenuNode.description)
+    : [];
   const contextMenuNodeFilePath =
     contextMenuNode && isFileLikeNode(contextMenuNode) ? getNodePreferredFileActionPath(contextMenuNode) : null;
   const contextMenuCanMoveNodeIn = Boolean(
@@ -23909,6 +26310,63 @@ export default function App() {
   const favoriteGroupSettingsModalDrag = useDraggableModalSurface({ open: favoriteGroupSettingsModalOpen });
   const favoriteAssignModalDrag = useDraggableModalSurface({ open: favoriteAssignModalOpen });
   const accessPolicyModalDrag = useDraggableModalSurface({ open: Boolean(accessPolicyEditorNode) });
+
+  if (isDedicatedQuickAppWindow && quickAppKindFromQuery && quickAppTargetFromQuery) {
+    const quickAppCopy = buildQuickAppWindowCopy(language);
+    const quickAppDisplayName = quickAppLabelFromQuery?.trim() || getQuickAppTargetLeafName(quickAppTargetFromQuery);
+    const quickAppEmbeddedSrc = resolveQuickAppEmbeddedSrc(quickAppKindFromQuery, quickAppTargetFromQuery);
+    return (
+      <div className="ode-root flex h-full w-full flex-col bg-[radial-gradient(circle_at_top,rgba(24,109,164,0.2),transparent_38%),linear-gradient(180deg,#051527_0%,#03101d_100%)] text-[var(--ode-text)]">
+        <div className="flex items-center justify-between border-b border-[var(--ode-border)] px-6 py-4">
+          <div className="min-w-0">
+            <div className="text-[0.72rem] uppercase tracking-[0.18em] text-[var(--ode-accent)]">External App</div>
+            <div className="mt-1 truncate text-[1.2rem] font-semibold text-[var(--ode-text)]">{quickAppDisplayName}</div>
+            <div className="mt-1 text-[0.85rem] text-[var(--ode-text-dim)]">{quickAppCopy.hint}</div>
+          </div>
+          <div className="ml-4 flex shrink-0 items-center gap-3">
+            <button
+              type="button"
+              className="ode-secondary-btn h-11 px-5"
+              onClick={() => {
+                setQuickAppWindowReloadKey((current) => current + 1);
+              }}
+            >
+              {quickAppCopy.reload}
+            </button>
+            <button
+              type="button"
+              className="ode-primary-btn h-11 px-5"
+              onClick={() => {
+                if (quickAppKindFromQuery === "local_path") {
+                  void openLocalPath(quickAppTargetFromQuery);
+                } else {
+                  void openExternalUrl(quickAppTargetFromQuery);
+                }
+              }}
+            >
+              {quickAppCopy.openExternal}
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 p-5">
+          {quickAppEmbeddedSrc ? (
+            <div className="h-full overflow-hidden rounded-[24px] border border-[rgba(88,197,255,0.16)] bg-[rgba(2,10,18,0.88)] shadow-[0_24px_56px_rgba(0,0,0,0.28)]">
+              <iframe
+                key={`${quickAppWindowReloadKey}:${quickAppEmbeddedSrc}`}
+                title={quickAppDisplayName}
+                src={quickAppEmbeddedSrc}
+                className="h-full w-full border-0 bg-white"
+              />
+            </div>
+          ) : (
+            <div className="flex h-full items-center justify-center rounded-[24px] border border-dashed border-[rgba(88,197,255,0.18)] bg-[rgba(4,22,36,0.42)] px-6 text-center text-[0.98rem] text-[var(--ode-text-dim)]">
+              {quickAppCopy.unavailable}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -24545,13 +27003,101 @@ export default function App() {
           open={Boolean(quickAppsModalNode)}
           nodeLabel={quickAppsModalNode?.name ?? ""}
           items={quickAppsDraftItems}
+          htmlTemplates={htmlAppTemplates}
           saving={quickAppsSaving}
           onAdd={addQuickAppDraftItem}
           onRemove={removeQuickAppDraftItem}
           onMove={moveQuickAppDraftItem}
           onChange={updateQuickAppDraftItem}
+          onPickLocalPath={pickQuickAppLocalPath}
+          onOpenHtmlTemplateManager={openHtmlAppTemplatesModal}
           onClose={closeNodeQuickAppsModal}
           onSave={saveQuickAppsModal}
+        />
+        <NodeQuickAppsModal
+          t={t}
+          open={Boolean(workspaceQuickAppsModalRootNode)}
+          nodeLabel={activeProject?.name ?? workspaceQuickAppsModalRootNode?.name ?? ""}
+          hintText={
+            String(language).toLowerCase() === "fr"
+              ? "Gerez ici les apps disponibles dans tout cet espace de travail."
+              : "Manage apps that stay available across this whole workspace."
+          }
+          items={workspaceQuickAppsDraftItems}
+          htmlTemplates={htmlAppTemplates}
+          saving={workspaceQuickAppsSaving}
+          onAdd={addWorkspaceQuickAppDraftItem}
+          onRemove={removeWorkspaceQuickAppDraftItem}
+          onMove={moveWorkspaceQuickAppDraftItem}
+          onChange={updateWorkspaceQuickAppDraftItem}
+          onPickLocalPath={pickWorkspaceQuickAppLocalPath}
+          onOpenHtmlTemplateManager={openHtmlAppTemplatesModal}
+          onClose={closeWorkspaceQuickAppsModal}
+          onSave={saveWorkspaceQuickAppsModal}
+        />
+        <NodeQuickAppsModal
+          t={t}
+          open={globalQuickAppsModalOpen}
+          nodeLabel={String(language).toLowerCase() === "fr" ? "Apps globales" : "Global Apps"}
+          hintText={
+            String(language).toLowerCase() === "fr"
+              ? "Gerez ici les apps disponibles dans tout ODETool."
+              : "Manage apps that stay available across all nodes in ODETool."
+          }
+          items={globalQuickAppsDraftItems}
+          htmlTemplates={htmlAppTemplates}
+          saving={globalQuickAppsSaving}
+          onAdd={addGlobalQuickAppDraftItem}
+          onRemove={removeGlobalQuickAppDraftItem}
+          onMove={moveGlobalQuickAppDraftItem}
+          onChange={updateGlobalQuickAppDraftItem}
+          onPickLocalPath={pickGlobalQuickAppLocalPath}
+          onOpenHtmlTemplateManager={openHtmlAppTemplatesModal}
+          onClose={closeGlobalQuickAppsModal}
+          onSave={saveGlobalQuickAppsModal}
+        />
+        <HtmlAppTemplatesModal
+          open={htmlAppTemplatesModalOpen}
+          templates={htmlAppTemplatesDraftItems}
+          saving={htmlAppTemplatesSaving}
+          onAdd={addHtmlAppTemplateDraftItem}
+          onRemove={removeHtmlAppTemplateDraftItem}
+          onChange={updateHtmlAppTemplateDraftItem}
+          onPickEntryPath={pickHtmlAppTemplateEntryPath}
+          onClose={closeHtmlAppTemplatesModal}
+          onSave={saveHtmlAppTemplatesModal}
+        />
+        <WorkspaceContentModal
+          t={t}
+          open={Boolean(workspaceContentModalKind && footerContentTargetNode)}
+          title={
+            workspaceContentModalKind === "files"
+              ? String(language).toLowerCase() === "fr"
+                ? "Fichiers"
+                : "Files"
+              : String(language).toLowerCase() === "fr"
+                ? "Noeuds"
+                : "Nodes"
+          }
+          contextLabel={footerContentTargetNode?.name ?? ""}
+          items={workspaceContentModalKind === "files" ? footerDirectFileChildren : footerDirectNodeChildren}
+          folderNodeStateById={folderNodeStateById}
+          executionOwnerNodeIds={executionOwnerNodeIds}
+          getNodeTypeLabel={getNodeTypeDisplayLabel}
+          emptyMessage={
+            workspaceContentModalKind === "files"
+              ? String(language).toLowerCase() === "fr"
+                ? "Aucun fichier dans ce noeud."
+                : "No files in this node."
+              : String(language).toLowerCase() === "fr"
+                ? "Aucun noeud dans cette section."
+                : "No nodes in this section."
+          }
+          openLabel={String(language).toLowerCase() === "fr" ? "Ouvrir" : "Open"}
+          onClose={() => {
+            setWorkspaceContentModalKind(null);
+          }}
+          onOpenItem={openWorkspaceContentModalItem}
         />
         {favoriteGroupModalOpen ? (
           <div
@@ -25028,9 +27574,20 @@ export default function App() {
         contextMenuGroupCanDelete={contextMenuGroupCanDelete}
         canDistributeToNAWorkspace={contextMenuCanDistributeToNAWorkspace}
         canCreateChantier={contextMenuCanCreateChantier}
+        chantierSeedItems={contextMenuChantierSeedItems}
         canSaveAsOrganisationModel={contextMenuCanSaveAsOrganisationModel}
         canSaveAsDatabaseTemplate={contextMenuCanSaveAsDatabaseTemplate}
         restrictToFavoriteGroupsOnly={selectedFavoriteGroupFilterIds.length > 0}
+        onCreateChantierFromSeedItem={(item) => {
+          if (!contextMenu?.nodeId) return;
+          closeContextMenu();
+          void createChantierFromSeedItem(contextMenu.nodeId, item);
+        }}
+        onCreateChantierFromSeedSelection={(items) => {
+          if (!contextMenu?.nodeId || items.length === 0) return;
+          closeContextMenu();
+          void createChantiersFromSeedItems(contextMenu.nodeId, items);
+        }}
         onRunAction={(action) => {
           void runContextMenuAction(action);
         }}
@@ -25171,9 +27728,9 @@ export default function App() {
             <SidebarPanel
               t={t}
               language={language}
-              workspaceFocusMode={workspaceFocusMode}
-              documentationModeActive={documentationModeActive}
-              libraryModeActive={desktopViewMode === "library"}
+              navigationState={workspaceNavigationController.state}
+              scopeContext={workspaceNavigationController.scope}
+              navigationActions={workspaceNavigationController.actions}
               quickAccessScopeLabel={desktopViewMode === "library" ? t("tabs.library") : quickAccessScopeLabel}
               isLargeLayout={isLargeLayout}
               isSidebarCollapsed={isSidebarCollapsed}
@@ -25186,13 +27743,10 @@ export default function App() {
               searchActiveIndex={searchActiveIndex}
               displayedTreeRows={displayedTreeRows}
               treeSelectionRevealRequestKey={treeSelectionRevealRequestKey}
-              selectedNodeId={effectiveTreeSelectedNodeId}
-              selectedNodeIds={effectiveTreeSelectedNodeIds}
               cutPendingNodeIds={cutPendingNodeIds}
               draggingNodeId={draggingNodeId}
               dropIndicator={dropIndicator}
               scopedRootDropTargetId={desktopScopedRootDropTargetId}
-              activeProjectRootId={activeWorkspaceRootId}
               editingNodeId={editingNodeId}
               editingSurface={editingSurface}
               editingValue={editingValue}
@@ -25249,7 +27803,7 @@ export default function App() {
               onSearchDropdownOpenChange={setSearchDropdownOpen}
               onSearchActiveIndexChange={setSearchActiveIndex}
               onSelectFromSearch={(id) => {
-                void selectFromSearch(id);
+                void workspaceNavigationController.actions.selectFromSearch(id);
               }}
               onRunSearch={() => {
                 void store.runSearch();
@@ -25278,18 +27832,6 @@ export default function App() {
               }}
               onCloseContextMenu={closeContextMenu}
               onApplyTreeSelection={applyTreeSelection}
-              onBrowseTreeNode={(nodeId) => {
-                if (desktopViewMode === "library") {
-                  selectReusableLibraryItem(nodeId, { surface: "tree" });
-                  return;
-                }
-                if (documentationModeActive) {
-                  setSelectionSurface("tree");
-                  setKeyboardSurface("procedure");
-                  return;
-                }
-                void browseTreeNodeInGrid(nodeId, { preserveTreeSurface: true });
-              }}
               onOpenNodeContextMenu={(event, nodeId, surface) =>
                 openNodeContextMenu(event, nodeId, surface, {
                   workareaMode: workspaceFocusMode === "execution",
@@ -25318,20 +27860,6 @@ export default function App() {
               onCreateChildNode={createChildNode}
               onCreateFirstNode={async () => {
                 await handleCreateFirstNodeRequest("tree");
-              }}
-              onOpenNodeTab={async (nodeId) => {
-                if (documentationModeActive) {
-                  setPrimarySelection(nodeId, "tree");
-                  setSelectionSurface("tree");
-                  setKeyboardSurface("procedure");
-                  setProcedureFieldEditorTargetNodeId(nodeId);
-                  return;
-                }
-                if (workspaceFocusMode === "execution") {
-                  await openNodeInWorkarea(nodeId);
-                  return;
-                }
-                await openNodeInDesktopTab(nodeId);
               }}
               onReviewFile={openFilePreview}
             />
@@ -25385,37 +27913,23 @@ export default function App() {
           {!documentationModeActive ? (
             <MainPaneHeader
               t={t}
-              breadcrumbNodes={mainPaneBreadcrumbNodes}
+              navigationState={workspaceNavigationController.state}
+              scopeContext={workspaceNavigationController.scope}
+              navigationActions={workspaceNavigationController.actions}
               getBreadcrumbLabel={getTransientNodeDisplayLabel}
-              workspaceMode={workspaceMode}
-              desktopViewMode={desktopViewMode}
-              workspaceFocusMode={workspaceFocusMode}
-              documentationModeActive={documentationModeActive}
+              workspaceTitle={activeProject?.name ?? null}
               workspaceStructureLocked={workspaceStructureLocked}
-              currentFolderNode={store.currentNode}
+              workspaceQuickApps={workspaceQuickApps}
               uploadInputRef={uploadInputRef}
               onUploadInputChange={onUploadInputChange}
-              onSelectBreadcrumbNode={(nodeId) => {
-                void (async () => {
-                  if (workspaceMode === "timeline") {
-                    await openNodeTimelineView(nodeId);
-                    return;
-                  }
-                  if (workspaceFocusMode === "execution" && desktopViewMode !== "dashboard") {
-                    await openNodeExecutionView(nodeId);
-                    return;
-                  }
-                  await openNodeHomeView(nodeId);
-                })();
+              onLaunchWorkspaceQuickApp={(item) => {
+                void launchQuickApp(item, {
+                  scope: "workspace",
+                  sourceNodeId: activeProjectRootId
+                });
               }}
-              onOpenNodeHome={() => {
-                void openNodeHomeView();
-              }}
-              onOpenNodeExecution={() => {
-                void openNodeExecutionView();
-              }}
-              onOpenNodeTimeline={() => {
-                void openNodeTimelineView();
+              onManageWorkspaceQuickApps={() => {
+                openWorkspaceQuickAppsModal();
               }}
             />
           ) : null}
@@ -25433,8 +27947,9 @@ export default function App() {
                 byParent={byParent}
               scopedNumbering={scopedNumbering}
               allNodes={store.allNodes}
+              databaseNodes={documentationScopedNodes}
               projects={projects}
-              activeProjectRootId={activeWorkspaceRootId}
+              activeProjectRootId={activeProjectRootId}
               onSelectNode={handleProcedureNodeSelection}
                 onOpenLinkedNode={async (nodeId) => {
                   await openNodeInDedicatedWindow(nodeId);
@@ -25470,6 +27985,8 @@ export default function App() {
                 onSaveNodeDescription={saveProcedureNodeDescription}
                 onSaveNodeProperties={saveProcedureNodeProperties}
                 onMoveProcedureNode={moveProcedureNodeWithinParent}
+                currentUserDisplayName={currentUserAccount?.displayName ?? null}
+                availableUsers={userAccountState?.users.filter((user) => !user.disabled) ?? []}
                 onActivateProcedureSurface={() => {
                   setSelectionSurface("tree");
                   setKeyboardSurface("procedure");
@@ -25495,205 +28012,237 @@ export default function App() {
                 isDedicatedFieldOrderWindow={isDedicatedFieldOrderWindow}
               />
             ) : (
-              <DesktopContentPanel
-                t={t}
-                language={language}
-                showChantierInsights={false}
-                desktopViewMode={desktopViewMode}
-                mindMapOrientation={mindMapOrientation}
-                mindMapContentMode={mindMapContentMode}
-                quickAccessMindMapRootLabel={quickAccessMindMapRootLabel}
-                quickAccessMindMapRootNode={quickAccessMindMapRootNode}
-                quickAccessMindMapRootLevel={quickAccessMindMapRootLevel}
-                nodeTreeMindMapRootLabel={nodeTreeMindMapRootLabel}
-                nodeTreeMindMapRootNode={nodeTreeMindMapRootNode}
-                nodeTreeMindMapRootLevel={nodeTreeMindMapRootLevel}
-                quickAccessMindMapGroups={quickAccessMindMapGroups}
-                quickAccessMindMapDirectFavorites={quickAccessMindMapDirectFavorites}
-                activeFavoriteGroupId={activeFavoriteGroupId}
-                currentFolderNode={store.currentNode}
-                allNodes={store.allNodes}
-                byParent={byParent}
-                gridNodes={desktopGridNodes}
-                chantierStatusCounts={desktopChantierPortfolioCounts}
-                chantierNodeCount={desktopChantierNodes.length}
-                workspaceChantierStatusCounts={
-                  workspaceFocusMode === "execution" ? emptyChantierStatusCounts : workspaceChantierStatusCounts
-                }
-                workspaceChantierNodeCount={workspaceFocusMode === "execution" ? 0 : workspaceChantierNodes.length}
-                workspaceChantierNodes={workspaceFocusMode === "execution" ? [] : workspaceChantierNodes}
-                workspaceActiveChantierNodes={workspaceFocusMode === "execution" ? [] : workspaceActiveChantierNodes}
-                workspaceAttentionChantierNodes={workspaceFocusMode === "execution" ? [] : workspaceAttentionChantierNodes}
-                activeChantierStatusFilter={activeChantierStatusFilter}
-                onSetActiveChantierStatusFilter={setActiveChantierStatusFilter}
-                selectedNodeId={store.selectedNodeId}
-                selectedNodeIds={selectedNodeIds}
-                cutPendingNodeIds={cutPendingNodeIds}
-                draggingNodeId={draggingNodeId}
-                editingNodeId={editingNodeId}
-                editingSurface={editingSurface}
-                editingValue={editingValue}
-                inlineEditInputRef={inlineEditInputRef}
-                dropIndicator={dropIndicator}
-                scopedRootDropTargetId={desktopScopedRootDropTargetId}
-                currentFolderDropTargetId={desktopCurrentFolderDropTargetId}
-                folderNodeStateById={folderNodeStateById}
-                executionOwnerNodeIds={executionOwnerNodeIds}
-                nodeLevelById={nodeLevelById}
-                scopedNumbering={scopedNumbering}
-                isNodeProvisionalInlineCreate={(nodeId) =>
-                  provisionalInlineCreateByNodeIdRef.current.has(nodeId)
-                }
-                showEmptyState={showWorkspaceEmptyState}
-                emptyStateMessage={desktopGridEmptyStateMessage}
-                showCreateFirstNodeAction={desktopGridShowCreateFirstNodeAction}
-                showUploadEmptyStateAction={desktopGridShowUploadEmptyStateAction}
-                onActivateGridSurface={() => {
-                  setSelectionSurface("grid");
-                  setKeyboardSurface("grid");
-                }}
-                onOpenSurfaceContextMenu={(event) => {
-                  const targetEl = event.target as HTMLElement;
-                  if (
-                    targetEl.closest(
-                      ".ode-grid-card, .ode-details-row, .ode-quick-mind-favorite"
-                    )
-                  ) {
-                    return;
+              activeHtmlTabNode ? (
+                <HtmlNodeTabPanel
+                  title={activeHtmlTabNode.name}
+                  src={activeHtmlTabSrc}
+                  onActivateSurface={() => {
+                    setSelectionSurface("grid");
+                    setKeyboardSurface("grid");
+                  }}
+                />
+              ) : (
+                <DesktopContentPanel
+                  t={t}
+                  language={language}
+                  showChantierInsights={false}
+                  navigationState={workspaceNavigationController.state}
+                  mindMapOrientation={mindMapOrientation}
+                  mindMapContentMode={mindMapContentMode}
+                  quickAccessMindMapRootLabel={quickAccessMindMapRootLabel}
+                  quickAccessMindMapRootNode={quickAccessMindMapRootNode}
+                  quickAccessMindMapRootLevel={quickAccessMindMapRootLevel}
+                  nodeTreeMindMapRootLabel={nodeTreeMindMapRootLabel}
+                  nodeTreeMindMapRootNode={nodeTreeMindMapRootNode}
+                  nodeTreeMindMapRootLevel={nodeTreeMindMapRootLevel}
+                  quickAccessMindMapGroups={quickAccessMindMapGroups}
+                  quickAccessMindMapDirectFavorites={quickAccessMindMapDirectFavorites}
+                  activeFavoriteGroupId={activeFavoriteGroupId}
+                  executionRootNode={desktopWorkareaOwnerNode}
+                  allNodes={store.allNodes}
+                  byParent={byParent}
+                  gridNodes={desktopGridNodes}
+                  chantierStatusCounts={desktopChantierPortfolioCounts}
+                  chantierNodeCount={desktopChantierNodes.length}
+                  workspaceChantierStatusCounts={
+                    workspaceFocusMode === "execution" ? emptyChantierStatusCounts : workspaceChantierStatusCounts
                   }
-                  openSurfaceContextMenu(event, "grid", {
-                    workareaMode: workspaceFocusMode === "execution",
-                    workareaOwnerNodeId: desktopWorkareaOwnerNodeId
-                  });
-                }}
-                onHasExternalFileDrag={hasExternalFileDrag}
-                onResolveActiveDragSourceId={resolveActiveDragSourceId}
-                onResolveExternalDropPaths={resolveExternalDropPaths}
-                onSetDropIndicator={setDropIndicator}
-                onClearDraggingState={clearDraggingState}
-                onImportExternalFilesToNode={(paths, parentNodeId, surface) => {
-                  void importExternalFilesToNode(paths, parentNodeId, surface);
-                }}
-                onApplyDropIntoCurrentGridFolder={(sourceId) => {
-                  void applyDropIntoCurrentGridFolder(sourceId);
-                }}
-                onCloseContextMenu={closeContextMenu}
-                onApplyGridSelection={applyGridSelection}
-                onOpenNodeContextMenu={(event, nodeId) =>
-                  openNodeContextMenu(event, nodeId, "grid", {
-                    workareaMode: workspaceFocusMode === "execution",
-                    workareaOwnerNodeId: desktopWorkareaOwnerNodeId
-                  })
-                }
-                onOpenQuickAccessNodeContextMenu={(event, nodeId) => {
-                  openQuickAccessNodeContextMenu(event, nodeId);
-                }}
-                onOpenQuickAccessGroupContextMenu={(event, groupId) => {
-                  openQuickAccessGroupContextMenu(event, groupId);
-                }}
-                onOpenQuickAccessSurfaceContextMenu={(event) => {
-                  openQuickAccessSurfaceContextMenu(event);
-                }}
-                onBeginNodeDrag={(event, nodeId) => beginNodeDrag(event, nodeId, "grid")}
-                onDetectGridDropPosition={detectGridDropPosition}
-                onApplyGridDropMove={(sourceId, targetId, position) => {
-                  void applyGridDropMove(sourceId, targetId, position);
-                }}
-                onOpenFolder={(nodeId) => {
-                  if (workspaceFocusMode === "execution") {
-                    void openNodeInWorkarea(nodeId);
-                    return;
+                  workspaceChantierNodeCount={workspaceFocusMode === "execution" ? 0 : workspaceChantierNodes.length}
+                  workspaceChantierNodes={workspaceFocusMode === "execution" ? [] : workspaceChantierNodes}
+                  workspaceActiveChantierNodes={workspaceFocusMode === "execution" ? [] : workspaceActiveChantierNodes}
+                  workspaceAttentionChantierNodes={workspaceFocusMode === "execution" ? [] : workspaceAttentionChantierNodes}
+                  activeChantierStatusFilter={activeChantierStatusFilter}
+                  onSetActiveChantierStatusFilter={setActiveChantierStatusFilter}
+                  selectedNodeId={store.selectedNodeId}
+                  selectedNodeIds={selectedNodeIds}
+                  cutPendingNodeIds={cutPendingNodeIds}
+                  draggingNodeId={draggingNodeId}
+                  editingNodeId={editingNodeId}
+                  editingSurface={editingSurface}
+                  editingValue={editingValue}
+                  inlineEditInputRef={inlineEditInputRef}
+                  dropIndicator={dropIndicator}
+                  scopedRootDropTargetId={desktopScopedRootDropTargetId}
+                  currentFolderDropTargetId={desktopCurrentFolderDropTargetId}
+                  folderNodeStateById={folderNodeStateById}
+                  executionOwnerNodeIds={executionOwnerNodeIds}
+                  nodeLevelById={nodeLevelById}
+                  scopedNumbering={scopedNumbering}
+                  isNodeProvisionalInlineCreate={(nodeId) =>
+                    provisionalInlineCreateByNodeIdRef.current.has(nodeId)
                   }
-                  void openNodeInDesktopTab(nodeId);
-                }}
-                onJumpToWorkspaceChantier={(nodeId) => {
-                  void jumpToWorkspaceChantierNode(nodeId);
-                }}
-                onReviewMindMapFile={openFilePreview}
-                onSelectQuickAccessGroup={(groupId) => {
-                  void handleFavoriteGroupClick(groupId);
-                }}
-                onOpenQuickAccessNode={(nodeId) => {
-                  void openQuickAccessNode(nodeId);
-                }}
-                onMoveNodeToQuickAccessGroup={(nodeId, groupId) => {
-                  void moveNodeToFavoriteGroup(nodeId, groupId);
-                }}
-                onDetectDetailsDropPosition={detectDetailsDropPosition}
-                onGetNodeTypeDisplayLabel={getNodeTypeDisplayLabel}
-                onFormatBytes={formatBytes}
-                onGetNodeSizeBytes={getNodeSizeBytes}
-                onFormatNodeModified={formatNodeModified}
-                onCreateDashboardWidget={createDashboardWidgetNode}
-                onRenameDashboardWidget={renameProcedureNodeTitle}
-                onSaveDashboardWidgetProperties={saveDashboardWidgetProperties}
-                onMoveDashboardWidget={moveDashboardWidgetNode}
-                onDeleteDashboardWidget={deleteDashboardWidgetNode}
-                organisationModels={organisationModelLibraryItems}
-                databaseTemplates={databaseTemplateLibraryItems}
-                canCreateFromReusableLibraryIntoCurrentNode={canCreateFromReusableLibraryIntoCurrentNode}
-                canSaveCurrentAsOrganisationModel={canSaveCurrentDashboardNodeAsOrganisationModel}
-                canSaveCurrentAsDatabaseTemplate={canSaveCurrentDashboardNodeAsDatabaseTemplate}
-                onSaveCurrentAsOrganisationModel={() => {
-                  if (!dashboardLibraryTargetNode) return;
-                  void saveNodeAsReusableLibraryItem(dashboardLibraryTargetNode.id, "organisation_model");
-                }}
-                onSaveCurrentAsDatabaseTemplate={() => {
-                  if (!dashboardLibraryTargetNode) return;
-                  void saveNodeAsReusableLibraryItem(dashboardLibraryTargetNode.id, "database_template");
-                }}
-                onCreateFromReusableLibraryItem={(itemId) => {
-                  void createFromReusableLibraryItem(itemId, dashboardLibraryTargetNode?.id ?? null);
-                }}
-                onExportReusableLibraryItem={(itemId) => {
-                  void exportReusableLibraryItem(itemId);
-                }}
-                onImportReusableLibraryJson={async (kind, file) => {
-                  const text = await file.text();
-                  const payload = parseReusableLibraryImportPayload(text);
-                  if (!payload) {
-                    setProjectNotice(null);
-                    setProjectError("The selected JSON file is not a valid ODE reusable library export.");
-                    return;
+                  showEmptyState={showWorkspaceEmptyState}
+                  emptyStateMessage={desktopGridEmptyStateMessage}
+                  showCreateFirstNodeAction={desktopGridShowCreateFirstNodeAction}
+                  showUploadEmptyStateAction={desktopGridShowUploadEmptyStateAction}
+                  onActivateGridSurface={() => {
+                    setSelectionSurface("grid");
+                    setKeyboardSurface("grid");
+                  }}
+                  onOpenSurfaceContextMenu={(event) => {
+                    const targetEl = event.target as HTMLElement;
+                    if (
+                      targetEl.closest(
+                        ".ode-grid-card, .ode-details-row, .ode-quick-mind-favorite"
+                      )
+                    ) {
+                      return;
+                    }
+                    openSurfaceContextMenu(event, "grid", {
+                      workareaMode: workspaceFocusMode === "execution",
+                      workareaOwnerNodeId: desktopWorkareaOwnerNodeId
+                    });
+                  }}
+                  onHasExternalFileDrag={hasExternalFileDrag}
+                  onResolveActiveDragSourceId={resolveActiveDragSourceId}
+                  onResolveExternalDropPaths={resolveExternalDropPaths}
+                  onSetDropIndicator={setDropIndicator}
+                  onClearDraggingState={clearDraggingState}
+                  onImportExternalFilesToNode={(paths, parentNodeId, surface) => {
+                    void importExternalFilesToNode(paths, parentNodeId, surface);
+                  }}
+                  onApplyDropIntoCurrentGridFolder={(sourceId) => {
+                    void applyDropIntoCurrentGridFolder(sourceId);
+                  }}
+                  onCloseContextMenu={closeContextMenu}
+                  onApplyGridSelection={applyGridSelection}
+                  onOpenNodeContextMenu={(event, nodeId) =>
+                    openNodeContextMenu(event, nodeId, "grid", {
+                      workareaMode: workspaceFocusMode === "execution",
+                      workareaOwnerNodeId: desktopWorkareaOwnerNodeId
+                    })
                   }
-                  if (payload.odeLibraryKind !== kind) {
-                    setProjectNotice(null);
-                    setProjectError(
-                      `This JSON file is a ${payload.odeLibraryKind === "database_template" ? "Database Template" : "Organisation Model"} export and cannot be imported into the other library.`
+                  onOpenQuickAccessNodeContextMenu={(event, nodeId) => {
+                    openQuickAccessNodeContextMenu(event, nodeId);
+                  }}
+                  onOpenQuickAccessGroupContextMenu={(event, groupId) => {
+                    openQuickAccessGroupContextMenu(event, groupId);
+                  }}
+                  onOpenQuickAccessSurfaceContextMenu={(event) => {
+                    openQuickAccessSurfaceContextMenu(event);
+                  }}
+                  onBeginNodeDrag={(event, nodeId) => beginNodeDrag(event, nodeId, "grid")}
+                  onDetectGridDropPosition={detectGridDropPosition}
+                  onApplyGridDropMove={(sourceId, targetId, position) => {
+                    void applyGridDropMove(sourceId, targetId, position);
+                  }}
+                  onOpenFolder={(nodeId) => {
+                    if (workspaceFocusMode === "execution") {
+                      void openNodeInWorkarea(nodeId);
+                      return;
+                    }
+                    void openNodeInDesktopTab(nodeId);
+                  }}
+                  onJumpToWorkspaceChantier={(nodeId) => {
+                    void jumpToWorkspaceChantierNode(nodeId);
+                  }}
+                  onReviewMindMapFile={openFilePreview}
+                  onSelectQuickAccessGroup={(groupId) => {
+                    void handleFavoriteGroupClick(groupId);
+                  }}
+                  onOpenQuickAccessNode={(nodeId) => {
+                    void openQuickAccessNode(nodeId);
+                  }}
+                  onMoveNodeToQuickAccessGroup={(nodeId, groupId) => {
+                    void moveNodeToFavoriteGroup(nodeId, groupId);
+                  }}
+                  onDetectDetailsDropPosition={detectDetailsDropPosition}
+                  onGetNodeTypeDisplayLabel={getNodeTypeDisplayLabel}
+                  onFormatBytes={formatBytes}
+                  onGetNodeSizeBytes={getNodeSizeBytes}
+                  onFormatNodeModified={formatNodeModified}
+                  onCreateDashboardWidget={createDashboardWidgetNode}
+                  onRenameDashboardWidget={renameProcedureNodeTitle}
+                  onSaveDashboardWidgetProperties={saveDashboardWidgetProperties}
+                  onMoveDashboardWidget={moveDashboardWidgetNode}
+                  onDeleteDashboardWidget={deleteDashboardWidgetNode}
+                  organisationModels={organisationModelLibraryItems}
+                  databaseTemplates={databaseTemplateLibraryItems}
+                  canCreateFromReusableLibraryIntoCurrentNode={canCreateFromReusableLibraryIntoCurrentNode}
+                  canSaveCurrentAsOrganisationModel={canSaveCurrentDashboardNodeAsOrganisationModel}
+                  canSaveCurrentAsDatabaseTemplate={canSaveCurrentDashboardNodeAsDatabaseTemplate}
+                  onSaveCurrentAsOrganisationModel={() => {
+                    if (!dashboardLibraryTargetNode) return;
+                    void saveNodeAsReusableLibraryItem(dashboardLibraryTargetNode.id, "organisation_model");
+                  }}
+                  onSaveCurrentAsDatabaseTemplate={() => {
+                    if (!dashboardLibraryTargetNode) return;
+                    void saveNodeAsReusableLibraryItem(dashboardLibraryTargetNode.id, "database_template");
+                  }}
+                  onCreateFromReusableLibraryItem={(itemId) => {
+                    void createFromReusableLibraryItem(itemId, dashboardLibraryTargetNode?.id ?? null);
+                  }}
+                  onExportReusableLibraryItem={(itemId) => {
+                    void exportReusableLibraryItem(itemId);
+                  }}
+                  onImportReusableLibraryJson={async (kind, file) => {
+                    const text = await file.text();
+                    const payload = parseReusableLibraryImportPayload(text);
+                    if (!payload) {
+                      setProjectNotice(null);
+                      setProjectError("The selected JSON file is not a valid ODE reusable library export.");
+                      return;
+                    }
+                    if (payload.odeLibraryKind !== kind) {
+                      setProjectNotice(null);
+                      setProjectError(
+                        `This JSON file is a ${payload.odeLibraryKind === "database_template" ? "Database Template" : "Organisation Model"} export and cannot be imported into the other library.`
+                      );
+                      return;
+                    }
+                    await importReusableLibraryPayload(payload);
+                  }}
+                  onSelectReusableLibraryItem={(itemId, options) => {
+                    applyTreeSelection(itemId, {
+                      range: options?.range ?? false,
+                      toggle: options?.toggle ?? false
+                    });
+                  }}
+                  onOpenReusableLibraryItem={(itemId) => {
+                    void openReusableLibraryItemForReview(itemId);
+                  }}
+                  onOpenReusableLibraryItemContextMenu={(event, itemId) => {
+                    openNodeContextMenu(event, itemId, "tree");
+                  }}
+                  onSaveNodeDescription={saveProcedureNodeDescription}
+                  onSaveNodeProperties={saveProcedureNodeProperties}
+                  onLaunchQuickApp={(item) => {
+                    void launchQuickApp(item);
+                  }}
+                  onManageNodeQuickApps={(nodeId) => {
+                    openNodeQuickAppsModal(nodeId);
+                  }}
+                  onOpenNodeTimeline={(nodeId) => {
+                    void openNodeTimelineView(nodeId);
+                  }}
+                  currentUserDisplayName={currentUserAccount?.displayName ?? null}
+                  onCreateChantierModuleFromTemplate={(itemId, chantierNodeId) => {
+                    void createFromReusableLibraryItem(itemId, chantierNodeId, {
+                      successNotice: null
+                    });
+                  }}
+                  onSetEditingValue={setEditingValue}
+                  onOpenInlineEditContextMenu={(event) => {
+                    void openTextEditContextMenu(event, "grid");
+                  }}
+                  onCommitInlineEdit={async () => {
+                    await commitInlineEdit();
+                  }}
+                  onCancelInlineEdit={cancelInlineEdit}
+                  onCreateFirstNode={() => {
+                    void createSurfaceDefaultTopic("grid", undefined, {
+                      inlineEditSurface: workspaceFocusMode === "execution" ? undefined : "tree"
+                    });
+                  }}
+                  onTriggerUpload={() => {
+                    void triggerDesktopUpload(
+                      mainPaneTargetNode && !isFileLikeNode(mainPaneTargetNode)
+                        ? mainPaneTargetNode.id
+                        : activeWorkspaceNodeTabSession.activeTabId ?? null
                     );
-                    return;
-                  }
-                  await importReusableLibraryPayload(payload);
-                }}
-                onSelectReusableLibraryItem={(itemId, options) => {
-                  applyTreeSelection(itemId, {
-                    range: options?.range ?? false,
-                    toggle: options?.toggle ?? false
-                  });
-                }}
-                onOpenReusableLibraryItem={(itemId) => {
-                  void openReusableLibraryItemForReview(itemId);
-                }}
-                onOpenReusableLibraryItemContextMenu={(event, itemId) => {
-                  openNodeContextMenu(event, itemId, "tree");
-                }}
-                onSetEditingValue={setEditingValue}
-                onOpenInlineEditContextMenu={(event) => {
-                  void openTextEditContextMenu(event, "grid");
-                }}
-                onCommitInlineEdit={async () => {
-                  await commitInlineEdit();
-                }}
-                onCancelInlineEdit={cancelInlineEdit}
-                onCreateFirstNode={() => {
-                  void createSurfaceDefaultTopic("grid", undefined, {
-                    inlineEditSurface: workspaceFocusMode === "execution" ? undefined : "tree"
-                  });
-                }}
-                onTriggerUpload={() => {
-                  void triggerDesktopUpload();
-                }}
-              />
+                  }}
+                />
+              )
             )
           ) : documentationModeActive ? (
             <ProcedureBuilderPanel
@@ -25707,8 +28256,9 @@ export default function App() {
               byParent={byParent}
               scopedNumbering={scopedNumbering}
               allNodes={store.allNodes}
+              databaseNodes={documentationScopedNodes}
               projects={projects}
-              activeProjectRootId={activeWorkspaceRootId}
+              activeProjectRootId={activeProjectRootId}
               onSelectNode={handleProcedureNodeSelection}
               onOpenLinkedNode={async (nodeId) => {
                 await openNodeInDedicatedWindow(nodeId);
@@ -25743,7 +28293,9 @@ export default function App() {
               onSaveNodeContent={saveProcedureNodeContent}
                 onSaveNodeDescription={saveProcedureNodeDescription}
                 onSaveNodeProperties={saveProcedureNodeProperties}
-                onMoveProcedureNode={moveProcedureNodeWithinParent}
+              onMoveProcedureNode={moveProcedureNodeWithinParent}
+              currentUserDisplayName={currentUserAccount?.displayName ?? null}
+              availableUsers={userAccountState?.users.filter((user) => !user.disabled) ?? []}
                 onActivateProcedureSurface={() => {
                   setSelectionSurface("tree");
                   setKeyboardSurface("procedure");
@@ -25909,7 +28461,11 @@ export default function App() {
                 void closeDesktopNodeTab(nodeId);
               }}
               onTriggerUpload={() => {
-                void triggerDesktopUpload(store.currentNode?.id ?? activeWorkspaceNodeTabSession.activeTabId ?? null);
+                void triggerDesktopUpload(
+                  mainPaneTargetNode && !isFileLikeNode(mainPaneTargetNode)
+                    ? mainPaneTargetNode.id
+                    : activeWorkspaceNodeTabSession.activeTabId ?? null
+                );
               }}
             />
           ) : null}
@@ -25929,29 +28485,22 @@ export default function App() {
         t={t}
         branchClipboard={branchClipboard}
         mirrorStatus={mirrorStatus}
-        workspaceMode={workspaceMode}
-        desktopViewMode={desktopViewMode}
-        workspaceFocusMode={workspaceFocusMode}
-        documentationModeActive={documentationModeActive}
-        showExecutionMode={false}
-        workareaAvailable={workareaAvailable}
-        workspaceEmptyOnly={workspaceEmptyOnly}
-        quickAppNodeLabel={footerQuickAppTargetNode?.name ?? null}
-        quickApps={footerQuickApps}
-        onLaunchQuickApp={(item) => {
+        navigationState={workspaceNavigationController.state}
+        scopeContext={workspaceNavigationController.scope}
+        nodeSummaryBadges={footerNodeSummaryBadges}
+        globalQuickAppsLabel={String(language).toLowerCase() === "fr" ? "Apps globales" : "Global Apps"}
+        globalQuickApps={globalQuickApps}
+        onLaunchGlobalQuickApp={(item) => {
           void launchQuickApp(item);
         }}
-        onReorderQuickApps={(quickApps) => {
-          void reorderFooterQuickApps(quickApps);
+        onReorderGlobalQuickApps={(quickApps) => {
+          setGlobalQuickApps(normalizeNodeQuickApps(quickApps));
         }}
-        onManageQuickApps={() => {
-          if (!footerQuickAppTargetNode) return;
-          openNodeQuickAppsModal(footerQuickAppTargetNode.id);
+        onManageGlobalQuickApps={() => {
+          openGlobalQuickAppsModal();
         }}
         onCheckForUpdates={handleCheckForUpdates}
         isCheckingForUpdates={manualUpdateCheckPending || isUpdaterBusy(updaterStatus)}
-        onSelectWorkspaceFocusMode={workspaceMode === "timeline" ? selectTimelineWorkspaceFocusMode : selectWorkspaceFocusMode}
-        onToggleWorkspaceEmptyOnly={toggleWorkspaceEmptyOnly}
         qaChecklistSummary={qaChecklistSummary}
         qaChecklistHealth={qaChecklistHealth}
         onOpenReleaseNotes={() => {

@@ -33,6 +33,16 @@ export type WorkspaceRepairSummary = {
   warning: string | null;
 };
 
+export type OpenQuickAppWindowRequest = {
+  label: string;
+  title: string;
+  url: string;
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+};
+
 const COPY_SUFFIX_REGEX = /\s*(\(|\[)(copy|copie|kopie|copia)(?:\s+(\d+))?(\)|\])$/i;
 
 function buildMirrorPathKey(name: string, nodeType: NodeType): string {
@@ -339,6 +349,10 @@ export async function openExternalUrl(url: string): Promise<void> {
 
 export async function openLocalPath(path: string): Promise<void> {
   await callNative("open_local_path", { path });
+}
+
+export async function openQuickAppWindow(request: OpenQuickAppWindowRequest): Promise<void> {
+  await callNative("open_quick_app_window", { request });
 }
 
 export async function startWindowsSnippingTool(): Promise<void> {

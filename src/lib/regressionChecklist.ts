@@ -404,6 +404,40 @@ export const REGRESSION_CHECKLIST_ITEMS: RegressionChecklistItem[] = [
     }
   },
   {
+    id: "ui-main-window-multi-display-move",
+    area: "UI",
+    title: "Main window moves cleanly across multiple displays",
+    scenario:
+      "With two or more monitors connected, drag the main ODETool window from one display to another while restored, then repeat starting from a maximized window. Verify the window crosses monitors, keeps following the pointer, can be maximized on the new display, and still supports minimize/restore afterward.",
+    aiTester: {
+      mode: "manual",
+      priority: "high",
+      tags: ["multi display", "multi monitor", "main window", "drag", "maximize", "restore", "desktop shell"],
+      hints: [
+        "the main window should be able to leave the current monitor",
+        "dragging from maximized should restore and continue moving on the target display",
+        "maximize and restore should still work after the move"
+      ]
+    }
+  },
+  {
+    id: "tree-organization-structure-lock",
+    area: "Tree",
+    title: "Organisation branches can be locked and unlocked from the tree",
+    scenario:
+      "In Organisation, right-click a normal branch that is not the workspace root and confirm Lock structure appears. Lock the branch, verify the lock badge appears on that node, and confirm creating, moving, or deleting nodes inside that branch is blocked. Then unlock the same branch and confirm those tree edits work again.",
+    aiTester: {
+      mode: "manual",
+      priority: "high",
+      tags: ["tree", "organisation", "structure lock", "context menu", "branch lock", "permissions"],
+      hints: [
+        "the action should appear on a regular organisation branch, not only on the workspace root",
+        "descendants under a locked branch should reject tree structure edits",
+        "unlocking the owner branch should restore normal tree editing"
+      ]
+    }
+  },
+  {
     id: "ui-qa-evidence-capture-flow",
     area: "UI",
     title: "QA proof attachments support clipboard images and files",

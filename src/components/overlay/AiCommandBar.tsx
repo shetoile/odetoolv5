@@ -8,7 +8,14 @@ import {
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AI_SPEECH_LOCALES } from "@/ai/planning/outputLanguage";
-import { DatabaseRootGlyph, FolderGlyph, SettingsGlyphSmall } from "@/components/Icons";
+import {
+  ArrowDownGlyphSmall,
+  ClockGlyphSmall,
+  EditGlyphSmall,
+  SettingsGlyphSmall,
+  TrashGlyphSmall
+} from "@/components/Icons";
+import { inferAiCommandActionId } from "@/features/ai/commandPlanner";
 import { WindowControls } from "@/components/layout/WindowControls";
 import { OdeAiMark } from "@/components/OdeAiMark";
 import { DocumentTreeProposalEditor } from "@/components/overlay/DocumentTreeProposalEditor";
@@ -41,6 +48,10 @@ export type AiCommandPlan = {
   intent: string;
   actionId: string | null;
   args?: Record<string, unknown>;
+  actionSequence?: Array<{
+    actionId: string;
+    args?: Record<string, unknown>;
+  }>;
   reason: string;
   steps: string[];
   confidence: number;
@@ -95,6 +106,43 @@ type CommandBarTab = "command" | "memory" | "activity" | "settings";
 type AssistantMode = "ask" | "command";
 type ProposalKind = "deliverables" | "integrated";
 export type AssistantSurface = "organization" | "workarea";
+type CommandHistoryEntry = {
+  id: string;
+  text: string;
+  subject: string;
+  autoGroup: string;
+  createdAt: string;
+  lastUsedAt: string;
+  archivedCategory: string | null;
+};
+type CommandHistoryCopy = {
+  recent: string;
+  archived: string;
+  archive: string;
+  archiveCurrent: string;
+  delete: string;
+  edit: string;
+  save: string;
+  group: string;
+  subject: string;
+  clearRecent: string;
+  clearArchived: string;
+  restore: string;
+  defaultGroup: string;
+  noArchived: string;
+};
+type HistorySelectionSnapshot = {
+  commandText: string;
+  activeQuickActionId: string | null;
+  assistantMode: AssistantMode;
+  activeSurface: AssistantSurface;
+  plan: AiCommandPlan | null;
+  nodeResponse: AiNodeResponse | null;
+  nodeResponseDraft: string;
+  error: string | null;
+  progressLines: string[];
+  selectedDocumentIds: string[];
+};
 type QuickActionItem = {
   id: string;
   label: string;
@@ -180,7 +228,326 @@ type SpeechRecognitionWindow = Window & {
 };
 
 const AI_COMMAND_HISTORY_STORAGE_KEY = buildAppStorageKey("ai.commandHistory.v1");
-const MAX_RECENT_COMMANDS = 10;
+const MAX_RECENT_COMMANDS = 40;
+const DEFAULT_HISTORY_GROUP = "General";
+
+function createCommandHistoryId(): string {
+  return `cmd-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeHistoryCategory(value: string): string | null {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+const LEGACY_DEFAULT_HISTORY_GROUPS = new Set(["Archive", "Archives", "Archiv", "Archivado"]);
+
+function resolveHistoryArchiveCategory(value: string | null | undefined, defaultGroup: string): string | null {
+  const normalized = typeof value === "string" ? normalizeHistoryCategory(value) : null;
+  if (!normalized) return null;
+  return LEGACY_DEFAULT_HISTORY_GROUPS.has(normalized) ? defaultGroup : normalized;
+}
+
+function normalizeHistorySubject(value: string): string | null {
+  const trimmed = value.replace(/\s+/g, " ").trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function cleanupHistorySubject(value: string): string {
+  let subject = value.replace(/\s+/g, " ").trim();
+  const lowered = subject.toLowerCase();
+  const cutTokens = [" with fields", " with ", " using ", " inside ", " for this workspace", " for this node"];
+  for (const token of cutTokens) {
+    const index = lowered.indexOf(token);
+    if (index > 0) {
+      subject = subject.slice(0, index).trim();
+      break;
+    }
+  }
+  return subject.replace(/[:.,;]+$/, "").trim();
+}
+
+function deriveHistorySubject(text: string): string {
+  const trimmed = text.replace(/\s+/g, " ").trim();
+  if (!trimmed) return "Untitled";
+
+  const quotedMatch = trimmed.match(/["“]([^"”]{3,80})["”]/);
+  if (quotedMatch?.[1]) {
+    return cleanupHistorySubject(quotedMatch[1]);
+  }
+
+  const namedMatch = trimmed.match(
+    /\b(?:database(?:\s+(?:section|table))?|section|table|module|framework|workspace|group|register)\s+named\s+([^.:]+?)(?:\s+with\b|:|\.|$)/i
+  );
+  if (namedMatch?.[1]) {
+    return cleanupHistorySubject(namedMatch[1]);
+  }
+
+  if (/\brisk management framework\b/i.test(trimmed)) {
+    return "Risk Management Framework";
+  }
+
+  const forMatch = trimmed.match(/\bfor\s+([^.:]+?)(?:\s+with\b|:|\.|$)/i);
+  if (forMatch?.[1]) {
+    const candidate = cleanupHistorySubject(forMatch[1]);
+    if (candidate.split(/\s+/).length <= 6) {
+      return candidate;
+    }
+  }
+
+  let subject = trimmed.split(/[\n.!?]/, 1)[0] ?? trimmed;
+  subject = subject.replace(/^(create|build|generate|make|add|open|prepare|design|update|draft|set up)\s+/i, "");
+  subject = subject.replace(/^(a|an|the)\s+/i, "");
+  subject = subject.replace(/^(fully\s+dynamic|dynamic|new)\s+/i, "");
+  subject = cleanupHistorySubject(subject);
+  if (!subject) return "Untitled";
+  const words = subject.split(/\s+/);
+  return words.length > 7 ? `${words.slice(0, 7).join(" ")}...` : subject;
+}
+
+function deriveHistoryAutoGroup(text: string, defaultGroup = DEFAULT_HISTORY_GROUP): string {
+  const normalized = text.toLowerCase();
+  const inferredAction = inferAiCommandActionId(text);
+  if (inferredAction === "database_create_section" || inferredAction === "database_seed_examples") {
+    return /\brisk\b|\bcontrol\b|\bincident\b|\breview\b/.test(normalized) ? "Risk Management" : "Data Model";
+  }
+  if (inferredAction === "dashboard_widget_create") {
+    return "Insights";
+  }
+  if (inferredAction === "execution_task_create") {
+    return "Execution";
+  }
+  if (inferredAction === "timeline_set_schedule" || inferredAction === "timeline_clear_schedule" || inferredAction === "timeline_open") {
+    return "Timeline";
+  }
+  if (inferredAction === "document_review") {
+    return "Reviews";
+  }
+  if (inferredAction === "ticket_create" || inferredAction === "ticket_analyze" || inferredAction === "ticket_draft_reply") {
+    return "Support";
+  }
+  if (inferredAction === "wbs_generate" || inferredAction === "wbs_from_document" || inferredAction === "tree_bulk_create") {
+    return "Structure";
+  }
+  if (inferredAction === "governance_framework_generate") {
+    return /\brisk\b/.test(normalized) ? "Risk Management" : "Governance";
+  }
+  const groupRules: Array<{ group: string; test: (value: string) => boolean }> = [
+    {
+      group: "Risk Management",
+      test: (value) =>
+        /\brisk\b|\bmitigation\b|\bcontrol\b|\bresidual\b|\bincident\b|\bhazard\b|\bcompliance\b|\bsafety\b/.test(
+          value
+        )
+    },
+    {
+      group: "Communication",
+      test: (value) => /\bmessaging\b|\bmessage\b|\bemail\b|\bcc\b|\btemplate\b|\bsubject\b|\bbody\b/.test(value)
+    },
+    {
+      group: "Meetings",
+      test: (value) => /\bmeeting\b|\bagenda\b|\battendees?\b|\bminutes\b|\bprovider\b|\bmeeting url\b/.test(value)
+    },
+    {
+      group: "Documentation",
+      test: (value) => /\bdocumentation\b|\bjournal\b|\bnotes?\b|\bsummary\b|\bevidence\b/.test(value)
+    },
+    {
+      group: "Structure",
+      test: (value) => /\bchantier\b|\btree\b|\bstructure\b|\bnode\b|\bhierarchy\b|\bwbs\b/.test(value)
+    },
+    {
+      group: "Data Model",
+      test: (value) => /\bdatabase\b|\btable\b|\bsection\b|\bfields?\b|\bschema\b|\bregister\b/.test(value)
+    },
+    {
+      group: "Execution",
+      test: (value) => /\bactions?\b|\btasks?\b|\bdeliverables?\b|\bowner\b|\bdue date\b|\breview cadence\b/.test(value)
+    },
+    {
+      group: "Insights",
+      test: (value) => /\bwidget\b|\bdashboard\b|\bmetric\b|\bdistribution\b|\bmatrix\b|\bheatmap\b/.test(value)
+    },
+    {
+      group: "Examples",
+      test: (value) => /\bexample\b|\bsample\b|\bseed\b|\bpopulate\b|\bfill\b/.test(value)
+    }
+  ];
+  const matched = groupRules.find((rule) => rule.test(normalized));
+  return matched?.group ?? defaultGroup;
+}
+
+function buildCommandHistoryMetadata(text: string): Pick<CommandHistoryEntry, "subject" | "autoGroup"> {
+  return {
+    subject: deriveHistorySubject(text),
+    autoGroup: deriveHistoryAutoGroup(text)
+  };
+}
+
+function normalizeHistoryIdentity(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function buildHistoryDisplayIdentity(subject: string, group: string): string {
+  return `${normalizeHistoryIdentity(group)}::${normalizeHistoryIdentity(subject)}`;
+}
+
+function resolveHistoryEntrySubject(entry: CommandHistoryEntry): string {
+  return normalizeHistorySubject(entry.subject) ?? buildCommandHistoryMetadata(entry.text).subject;
+}
+
+function resolveHistoryEntryAutoGroup(entry: CommandHistoryEntry, defaultGroup: string): string {
+  return normalizeHistoryCategory(entry.autoGroup) ?? deriveHistoryAutoGroup(entry.text, defaultGroup);
+}
+
+function resolveHistoryEntryArchiveGroup(entry: CommandHistoryEntry, defaultGroup: string): string {
+  const normalizedArchived = normalizeHistoryCategory(entry.archivedCategory ?? "");
+  if (
+    !normalizedArchived ||
+    normalizedArchived === defaultGroup ||
+    LEGACY_DEFAULT_HISTORY_GROUPS.has(normalizedArchived)
+  ) {
+    return resolveHistoryEntryAutoGroup(entry, defaultGroup);
+  }
+  return normalizedArchived;
+}
+
+function isHistoryEntryArchived(entry: CommandHistoryEntry, defaultGroup: string): boolean {
+  return Boolean(resolveHistoryArchiveCategory(entry.archivedCategory, defaultGroup));
+}
+
+function resolveHistoryEntryDisplayGroup(entry: CommandHistoryEntry, defaultGroup: string): string {
+  return isHistoryEntryArchived(entry, defaultGroup)
+    ? resolveHistoryEntryArchiveGroup(entry, defaultGroup)
+    : resolveHistoryEntryAutoGroup(entry, defaultGroup);
+}
+
+function mergeDuplicateHistoryEntries(
+  entries: CommandHistoryEntry[],
+  defaultGroup: string
+): CommandHistoryEntry[] {
+  const sorted = [...entries].sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt));
+  const seen = new Set<string>();
+  const next: CommandHistoryEntry[] = [];
+  for (const entry of sorted) {
+    const dedupeKey = `${isHistoryEntryArchived(entry, defaultGroup) ? "archived" : "recent"}::${buildHistoryDisplayIdentity(
+      resolveHistoryEntrySubject(entry),
+      resolveHistoryEntryDisplayGroup(entry, defaultGroup)
+    )}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    next.push(entry);
+    if (next.length >= MAX_RECENT_COMMANDS) break;
+  }
+  return next;
+}
+
+function normalizeCommandHistoryEntry(value: unknown): CommandHistoryEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const text = typeof record.text === "string" ? record.text.trim() : "";
+  if (!text) return null;
+  const createdAt =
+    typeof record.createdAt === "string" && record.createdAt.trim().length > 0
+      ? record.createdAt.trim()
+      : new Date().toISOString();
+  const lastUsedAt =
+    typeof record.lastUsedAt === "string" && record.lastUsedAt.trim().length > 0
+      ? record.lastUsedAt.trim()
+      : createdAt;
+  return {
+    id:
+      typeof record.id === "string" && record.id.trim().length > 0
+        ? record.id.trim()
+        : createCommandHistoryId(),
+    text,
+    subject:
+      typeof record.subject === "string" && normalizeHistorySubject(record.subject)
+        ? normalizeHistorySubject(record.subject)!
+        : deriveHistorySubject(text),
+    autoGroup:
+      typeof record.autoGroup === "string" && normalizeHistoryCategory(record.autoGroup)
+        ? normalizeHistoryCategory(record.autoGroup)!
+        : deriveHistoryAutoGroup(text),
+    createdAt,
+    lastUsedAt,
+    archivedCategory:
+      typeof record.archivedCategory === "string" ? normalizeHistoryCategory(record.archivedCategory) : null
+  };
+}
+
+function buildCommandHistoryCopy(language: LanguageCode): CommandHistoryCopy {
+  if (language === "FR") {
+    return {
+      recent: "Recent",
+      archived: "Archives",
+      archive: "Archiver",
+      archiveCurrent: "Sauver actuel",
+      delete: "Supprimer",
+      edit: "Modifier",
+      save: "Enregistrer",
+      group: "Groupe",
+      subject: "Sujet",
+      clearRecent: "Vider recent",
+      clearArchived: "Vider archives",
+      restore: "Restaurer",
+      defaultGroup: DEFAULT_HISTORY_GROUP,
+      noArchived: "Aucune archive"
+    };
+  }
+  if (language === "DE") {
+    return {
+      recent: "Neu",
+      archived: "Archiv",
+      archive: "Archivieren",
+      archiveCurrent: "Aktuell speichern",
+      delete: "Loeschen",
+      edit: "Bearbeiten",
+      save: "Speichern",
+      group: "Gruppe",
+      subject: "Betreff",
+      clearRecent: "Neu leeren",
+      clearArchived: "Archiv leeren",
+      restore: "Wiederherstellen",
+      defaultGroup: DEFAULT_HISTORY_GROUP,
+      noArchived: "Kein Archiv"
+    };
+  }
+  if (language === "ES") {
+    return {
+      recent: "Reciente",
+      archived: "Archivado",
+      archive: "Archivar",
+      archiveCurrent: "Guardar actual",
+      delete: "Eliminar",
+      edit: "Editar",
+      save: "Guardar",
+      group: "Grupo",
+      subject: "Asunto",
+      clearRecent: "Limpiar recientes",
+      clearArchived: "Limpiar archivo",
+      restore: "Restaurar",
+      defaultGroup: DEFAULT_HISTORY_GROUP,
+      noArchived: "Sin archivo"
+    };
+  }
+  return {
+    recent: "Recent",
+    archived: "Archived",
+    archive: "Archive",
+    archiveCurrent: "Save current",
+    delete: "Delete",
+    edit: "Edit",
+    save: "Save",
+    group: "Group",
+    subject: "Subject",
+    clearRecent: "Clear recent",
+    clearArchived: "Clear archived",
+    restore: "Restore",
+    defaultGroup: DEFAULT_HISTORY_GROUP,
+    noArchived: "No archived items"
+  };
+}
 
 function readStoredMistralKeys(): string[] {
   if (typeof window === "undefined") return [""];
@@ -204,26 +571,31 @@ function readStoredMistralKeys(): string[] {
   }
 }
 
-function readRecentCommands(): string[] {
+function readCommandHistoryEntries(): CommandHistoryEntry[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(AI_COMMAND_HISTORY_STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
-    const seen = new Set<string>();
-    const next: string[] = [];
+    const next: CommandHistoryEntry[] = [];
     for (const item of parsed) {
-      if (typeof item !== "string") continue;
-      const trimmed = item.trim();
-      if (!trimmed) continue;
-      const dedupeKey = trimmed.toLowerCase();
-      if (seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
-      next.push(trimmed);
-      if (next.length >= MAX_RECENT_COMMANDS) break;
+      const entry =
+        typeof item === "string"
+          ? {
+              id: createCommandHistoryId(),
+              text: item.trim(),
+              subject: deriveHistorySubject(item.trim()),
+              autoGroup: deriveHistoryAutoGroup(item.trim()),
+              createdAt: new Date().toISOString(),
+              lastUsedAt: new Date().toISOString(),
+              archivedCategory: null
+            }
+          : normalizeCommandHistoryEntry(item);
+      if (!entry) continue;
+      next.push(entry);
     }
-    return next;
+    return mergeDuplicateHistoryEntries(next, DEFAULT_HISTORY_GROUP);
   } catch {
     return [];
   }
@@ -277,7 +649,10 @@ export function AiCommandBar({
   const [treeMemoryActionError, setTreeMemoryActionError] = useState<string | null>(null);
   const [treeTemplateStatus, setTreeTemplateStatus] = useState<string | null>(null);
   const [treeTemplateError, setTreeTemplateError] = useState<string | null>(null);
-  const [recentCommands, setRecentCommands] = useState<string[]>(() => readRecentCommands());
+  const [commandHistoryEntries, setCommandHistoryEntries] = useState<CommandHistoryEntry[]>(() =>
+    readCommandHistoryEntries()
+  );
+  const [showArchivedHistory, setShowArchivedHistory] = useState(false);
   const [mistralKeys, setMistralKeys] = useState<string[]>(() => readStoredMistralKeys());
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
   const [isTestingKeys, setIsTestingKeys] = useState(false);
@@ -286,24 +661,104 @@ export function AiCommandBar({
   const [isDocumentPickerOpen, setIsDocumentPickerOpen] = useState(false);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [activeQuickActionId, setActiveQuickActionId] = useState<string | null>(null);
+  const [historySelectionSnapshot, setHistorySelectionSnapshot] = useState<HistorySelectionSnapshot | null>(null);
+  const [editingHistoryEntryId, setEditingHistoryEntryId] = useState<string | null>(null);
+  const [editingHistorySubject, setEditingHistorySubject] = useState("");
+  const [editingHistoryGroup, setEditingHistoryGroup] = useState("");
+  const [editingGroupName, setEditingGroupName] = useState<string | null>(null);
+  const [editingGroupDraftName, setEditingGroupDraftName] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const blurTimerRef = useRef<number | null>(null);
   const recognitionRef = useRef<{
     stop: () => void;
   } | null>(null);
+  const historyCopy = useMemo(() => buildCommandHistoryCopy(language), [language]);
+  const recentCommandEntries = useMemo(
+    () =>
+      [...commandHistoryEntries]
+        .filter((entry) => !resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup))
+        .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt)),
+    [commandHistoryEntries, historyCopy.defaultGroup]
+  );
+  const archivedCommandGroups = useMemo(() => {
+    const query = commandText.trim().toLowerCase();
+    const grouped = new Map<string, CommandHistoryEntry[]>();
+    [...commandHistoryEntries]
+      .filter((entry) => resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup))
+      .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt))
+      .forEach((entry) => {
+        const category = resolveHistoryEntryArchiveGroup(entry, historyCopy.defaultGroup);
+        const subject = resolveHistoryEntrySubject(entry).toLowerCase();
+        const matchesQuery =
+          query.length === 0 ||
+          entry.text.toLowerCase().includes(query) ||
+          category.toLowerCase().includes(query) ||
+          subject.includes(query);
+        if (!matchesQuery) return;
+        const list = grouped.get(category) ?? [];
+        list.push(entry);
+        grouped.set(category, list);
+      });
+    return Array.from(grouped.entries())
+      .sort((left, right) => left[0].localeCompare(right[0]))
+      .map(([category, entries]) => ({ category, entries }));
+  }, [commandHistoryEntries, commandText, historyCopy.defaultGroup]);
+  const historyGroupSummaries = useMemo(() => {
+    const grouped = new Map<string, { name: string; recentCount: number; archivedCount: number }>();
+    for (const entry of commandHistoryEntries) {
+      const groupName = resolveHistoryEntryDisplayGroup(entry, historyCopy.defaultGroup);
+      const existing = grouped.get(groupName) ?? {
+        name: groupName,
+        recentCount: 0,
+        archivedCount: 0
+      };
+      if (isHistoryEntryArchived(entry, historyCopy.defaultGroup)) {
+        existing.archivedCount += 1;
+      } else {
+        existing.recentCount += 1;
+      }
+      grouped.set(groupName, existing);
+    }
+    return Array.from(grouped.values())
+      .sort((left, right) => {
+        if (left.name === historyCopy.defaultGroup) return 1;
+        if (right.name === historyCopy.defaultGroup) return -1;
+        return left.name.localeCompare(right.name);
+      })
+      .map((group) => ({
+        ...group,
+        count: group.recentCount + group.archivedCount,
+        isDefault: group.name === historyCopy.defaultGroup
+      }));
+  }, [commandHistoryEntries, historyCopy.defaultGroup]);
   const filteredRecentCommands = useMemo(() => {
     const query = commandText.trim().toLowerCase();
-    if (query.length === 0) return recentCommands;
-    const exact = recentCommands.find((item) => item.toLowerCase() === query);
-    const startsWithMatches = recentCommands.filter(
-      (item) => item.toLowerCase() !== query && item.toLowerCase().startsWith(query)
+    if (query.length === 0) return recentCommandEntries;
+    const getSearchLabel = (entry: CommandHistoryEntry) => resolveHistoryEntrySubject(entry).toLowerCase();
+    const exact = recentCommandEntries.find(
+      (item) => getSearchLabel(item) === query || item.text.toLowerCase() === query
     );
-    const containsMatches = recentCommands.filter((item) => {
-      const lower = item.toLowerCase();
-      return lower !== query && !lower.startsWith(query) && lower.includes(query);
+    const startsWithMatches = recentCommandEntries.filter(
+      (item) => {
+        const label = getSearchLabel(item);
+        return label !== query && label.startsWith(query);
+      }
+    );
+    const containsMatches = recentCommandEntries.filter((item) => {
+      const label = getSearchLabel(item);
+      const lower = item.text.toLowerCase();
+      return (
+        label !== query &&
+        !label.startsWith(query) &&
+        (label.includes(query) || lower.includes(query))
+      );
     });
     return exact ? [exact, ...startsWithMatches, ...containsMatches] : [...startsWithMatches, ...containsMatches];
-  }, [recentCommands, commandText]);
+  }, [recentCommandEntries, commandText]);
+  const currentHistoryMetadata = useMemo(
+    () => buildCommandHistoryMetadata(commandText),
+    [commandText]
+  );
 
   const shouldIgnoreWindowDragTarget = (target: EventTarget | null) => {
     if (!(target instanceof Element)) return false;
@@ -342,6 +797,7 @@ export function AiCommandBar({
       setTreeMemoryActionMessage(null);
       setTreeMemoryActionError(null);
       setNodeResponse(null);
+      setHistorySelectionSnapshot(null);
       return;
     }
     setActiveTab("command");
@@ -436,15 +892,15 @@ export function AiCommandBar({
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
-      if (recentCommands.length === 0) {
+      if (commandHistoryEntries.length === 0) {
         localStorage.removeItem(AI_COMMAND_HISTORY_STORAGE_KEY);
         return;
       }
-      localStorage.setItem(AI_COMMAND_HISTORY_STORAGE_KEY, JSON.stringify(recentCommands));
+      localStorage.setItem(AI_COMMAND_HISTORY_STORAGE_KEY, JSON.stringify(commandHistoryEntries));
     } catch {
       // Command history is best-effort only.
     }
-  }, [recentCommands]);
+  }, [commandHistoryEntries]);
 
   useEffect(() => {
     if (!historyOpen || filteredRecentCommands.length === 0) {
@@ -461,11 +917,237 @@ export function AiCommandBar({
   const rememberCommand = (command: string) => {
     const trimmed = command.trim();
     if (!trimmed) return;
-    setRecentCommands((current) => {
+    setCommandHistoryEntries((current) => {
+      const now = new Date().toISOString();
       const normalized = trimmed.toLowerCase();
-      const next = [trimmed, ...current.filter((item) => item.toLowerCase() !== normalized)];
-      return next.slice(0, MAX_RECENT_COMMANDS);
+      const metadata = buildCommandHistoryMetadata(trimmed);
+      const displayIdentity = buildHistoryDisplayIdentity(metadata.subject, metadata.autoGroup);
+      const existing = current.find(
+        (entry) =>
+          !resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup) &&
+          (
+            entry.text.toLowerCase() === normalized ||
+            buildHistoryDisplayIdentity(
+              resolveHistoryEntrySubject(entry),
+              resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)
+            ) === displayIdentity
+          )
+      );
+      const nextEntry: CommandHistoryEntry = existing
+        ? {
+            ...existing,
+            text: trimmed,
+            subject: metadata.subject,
+            autoGroup: metadata.autoGroup,
+            lastUsedAt: now
+          }
+        : {
+            id: createCommandHistoryId(),
+            text: trimmed,
+            subject: metadata.subject,
+            autoGroup: metadata.autoGroup,
+            createdAt: now,
+            lastUsedAt: now,
+            archivedCategory: null
+          };
+      const next = [
+        nextEntry,
+        ...current.filter((entry) => entry.id !== nextEntry.id)
+      ];
+      return mergeDuplicateHistoryEntries(next, historyCopy.defaultGroup);
     });
+  };
+
+  const deleteHistoryEntry = (entryId: string) => {
+    setCommandHistoryEntries((current) => current.filter((entry) => entry.id !== entryId));
+  };
+
+  const clearHistoryEntries = (scope: "recent" | "archived" | "all") => {
+    setCommandHistoryEntries((current) => {
+      if (scope === "all") return [];
+      if (scope === "recent") return current.filter((entry) => entry.archivedCategory);
+      return current.filter((entry) => !entry.archivedCategory);
+    });
+  };
+
+  const archiveHistoryEntry = (entryId: string) => {
+    setCommandHistoryEntries((current) =>
+      mergeDuplicateHistoryEntries(
+        current.map((entry) =>
+          entry.id === entryId
+            ? {
+                ...entry,
+                archivedCategory: resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup),
+                lastUsedAt: new Date().toISOString()
+              }
+            : entry
+        ),
+        historyCopy.defaultGroup
+      )
+    );
+    setShowArchivedHistory(true);
+  };
+
+  const archiveCurrentCommand = () => {
+    const trimmed = commandText.trim();
+    if (!trimmed) return;
+    const metadata = buildCommandHistoryMetadata(trimmed);
+    const displayIdentity = buildHistoryDisplayIdentity(metadata.subject, metadata.autoGroup);
+    setCommandHistoryEntries((current) => {
+      const now = new Date().toISOString();
+      const existing = current.find(
+        (entry) => {
+          const isArchived = Boolean(resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup));
+          const matchesText = entry.text.toLowerCase() === trimmed.toLowerCase();
+          const matchesDisplay =
+            buildHistoryDisplayIdentity(
+              resolveHistoryEntrySubject(entry),
+              isArchived
+                ? resolveHistoryEntryArchiveGroup(entry, historyCopy.defaultGroup)
+                : resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)
+            ) === displayIdentity;
+          return isArchived && (matchesText || matchesDisplay);
+        }
+      );
+      const nextEntry: CommandHistoryEntry = existing
+        ? {
+            ...existing,
+            text: trimmed,
+            subject: metadata.subject,
+            autoGroup: metadata.autoGroup,
+            archivedCategory: metadata.autoGroup,
+            lastUsedAt: now
+          }
+        : {
+            id: createCommandHistoryId(),
+            text: trimmed,
+            subject: metadata.subject,
+            autoGroup: metadata.autoGroup,
+            createdAt: now,
+            lastUsedAt: now,
+            archivedCategory: metadata.autoGroup
+          };
+      const next = [
+        nextEntry,
+        ...current.filter(
+          (entry) =>
+            entry.id !== nextEntry.id &&
+            !(
+              !resolveHistoryArchiveCategory(entry.archivedCategory, historyCopy.defaultGroup) &&
+              (
+                entry.text.toLowerCase() === trimmed.toLowerCase() ||
+                buildHistoryDisplayIdentity(
+                  resolveHistoryEntrySubject(entry),
+                  resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)
+                ) === displayIdentity
+              )
+            )
+        )
+      ];
+      return mergeDuplicateHistoryEntries(next, historyCopy.defaultGroup);
+    });
+    setShowArchivedHistory(true);
+  };
+
+  const startHistoryEntryEdit = (entry: CommandHistoryEntry) => {
+    setEditingHistoryEntryId(entry.id);
+    setEditingHistorySubject(resolveHistoryEntrySubject(entry));
+    setEditingHistoryGroup(resolveHistoryEntryArchiveGroup(entry, historyCopy.defaultGroup));
+  };
+
+  const cancelHistoryEntryEdit = () => {
+    setEditingHistoryEntryId(null);
+    setEditingHistorySubject("");
+    setEditingHistoryGroup("");
+  };
+
+  const startHistoryGroupEdit = (groupName: string) => {
+    setEditingGroupName(groupName);
+    setEditingGroupDraftName(groupName);
+    setEditingHistoryEntryId(null);
+  };
+
+  const cancelHistoryGroupEdit = () => {
+    setEditingGroupName(null);
+    setEditingGroupDraftName("");
+  };
+
+  const saveHistoryGroupEdit = () => {
+    if (!editingGroupName) return;
+    const nextGroupName = normalizeHistoryCategory(editingGroupDraftName) ?? historyCopy.defaultGroup;
+    setCommandHistoryEntries((current) =>
+      mergeDuplicateHistoryEntries(
+        current.map((entry) => {
+          const displayGroup = resolveHistoryEntryDisplayGroup(entry, historyCopy.defaultGroup);
+          if (displayGroup !== editingGroupName) return entry;
+          return {
+            ...entry,
+            autoGroup: nextGroupName,
+            archivedCategory: isHistoryEntryArchived(entry, historyCopy.defaultGroup) ? nextGroupName : null,
+            lastUsedAt: new Date().toISOString()
+          };
+        }),
+        historyCopy.defaultGroup
+      )
+    );
+    cancelHistoryGroupEdit();
+  };
+
+  const deleteHistoryGroup = (groupName: string) => {
+    if (groupName === historyCopy.defaultGroup) return;
+    setCommandHistoryEntries((current) =>
+      mergeDuplicateHistoryEntries(
+        current.map((entry) => {
+          const displayGroup = resolveHistoryEntryDisplayGroup(entry, historyCopy.defaultGroup);
+          if (displayGroup !== groupName) return entry;
+          return {
+            ...entry,
+            autoGroup: historyCopy.defaultGroup,
+            archivedCategory: isHistoryEntryArchived(entry, historyCopy.defaultGroup)
+              ? historyCopy.defaultGroup
+              : null,
+            lastUsedAt: new Date().toISOString()
+          };
+        }),
+        historyCopy.defaultGroup
+      )
+    );
+  };
+
+  const saveHistoryEntryEdit = () => {
+    if (!editingHistoryEntryId) return;
+    const trimmedSubject = normalizeHistorySubject(editingHistorySubject) ?? "Untitled";
+    const trimmedGroup = normalizeHistoryCategory(editingHistoryGroup) ?? historyCopy.defaultGroup;
+    setCommandHistoryEntries((current) =>
+      mergeDuplicateHistoryEntries(
+        current.map((entry) =>
+          entry.id === editingHistoryEntryId
+            ? {
+                ...entry,
+                subject: trimmedSubject,
+                autoGroup: trimmedGroup,
+                archivedCategory: entry.archivedCategory ? trimmedGroup : entry.archivedCategory,
+                lastUsedAt: new Date().toISOString()
+              }
+            : entry
+        ),
+        historyCopy.defaultGroup
+      )
+    );
+    cancelHistoryEntryEdit();
+  };
+
+  const restoreHistoryEntry = (entryId: string) => {
+    setCommandHistoryEntries((current) =>
+      mergeDuplicateHistoryEntries(
+        current.map((entry) =>
+          entry.id === entryId
+            ? { ...entry, archivedCategory: null, lastUsedAt: new Date().toISOString() }
+            : entry
+        ),
+        historyCopy.defaultGroup
+      )
+    );
   };
 
   const refreshTreeMemoryEntries = () => {
@@ -590,6 +1272,41 @@ export function AiCommandBar({
     setProgressLines([]);
   };
 
+  const restoreHistorySelection = () => {
+    if (!historySelectionSnapshot) return false;
+    const snapshot = historySelectionSnapshot;
+    setCommandText(snapshot.commandText);
+    setActiveQuickActionId(snapshot.activeQuickActionId);
+    setAssistantMode(snapshot.assistantMode);
+    setActiveSurface(snapshot.activeSurface);
+    setPlan(snapshot.plan);
+    setNodeResponse(snapshot.nodeResponse);
+    setError(snapshot.error);
+    setProgressLines(snapshot.progressLines);
+    setSelectedDocumentIds(snapshot.selectedDocumentIds);
+    setHistorySelectionSnapshot(null);
+    closeHistoryPicker();
+    window.setTimeout(() => {
+      setNodeResponseDraft(snapshot.nodeResponseDraft);
+      inputRef.current?.focus();
+      const caret = snapshot.commandText.length;
+      inputRef.current?.setSelectionRange(caret, caret);
+    }, 0);
+    return true;
+  };
+
+  const handleCancel = () => {
+    if (isExecuting) return;
+    if (activeTab === "settings") {
+      setActiveTab("command");
+      return;
+    }
+    if (activeTab === "command" && restoreHistorySelection()) {
+      return;
+    }
+    onClose();
+  };
+
   const quickActionItems: QuickActionItem[] = [
     {
       id: "organization_review",
@@ -647,18 +1364,6 @@ export function AiCommandBar({
 
   const activeQuickAction = quickActionItems.find((item) => item.id === activeQuickActionId) ?? null;
   const activeSurfaceActionItems = quickActionItems.filter((item) => item.surface === activeSurface);
-  const surfaceTabs: Array<{ id: AssistantSurface; label: string; detail: string }> = [
-    {
-      id: "organization",
-      label: t("desktop.mindmap_node_tree"),
-      detail: t("command.ai_surface_hint_organization")
-    },
-    {
-      id: "workarea",
-      label: t("desktop.view_procedure"),
-      detail: t("command.ai_surface_hint_workarea")
-    }
-  ];
   const availableDocuments = nodeContext?.documents ?? [];
   const availableDocumentIdSet = new Set(availableDocuments.map((document) => document.id));
   const normalizedSelectedDocumentIds = selectedDocumentIds.filter((documentId) => availableDocumentIdSet.has(documentId));
@@ -666,6 +1371,7 @@ export function AiCommandBar({
   const hasSelectableDocuments = availableDocuments.length > 0;
 
   const applySuggestedPrompt = (item: QuickActionItem) => {
+    setHistorySelectionSnapshot(null);
     setActiveSurface(item.surface);
     setAssistantMode(item.mode);
     setCommandText(item.value);
@@ -679,19 +1385,9 @@ export function AiCommandBar({
     }, 0);
   };
 
-  const activeSurfaceMeta = surfaceTabs.find((surface) => surface.id === activeSurface) ?? surfaceTabs[0];
-  const commandInputPlaceholder =
-    activeQuickAction?.proposalKind === "deliverables"
-      ? t("command.ai_placeholder_deliverables")
-      : activeQuickAction?.proposalKind === "integrated"
-        ? t("command.ai_placeholder_plan")
-        : activeSurface === "organization"
-          ? t("command.ai_placeholder_organization")
-          : activeSurface === "workarea"
-            ? t("command.ai_placeholder_workarea")
-            : nodeContext
-              ? t("command.ai_placeholder_simple_context")
-              : t("command.ai_placeholder");
+  const commandInputPlaceholder = nodeContext
+    ? t("command.ai_placeholder_ask_context")
+    : t("command.ai_placeholder");
   const proposalActionOpen =
     activeQuickAction?.proposalKind === "deliverables" ||
     activeQuickAction?.proposalKind === "integrated" ||
@@ -707,17 +1403,10 @@ export function AiCommandBar({
       })
     : t("command.ai_files_none");
 
-  const setSurfaceSelection = (surface: AssistantSurface) => {
-    setActiveSurface(surface);
-    if (activeQuickAction?.surface !== surface) {
-      setActiveQuickActionId(null);
-    }
-  };
-
   const resolveAssistantMode = (value: string): AssistantMode => {
     const clean = value.trim();
     if (!clean) {
-      return activeQuickAction?.mode ?? assistantMode;
+      return assistantMode;
     }
     if (activeQuickAction && clean === activeQuickAction.value) {
       return activeQuickAction.mode;
@@ -765,6 +1454,24 @@ export function AiCommandBar({
   const closeHistoryPicker = () => {
     setHistoryOpen(false);
     setHighlightedHistoryIndex(-1);
+    setEditingHistoryEntryId(null);
+    setEditingGroupName(null);
+  };
+
+  const toggleHistoryPicker = () => {
+    cancelHistoryClose();
+    if (filteredRecentCommands.length === 0 && archivedCommandGroups.length === 0) {
+      setHistoryOpen(false);
+      setHighlightedHistoryIndex(-1);
+      return;
+    }
+    setHistoryOpen((current) => !current);
+    setHighlightedHistoryIndex((current) =>
+      current >= 0 && current < filteredRecentCommands.length ? current : 0
+    );
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+    }, 0);
   };
 
   const scheduleHistoryClose = () => {
@@ -785,6 +1492,20 @@ export function AiCommandBar({
   };
 
   const selectRecentCommand = (value: string) => {
+    setHistorySelectionSnapshot((current) =>
+      current ?? {
+        commandText,
+        activeQuickActionId,
+        assistantMode,
+        activeSurface,
+        plan,
+        nodeResponse,
+        nodeResponseDraft,
+        error,
+        progressLines,
+        selectedDocumentIds
+      }
+    );
     setCommandText(value);
     setActiveQuickActionId(null);
     clearPlanPreview();
@@ -804,6 +1525,7 @@ export function AiCommandBar({
       actionHint: activeQuickAction?.actionHint ?? null
     };
     setAssistantMode(resolvedAssistantMode);
+    setHistorySelectionSnapshot(null);
     rememberCommand(clean);
     setError(null);
     setPlan(null);
@@ -820,7 +1542,7 @@ export function AiCommandBar({
         setProgressLines((prev) => [...prev, t("command.ai_progress_ready")]);
       } catch (err) {
         const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-        setError(t("command.action_failed").replace("{reason}", reason));
+        setError(t("command.action_failed", { reason }));
         setProgressLines([]);
       } finally {
         setIsAnalyzing(false);
@@ -839,7 +1561,7 @@ export function AiCommandBar({
         setProgressLines((prev) => [...prev, t("command.ai_progress_ready")]);
       } catch (err) {
         const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-        setError(t("command.action_failed").replace("{reason}", reason));
+        setError(t("command.action_failed", { reason }));
         setProgressLines([]);
       } finally {
         setIsAnalyzing(false);
@@ -859,7 +1581,7 @@ export function AiCommandBar({
         setProgressLines((prev) => [...prev, "Answer ready"]);
       } catch (err) {
         const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-        setError(t("command.action_failed").replace("{reason}", reason));
+        setError(t("command.action_failed", { reason }));
         setProgressLines([]);
       } finally {
         setIsAnalyzing(false);
@@ -900,7 +1622,7 @@ export function AiCommandBar({
           ]);
         } catch (err) {
           const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-          setError(t("command.action_failed").replace("{reason}", reason));
+          setError(t("command.action_failed", { reason }));
         } finally {
           setIsExecuting(false);
         }
@@ -911,7 +1633,7 @@ export function AiCommandBar({
       }
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-      setError(t("command.action_failed").replace("{reason}", reason));
+      setError(t("command.action_failed", { reason }));
       setProgressLines([]);
     } finally {
       setIsAnalyzing(false);
@@ -934,7 +1656,7 @@ export function AiCommandBar({
       setProgressLines((prev) => [...prev, t("command.ai_progress_done")]);
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-      setError(t("command.action_failed").replace("{reason}", reason));
+      setError(t("command.action_failed", { reason }));
     } finally {
       setIsExecuting(false);
     }
@@ -950,7 +1672,7 @@ export function AiCommandBar({
       refreshTreeMemoryEntries();
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-      setError(t("command.action_failed").replace("{reason}", reason));
+      setError(t("command.action_failed", { reason }));
     } finally {
       setIsExecuting(false);
     }
@@ -997,7 +1719,7 @@ export function AiCommandBar({
       }
     } catch (err) {
       const reason = (err instanceof Error ? err.message : String(err)).trim() || "Unknown error";
-      setError(t("command.action_failed").replace("{reason}", reason));
+      setError(t("command.action_failed", { reason }));
     } finally {
       setIsExecuting(false);
     }
@@ -1049,7 +1771,7 @@ export function AiCommandBar({
   };
 
   const onInputKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    if (!simpleMode && event.key === "ArrowDown" && filteredRecentCommands.length > 0) {
+    if (event.key === "ArrowDown" && filteredRecentCommands.length > 0) {
       event.preventDefault();
       setHistoryOpen(true);
       setHighlightedHistoryIndex((current) =>
@@ -1057,7 +1779,7 @@ export function AiCommandBar({
       );
       return;
     }
-    if (!simpleMode && event.key === "ArrowUp" && filteredRecentCommands.length > 0) {
+    if (event.key === "ArrowUp" && filteredRecentCommands.length > 0) {
       event.preventDefault();
       setHistoryOpen(true);
       setHighlightedHistoryIndex((current) =>
@@ -1070,14 +1792,14 @@ export function AiCommandBar({
         return;
       }
       event.preventDefault();
-      if (!simpleMode && historyOpen && highlightedHistoryIndex >= 0 && filteredRecentCommands[highlightedHistoryIndex]) {
-        selectRecentCommand(filteredRecentCommands[highlightedHistoryIndex]);
+      if (historyOpen && highlightedHistoryIndex >= 0 && filteredRecentCommands[highlightedHistoryIndex]) {
+        selectRecentCommand(filteredRecentCommands[highlightedHistoryIndex].text);
         return;
       }
       void runAnalyze();
       return;
     }
-    if (!simpleMode && event.key === "Escape" && historyOpen) {
+    if (event.key === "Escape" && historyOpen) {
       event.preventDefault();
       event.stopPropagation();
       closeHistoryPicker();
@@ -1097,7 +1819,6 @@ export function AiCommandBar({
           <div className="flex min-w-0 flex-1 items-start gap-5">
             <div className="shrink-0">
               <OdeAiMark />
-              <p className="text-[0.78rem] uppercase tracking-[0.16em] text-[var(--ode-text-dim)]">{t("command.shortcut")}</p>
             </div>
             {nodeContext && !documentReview?.open ? (
               <div className="min-w-0 flex-1 pt-1">
@@ -1127,22 +1848,15 @@ export function AiCommandBar({
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-3" data-ode-window-drag-ignore="true">
-            <OdeTooltip label={t("settings.ai_title")} side="bottom">
-              <button
-                type="button"
-                className={`ode-utility-window-btn ode-ai-command-settings-btn ${
-                  activeTab === "settings" ? "ode-ai-command-settings-btn-active" : ""
-                }`}
-                onClick={() => setActiveTab((current) => (current === "settings" ? "command" : "settings"))}
-                aria-label={t("settings.ai_title")}
-                data-ode-window-drag-ignore="true"
-                data-tauri-drag-region="false"
-              >
-                <span className="ode-window-icon-shell ode-ai-command-settings-icon-shell" aria-hidden="true">
-                  <SettingsGlyphSmall />
-                </span>
-              </button>
-            </OdeTooltip>
+            <button
+              type="button"
+              className={`ode-icon-btn h-9 w-9 ${activeTab === "settings" ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.28)] text-[var(--ode-accent)]" : ""}`}
+              onClick={() => setActiveTab((current) => (current === "settings" ? "command" : "settings"))}
+              aria-label={t("settings.ai_title")}
+              title={t("settings.ai_title")}
+            >
+              <SettingsGlyphSmall />
+            </button>
             {showWindowControls ? (
               <WindowControls
                 t={t}
@@ -1159,53 +1873,6 @@ export function AiCommandBar({
             )}
           </div>
         </header>
-
-        {simpleMode && !documentReview?.open ? null : (
-          <div className="flex shrink-0 items-center gap-2 border-b border-[var(--ode-border)] px-6 py-4">
-            <button
-              type="button"
-              className={`rounded-full border px-4 py-2 text-[0.78rem] uppercase tracking-[0.12em] transition ${
-                activeTab === "command"
-                  ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)] text-[var(--ode-accent)]"
-                  : "border-[var(--ode-border)] bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]"
-              }`}
-              onClick={() => setActiveTab("command")}
-            >
-              {simpleMode ? t("command.ai_review") : t("command.title")}
-            </button>
-            {documentReview?.open ? (
-              <button
-                type="button"
-                className={`rounded-full border px-4 py-2 text-[0.78rem] uppercase tracking-[0.12em] transition ${
-                  activeTab === "memory"
-                    ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)] text-[var(--ode-accent)]"
-                    : "border-[var(--ode-border)] bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]"
-                }`}
-                onClick={() => {
-                  refreshTreeMemoryEntries();
-                  setActiveTab("memory");
-                }}
-              >
-                {t("document_ai.tree_memory_title")}
-              </button>
-            ) : null}
-            {!simpleMode ? (
-              <>
-                <button
-                  type="button"
-                  className={`rounded-full border px-4 py-2 text-[0.78rem] uppercase tracking-[0.12em] transition ${
-                    activeTab === "activity"
-                      ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)] text-[var(--ode-accent)]"
-                      : "border-[var(--ode-border)] bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]"
-                  }`}
-                  onClick={() => setActiveTab("activity")}
-                >
-                  {t("assistant.activity_title")}
-                </button>
-              </>
-            ) : null}
-          </div>
-        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6">
           {activeTab === "command" ? (
@@ -1286,52 +1953,6 @@ export function AiCommandBar({
                     </div>
                   ) : null}
 
-                  <div className="space-y-3">
-                    <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-[var(--ode-border)] bg-[rgba(3,18,30,0.5)] p-1">
-                      {surfaceTabs.map((surface) => {
-                        const active = activeSurface === surface.id;
-                        return (
-                          <button
-                            key={`surface-${surface.id}`}
-                            type="button"
-                            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2.5 text-[0.92rem] transition ${
-                              active
-                                ? "bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
-                                : "text-[var(--ode-text-dim)] hover:bg-[rgba(9,62,98,0.3)] hover:text-[var(--ode-text)]"
-                            }`}
-                            onClick={() => setSurfaceSelection(surface.id)}
-                            aria-pressed={active}
-                          >
-                            {surface.id === "organization" ? (
-                              <FolderGlyph state="filled" active={active} />
-                            ) : (
-                              <DatabaseRootGlyph active={active} />
-                            )}
-                            <span>{surface.label}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-
-                    <p className="text-[0.9rem] text-[var(--ode-text-dim)]">{activeSurfaceMeta.detail}</p>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    {activeSurfaceActionItems.map((item) => (
-                      <button
-                        key={`quick-action-${item.id}`}
-                        type="button"
-                        className={`h-9 rounded-lg border px-3.5 text-[0.8rem] whitespace-nowrap transition ${
-                          activeQuickActionId === item.id || activeQuickActionValue === item.value
-                            ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.28)] text-[var(--ode-accent)]"
-                            : "border-[var(--ode-border)] bg-[rgba(7,36,57,0.3)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
-                        }`}
-                        onClick={() => applySuggestedPrompt(item)}
-                      >
-                        {item.label}
-                      </button>
-                    ))}
-                  </div>
                 </>
               ) : null}
 
@@ -1346,13 +1967,13 @@ export function AiCommandBar({
                       const nextValue = event.target.value;
                       setCommandText(nextValue);
                       clearPlanPreview();
-                      if (!simpleMode) {
+                      if (commandHistoryEntries.length > 0) {
                         setHistoryOpen(true);
                       }
                     }}
                     onFocus={() => {
                       cancelHistoryClose();
-                      if (!simpleMode && recentCommands.length > 0) {
+                      if (commandHistoryEntries.length > 0) {
                         setHistoryOpen(true);
                       }
                     }}
@@ -1362,7 +1983,8 @@ export function AiCommandBar({
                     onKeyDown={onInputKeyDown}
                     disabled={isAnalyzing || isExecuting}
                   />
-                  {!simpleMode && historyOpen && filteredRecentCommands.length > 0 ? (
+                  {historyOpen &&
+                  (filteredRecentCommands.length > 0 || archivedCommandGroups.length > 0) ? (
                     <div
                       className="absolute left-0 right-0 top-[calc(100%+0.45rem)] z-[2] rounded-xl border border-[var(--ode-border-strong)] bg-[rgba(4,24,40,0.98)] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.35)]"
                       onMouseDown={(event) => {
@@ -1370,29 +1992,442 @@ export function AiCommandBar({
                         cancelHistoryClose();
                       }}
                     >
-                      <div className="px-2 pb-2 text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
-                        {t("command.ai_recent")}
+                      <div className="flex items-center justify-between gap-2 px-2 pb-2">
+                        <div className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
+                          {historyCopy.recent}
+                        </div>
+                        <div className="flex items-center gap-1">
+                          {recentCommandEntries.length > 0 ? (
+                            <button
+                              type="button"
+                              className="rounded-md border border-[var(--ode-border)] px-2 py-1 text-[0.72rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                              onClick={() => clearHistoryEntries("recent")}
+                            >
+                              {historyCopy.clearRecent}
+                            </button>
+                          ) : null}
+                          {archivedCommandGroups.length > 0 ? (
+                            <button
+                              type="button"
+                              className={`rounded-md border px-2 py-1 text-[0.72rem] transition ${
+                                showArchivedHistory
+                                  ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.3)] text-[var(--ode-accent)]"
+                                  : "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                              }`}
+                              onClick={() => setShowArchivedHistory((current) => !current)}
+                            >
+                              {historyCopy.archived}
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
-                      <div className="space-y-1">
-                        {filteredRecentCommands.map((recentCommand, index) => (
+                      <div className="mb-2 border-t border-[var(--ode-border)] px-1 pt-2">
+                        <div className="flex items-center justify-between gap-2">
+                          {commandText.trim().length > 0 ? (
+                            <span className="rounded-full border border-[rgba(86,210,255,0.32)] bg-[rgba(12,77,117,0.22)] px-2.5 py-1 text-[0.72rem] text-[var(--ode-accent)]">
+                              {currentHistoryMetadata.autoGroup}
+                            </span>
+                          ) : (
+                            <span />
+                          )}
                           <button
-                            key={`recent-command-${recentCommand}`}
                             type="button"
-                            className={`w-full rounded-lg px-3 py-2 text-left text-[0.92rem] transition ${
-                              index === highlightedHistoryIndex
-                                ? "border border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)] text-[var(--ode-text)]"
-                                : "border border-transparent bg-[rgba(6,31,49,0.42)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border)] hover:bg-[rgba(8,43,67,0.42)] hover:text-[var(--ode-text)]"
-                            }`}
-                            onMouseEnter={() => setHighlightedHistoryIndex(index)}
-                            onClick={() => selectRecentCommand(recentCommand)}
+                            className="rounded-md border border-[rgba(86,210,255,0.55)] bg-[rgba(12,77,117,0.3)] px-3 py-2 text-[0.78rem] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                            onClick={archiveCurrentCommand}
+                            disabled={commandText.trim().length === 0}
                           >
-                            {recentCommand}
+                            {historyCopy.archiveCurrent}
                           </button>
-                        ))}
+                        </div>
                       </div>
+                      {historyGroupSummaries.length > 0 ? (
+                        <div className="mb-2 border-t border-[var(--ode-border)] px-1 pt-2">
+                          <div className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
+                            {historyCopy.group}
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {historyGroupSummaries.map((group) =>
+                              editingGroupName === group.name ? (
+                                <div
+                                  key={`group-edit-${group.name}`}
+                                  className="flex items-center gap-2 rounded-lg border border-[var(--ode-border-strong)] bg-[rgba(8,43,67,0.42)] px-2 py-2"
+                                >
+                                  <input
+                                    type="text"
+                                    className="min-w-[12rem] rounded-md border border-[var(--ode-border)] bg-[rgba(7,35,56,0.85)] px-2 py-1 text-[0.8rem] text-[var(--ode-text)] outline-none focus:border-[var(--ode-border-strong)]"
+                                    value={editingGroupDraftName}
+                                    placeholder={historyCopy.group}
+                                    onChange={(event) => setEditingGroupDraftName(event.target.value)}
+                                    onKeyDown={(event) => {
+                                      if (event.key === "Enter") {
+                                        event.preventDefault();
+                                        saveHistoryGroupEdit();
+                                      } else if (event.key === "Escape") {
+                                        event.preventDefault();
+                                        cancelHistoryGroupEdit();
+                                      }
+                                    }}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-[rgba(86,210,255,0.55)] bg-[rgba(12,77,117,0.3)] px-2 py-1 text-[0.72rem] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                    onClick={saveHistoryGroupEdit}
+                                  >
+                                    {historyCopy.save}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="rounded-md border border-[var(--ode-border)] px-2 py-1 text-[0.72rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                                    onClick={cancelHistoryGroupEdit}
+                                  >
+                                    {t("settings.cancel")}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div
+                                  key={`group-chip-${group.name}`}
+                                  className="flex items-center gap-1 rounded-full border border-[rgba(86,210,255,0.32)] bg-[rgba(12,77,117,0.22)] px-2 py-1"
+                                >
+                                  <span className="text-[0.74rem] text-[var(--ode-accent)]">{group.name}</span>
+                                  <span className="rounded-full border border-[rgba(86,210,255,0.28)] bg-[rgba(4,24,40,0.42)] px-1.5 py-0.5 text-[0.64rem] text-[var(--ode-text-dim)]">
+                                    {group.count}
+                                  </span>
+                                  {!group.isDefault ? (
+                                    <>
+                                      <OdeTooltip label={`${historyCopy.edit} ${historyCopy.group.toLowerCase()}`} side="top" hoverOpenDelayMs={2000}>
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(86,210,255,0.42)] bg-[rgba(10,66,98,0.24)] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                          aria-label={`${historyCopy.edit} ${historyCopy.group.toLowerCase()}`}
+                                          onClick={() => startHistoryGroupEdit(group.name)}
+                                        >
+                                          <EditGlyphSmall />
+                                        </button>
+                                      </OdeTooltip>
+                                      <OdeTooltip label={`${historyCopy.delete} ${historyCopy.group.toLowerCase()}`} side="top" hoverOpenDelayMs={2000}>
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[rgba(255,128,128,0.38)] bg-[rgba(108,24,34,0.28)] text-[#ffb8b8] transition hover:border-[rgba(255,160,160,0.72)] hover:bg-[rgba(132,28,38,0.42)] hover:text-white"
+                                          aria-label={`${historyCopy.delete} ${historyCopy.group.toLowerCase()}`}
+                                          onClick={() => deleteHistoryGroup(group.name)}
+                                        >
+                                          <TrashGlyphSmall />
+                                        </button>
+                                      </OdeTooltip>
+                                    </>
+                                  ) : null}
+                                </div>
+                              )
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
+                      {filteredRecentCommands.length > 0 ? (
+                        <div className="space-y-1">
+                          {filteredRecentCommands.map((entry, index) => (
+                            (() => {
+                              const isEditingEntry = editingHistoryEntryId === entry.id;
+                              return (
+                                <div
+                                  key={entry.id}
+                                  className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 transition ${
+                                    index === highlightedHistoryIndex
+                                      ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)]"
+                                      : "border-transparent bg-[rgba(6,31,49,0.42)] hover:border-[var(--ode-border)] hover:bg-[rgba(8,43,67,0.42)]"
+                                  }`}
+                                  onMouseEnter={() => setHighlightedHistoryIndex(index)}
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    {isEditingEntry ? (
+                                      <div className="space-y-1">
+                                        <input
+                                          type="text"
+                                          className="w-full rounded-md border border-[var(--ode-border)] bg-[rgba(7,35,56,0.85)] px-2 py-1 text-[0.84rem] text-[var(--ode-text)] outline-none focus:border-[var(--ode-border-strong)]"
+                                          value={editingHistorySubject}
+                                          placeholder={historyCopy.subject}
+                                          onChange={(event) => setEditingHistorySubject(event.target.value)}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter") {
+                                              event.preventDefault();
+                                              saveHistoryEntryEdit();
+                                            } else if (event.key === "Escape") {
+                                              event.preventDefault();
+                                              cancelHistoryEntryEdit();
+                                            }
+                                          }}
+                                        />
+                                        <input
+                                          type="text"
+                                          className="w-full rounded-md border border-[var(--ode-border)] bg-[rgba(7,35,56,0.85)] px-2 py-1 text-[0.76rem] text-[var(--ode-text-dim)] outline-none focus:border-[var(--ode-border-strong)]"
+                                          value={editingHistoryGroup}
+                                          placeholder={historyCopy.group}
+                                          onChange={(event) => setEditingHistoryGroup(event.target.value)}
+                                          onKeyDown={(event) => {
+                                            if (event.key === "Enter") {
+                                              event.preventDefault();
+                                              saveHistoryEntryEdit();
+                                            } else if (event.key === "Escape") {
+                                              event.preventDefault();
+                                              cancelHistoryEntryEdit();
+                                            }
+                                          }}
+                                        />
+                                      </div>
+                                    ) : (
+                                      <OdeTooltip
+                                        label={entry.text}
+                                        side="top"
+                                        align="start"
+                                        tooltipClassName="ode-command-history-tooltip"
+                                        hoverOpenDelayMs={2000}
+                                      >
+                                        <div>
+                                          <button
+                                            type="button"
+                                            className="block w-full truncate text-left text-[0.92rem] text-[var(--ode-text-dim)] hover:text-[var(--ode-text)]"
+                                            onClick={() => selectRecentCommand(entry.text)}
+                                          >
+                                            {resolveHistoryEntrySubject(entry)}
+                                          </button>
+                                          <div className="mt-1 truncate text-[0.72rem] text-[var(--ode-text-muted)]">
+                                            {resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)}
+                                          </div>
+                                        </div>
+                                      </OdeTooltip>
+                                    )}
+                                  </div>
+                                  {isEditingEntry ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="rounded-md border border-[rgba(86,210,255,0.55)] bg-[rgba(12,77,117,0.3)] px-2 py-1 text-[0.72rem] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                        onClick={saveHistoryEntryEdit}
+                                      >
+                                        {historyCopy.save}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-md border border-[var(--ode-border)] px-2 py-1 text-[0.72rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                                        onClick={cancelHistoryEntryEdit}
+                                      >
+                                        {t("settings.cancel")}
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <OdeTooltip label={historyCopy.edit} side="top" hoverOpenDelayMs={2000}>
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[rgba(86,210,255,0.42)] bg-[rgba(10,66,98,0.24)] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                          aria-label={historyCopy.edit}
+                                          onClick={() => startHistoryEntryEdit(entry)}
+                                        >
+                                          <EditGlyphSmall />
+                                        </button>
+                                      </OdeTooltip>
+                                      <OdeTooltip
+                                        label={`${historyCopy.archive}: ${resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)}`}
+                                        side="top"
+                                        hoverOpenDelayMs={2000}
+                                      >
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[rgba(86,210,255,0.55)] bg-[rgba(12,77,117,0.3)] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                          aria-label={`${historyCopy.archive}: ${resolveHistoryEntryAutoGroup(entry, historyCopy.defaultGroup)}`}
+                                          onClick={() => archiveHistoryEntry(entry.id)}
+                                        >
+                                          <ArrowDownGlyphSmall />
+                                        </button>
+                                      </OdeTooltip>
+                                      <OdeTooltip label={historyCopy.delete} side="top" hoverOpenDelayMs={2000}>
+                                        <button
+                                          type="button"
+                                          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[rgba(255,128,128,0.38)] bg-[rgba(108,24,34,0.28)] text-[#ffb8b8] transition hover:border-[rgba(255,160,160,0.72)] hover:bg-[rgba(132,28,38,0.42)] hover:text-white"
+                                          aria-label={historyCopy.delete}
+                                          onClick={() => deleteHistoryEntry(entry.id)}
+                                        >
+                                          <TrashGlyphSmall />
+                                        </button>
+                                      </OdeTooltip>
+                                    </>
+                                  )}
+                                </div>
+                              );
+                            })()
+                          ))}
+                        </div>
+                      ) : null}
+                      {showArchivedHistory ? (
+                        <div className="mt-2 border-t border-[var(--ode-border)] px-1 pt-2">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <div className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
+                              {historyCopy.archived}
+                            </div>
+                            {archivedCommandGroups.length > 0 ? (
+                              <button
+                                type="button"
+                                className="rounded-md border border-[var(--ode-border)] px-2 py-1 text-[0.72rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                                onClick={() => clearHistoryEntries("archived")}
+                              >
+                                {historyCopy.clearArchived}
+                              </button>
+                            ) : null}
+                          </div>
+                          {archivedCommandGroups.length > 0 ? (
+                            <div className="max-h-[16rem] space-y-2 overflow-y-auto pr-1">
+                              {archivedCommandGroups.map((group) => (
+                                <div key={`archive-group-${group.category}`} className="space-y-1">
+                                  <div className="flex items-center gap-2 px-2 text-[0.8rem] text-[var(--ode-accent)]">
+                                    <span>{group.category}</span>
+                                    <span className="rounded-full border border-[rgba(86,210,255,0.28)] bg-[rgba(12,77,117,0.24)] px-1.5 py-0.5 text-[0.64rem] text-[var(--ode-accent)]">
+                                      {group.entries.length}
+                                    </span>
+                                  </div>
+                                  {group.entries.map((entry) => (
+                                    (() => {
+                                      const isEditingEntry = editingHistoryEntryId === entry.id;
+                                      return (
+                                        <div
+                                          key={entry.id}
+                                          className="flex items-center gap-2 rounded-lg border border-transparent bg-[rgba(6,31,49,0.42)] px-2 py-1.5"
+                                        >
+                                          <div className="min-w-0 flex-1">
+                                            {isEditingEntry ? (
+                                              <div className="space-y-1">
+                                                <input
+                                                  type="text"
+                                                  className="w-full rounded-md border border-[var(--ode-border)] bg-[rgba(7,35,56,0.85)] px-2 py-1 text-[0.84rem] text-[var(--ode-text)] outline-none focus:border-[var(--ode-border-strong)]"
+                                                  value={editingHistorySubject}
+                                                  placeholder={historyCopy.subject}
+                                                  onChange={(event) => setEditingHistorySubject(event.target.value)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === "Enter") {
+                                                      event.preventDefault();
+                                                      saveHistoryEntryEdit();
+                                                    } else if (event.key === "Escape") {
+                                                      event.preventDefault();
+                                                      cancelHistoryEntryEdit();
+                                                    }
+                                                  }}
+                                                />
+                                                <input
+                                                  type="text"
+                                                  className="w-full rounded-md border border-[var(--ode-border)] bg-[rgba(7,35,56,0.85)] px-2 py-1 text-[0.76rem] text-[var(--ode-text-dim)] outline-none focus:border-[var(--ode-border-strong)]"
+                                                  value={editingHistoryGroup}
+                                                  placeholder={historyCopy.group}
+                                                  onChange={(event) => setEditingHistoryGroup(event.target.value)}
+                                                  onKeyDown={(event) => {
+                                                    if (event.key === "Enter") {
+                                                      event.preventDefault();
+                                                      saveHistoryEntryEdit();
+                                                    } else if (event.key === "Escape") {
+                                                      event.preventDefault();
+                                                      cancelHistoryEntryEdit();
+                                                    }
+                                                  }}
+                                                />
+                                              </div>
+                                            ) : (
+                                              <OdeTooltip
+                                                label={entry.text}
+                                                side="top"
+                                                align="start"
+                                                tooltipClassName="ode-command-history-tooltip"
+                                                hoverOpenDelayMs={2000}
+                                              >
+                                                <button
+                                                  type="button"
+                                                  className="min-w-0 flex-1 truncate text-left text-[0.88rem] text-[var(--ode-text-dim)] hover:text-[var(--ode-text)]"
+                                                  onClick={() => selectRecentCommand(entry.text)}
+                                                >
+                                                  {resolveHistoryEntrySubject(entry)}
+                                                </button>
+                                              </OdeTooltip>
+                                            )}
+                                          </div>
+                                          {isEditingEntry ? (
+                                            <>
+                                              <button
+                                                type="button"
+                                                className="rounded-md border border-[rgba(86,210,255,0.55)] bg-[rgba(12,77,117,0.3)] px-2 py-1 text-[0.72rem] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                                onClick={saveHistoryEntryEdit}
+                                              >
+                                                {historyCopy.save}
+                                              </button>
+                                              <button
+                                                type="button"
+                                                className="rounded-md border border-[var(--ode-border)] px-2 py-1 text-[0.72rem] text-[var(--ode-text-dim)] transition hover:border-[var(--ode-border-strong)] hover:text-[var(--ode-text)]"
+                                                onClick={cancelHistoryEntryEdit}
+                                              >
+                                                {t("settings.cancel")}
+                                              </button>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <OdeTooltip label={historyCopy.edit} side="top" hoverOpenDelayMs={2000}>
+                                                <button
+                                                  type="button"
+                                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[rgba(86,210,255,0.42)] bg-[rgba(10,66,98,0.24)] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                                  aria-label={historyCopy.edit}
+                                                  onClick={() => startHistoryEntryEdit(entry)}
+                                                >
+                                                  <EditGlyphSmall />
+                                                </button>
+                                              </OdeTooltip>
+                                              <OdeTooltip label={historyCopy.restore} side="top" hoverOpenDelayMs={2000}>
+                                                <button
+                                                  type="button"
+                                                  className="rounded-md border border-[rgba(86,210,255,0.48)] bg-[rgba(12,77,117,0.24)] px-2 py-1 text-[0.72rem] text-[var(--ode-accent)] transition hover:border-[rgba(134,227,255,0.9)] hover:bg-[rgba(18,102,146,0.42)] hover:text-white"
+                                                  onClick={() => restoreHistoryEntry(entry.id)}
+                                                >
+                                                  {historyCopy.restore}
+                                                </button>
+                                              </OdeTooltip>
+                                              <OdeTooltip label={historyCopy.delete} side="top" hoverOpenDelayMs={2000}>
+                                                <button
+                                                  type="button"
+                                                  className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[rgba(255,128,128,0.38)] bg-[rgba(108,24,34,0.28)] text-[#ffb8b8] transition hover:border-[rgba(255,160,160,0.72)] hover:bg-[rgba(132,28,38,0.42)] hover:text-white"
+                                                  aria-label={historyCopy.delete}
+                                                  onClick={() => deleteHistoryEntry(entry.id)}
+                                                >
+                                                  <TrashGlyphSmall />
+                                                </button>
+                                              </OdeTooltip>
+                                            </>
+                                          )}
+                                        </div>
+                                      );
+                                    })()
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="rounded-lg border border-[var(--ode-border)] bg-[rgba(6,31,49,0.42)] px-3 py-3 text-[0.84rem] text-[var(--ode-text-muted)]">
+                              {historyCopy.noArchived}
+                            </div>
+                          )}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
+                {commandHistoryEntries.length > 0 ? (
+                  <OdeTooltip label={t("command.ai_recent")} side="top">
+                    <button
+                      type="button"
+                      className={`ode-mini-btn h-12 px-4 ${historyOpen ? "border-[rgba(86,210,255,0.95)] text-[var(--ode-accent)]" : ""}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        cancelHistoryClose();
+                      }}
+                      onClick={toggleHistoryPicker}
+                      disabled={isAnalyzing || isExecuting}
+                    >
+                      <ClockGlyphSmall />
+                    </button>
+                  </OdeTooltip>
+                ) : null}
                 {!simpleMode ? (
                   <OdeTooltip label={t("command.ai_voice")} side="top">
                     <button
@@ -1419,11 +2454,8 @@ export function AiCommandBar({
                 </button>
               </div>
 
-              {!simpleMode ? (
+              {!simpleMode && (progressLines.length > 0 || error) ? (
                 <div className="rounded-xl border border-[var(--ode-border)] bg-[rgba(5,28,46,0.58)] px-4 py-3">
-                  <p className="mb-2 text-[0.82rem] uppercase tracking-[0.14em] text-[var(--ode-text-dim)]">
-                    {t("command.ai_progress")}
-                  </p>
                   {progressLines.length > 0 ? (
                     <ul className="space-y-1.5">
                       {progressLines.map((line, idx) => (
@@ -1432,9 +2464,7 @@ export function AiCommandBar({
                         </li>
                       ))}
                     </ul>
-                  ) : (
-                    <p className="text-[0.95rem] text-[var(--ode-text-muted)]">{t("command.ai_progress_idle")}</p>
-                  )}
+                  ) : null}
                   {error ? <p className="mt-2 text-[0.92rem] text-[#ffb8b8]">{error}</p> : null}
                 </div>
               ) : error ? (
@@ -1559,16 +2589,6 @@ export function AiCommandBar({
                         disabled={!documentReview.treeProposal}
                       >
                         {t("tree_excel.export_ai_template")}
-                      </button>
-                      <button
-                        type="button"
-                        className="ode-mini-btn h-9 px-4"
-                        onClick={() => {
-                          refreshTreeMemoryEntries();
-                          setActiveTab("memory");
-                        }}
-                      >
-                        {t("document_ai.tree_memory_button")}
                       </button>
                       {reviewConfidencePercent !== null ? (
                         <span className="rounded-full border border-[rgba(63,118,154,0.22)] px-3 py-1 text-[0.76rem] text-[var(--ode-text-muted)]">
@@ -1878,8 +2898,8 @@ export function AiCommandBar({
         </div>
 
         <footer className="flex shrink-0 items-center justify-between border-t border-[var(--ode-border)] px-6 py-5">
-          <button type="button" className="ode-text-btn h-11 px-4" onClick={onClose} disabled={isExecuting}>
-            {t("settings.cancel")}
+          <button type="button" className="ode-text-btn h-11 px-4" onClick={handleCancel} disabled={isExecuting}>
+            {activeTab === "command" && historySelectionSnapshot ? historyCopy.restore : t("settings.cancel")}
           </button>
           {activeTab === "memory" ? (
             <button

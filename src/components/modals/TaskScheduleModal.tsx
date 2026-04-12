@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  ArrowDownGlyphSmall,
   CalendarGlyphSmall,
   ClockGlyphSmall,
   FileGlyphSmall,
@@ -216,7 +217,9 @@ export function TaskScheduleModal({
                   <option value="done">{t("timeline.status.done")}</option>
                 </select>
                 <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--ode-text-dim)]">
-                  v
+                  <span className="flex h-4 w-4 items-center justify-center">
+                    <ArrowDownGlyphSmall />
+                  </span>
                 </span>
               </div>
             </div>

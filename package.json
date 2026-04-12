@@ -1,7 +1,7 @@
 {
   "name": "odetool-pro",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,6 +12,8 @@
     "updater:prepare": "node scripts/prepare-updater-release.mjs",
     "icons:refresh": "python scripts/generate-brand-logo.py && python scripts/finalize-tauri-icons.py && python scripts/generate-installer-branding.py",
     "typecheck": "tsc -b --pretty false",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
     "quality:catalog:check": "node scripts/check-test-catalog.mjs",
     "quality:consistency": "node scripts/consistency-audit.mjs",
     "mock:test": "npm run quality:catalog:check && npm run typecheck && npm run build && cargo test --manifest-path src-tauri/Cargo.toml --lib",
@@ -35,13 +37,17 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.12",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
     "@tauri-apps/cli": "^2.10.0",
     "@types/node": "^24.3.0",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.5",
     "@vitejs/plugin-react": "^5.0.2",
+    "jsdom": "^26.1.0",
     "tailwindcss": "^4.1.12",
     "typescript": "^5.9.2",
-    "vite": "^7.1.3"
+    "vite": "^7.1.3",
+    "vitest": "^3.2.4"
   }
 }

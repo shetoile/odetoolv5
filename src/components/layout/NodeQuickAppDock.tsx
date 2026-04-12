@@ -9,7 +9,7 @@ type TranslateFn = (key: string, params?: TranslationParams) => string;
 
 interface NodeQuickAppDockProps {
   t: TranslateFn;
-  nodeLabel: string | null;
+  dockLabel: string | null;
   quickApps: NodeQuickAppItem[];
   onLaunchQuickApp: (item: NodeQuickAppItem) => void;
   onReorderQuickApps: (quickApps: NodeQuickAppItem[]) => void;
@@ -110,7 +110,7 @@ function QuickAppDockButton({
 
 export function NodeQuickAppDock({
   t,
-  nodeLabel,
+  dockLabel,
   quickApps,
   onLaunchQuickApp,
   onReorderQuickApps,
@@ -126,8 +126,8 @@ export function NodeQuickAppDock({
   const didReorderRef = useRef(false);
   const droppedOrderRef = useRef<NodeQuickAppItem[] | null>(null);
   const suppressLaunchRef = useRef(false);
-  const hasNode = Boolean(nodeLabel);
-  const showManageButton = hasNode;
+  const hasDockLabel = Boolean(dockLabel);
+  const showManageButton = hasDockLabel;
   const hasLeadingSlot = Boolean(leadingSlot);
   const showDock = quickApps.length > 0 || showManageButton || hasLeadingSlot;
   const canDragQuickApps = orderedQuickApps.length > 1;

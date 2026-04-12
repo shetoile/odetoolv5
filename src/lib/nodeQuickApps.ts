@@ -1,8 +1,10 @@
 import type { AppNode } from "@/lib/types";
 
 export const NODE_QUICK_APPS_PROPERTY = "odeQuickApps";
+export const WORKSPACE_QUICK_APPS_PROPERTY = "odeWorkspaceQuickApps";
 
-export type NodeQuickAppKind = "url" | "local_path";
+export type NodeQuickAppKind = "url" | "local_path" | "html_template";
+export type NodeQuickAppLaunchMode = "system" | "ode_window";
 
 export type NodeQuickAppIconKey =
   | "auto"
@@ -29,6 +31,7 @@ export interface NodeQuickAppItem {
   label: string;
   kind: NodeQuickAppKind;
   target: string;
+  launchMode?: NodeQuickAppLaunchMode;
   iconKey: NodeQuickAppIconKey;
   customIconDataUrl?: string | null;
 }
@@ -64,7 +67,11 @@ function createQuickAppId() {
 }
 
 function isQuickAppKind(value: unknown): value is NodeQuickAppKind {
-  return value === "url" || value === "local_path";
+  return value === "url" || value === "local_path" || value === "html_template";
+}
+
+function isQuickAppLaunchMode(value: unknown): value is NodeQuickAppLaunchMode {
+  return value === "system" || value === "ode_window";
 }
 
 function isQuickAppIconKey(value: unknown): value is NodeQuickAppIconKey {
@@ -104,7 +111,11 @@ export function normalizeQuickAppTarget(kind: NodeQuickAppKind, value: string): 
 }
 
 function deriveQuickAppLabel(kind: NodeQuickAppKind, target: string): string {
-  if (!target) return kind === "local_path" ? "App" : "Link";
+  if (!target) {
+    if (kind === "local_path" || kind === "html_template") return "App";
+    return "Link";
+  }
+  if (kind === "html_template") return "HTML App";
   if (kind === "url") {
     try {
       const url = new URL(target);
@@ -129,6 +140,12 @@ export function createNodeQuickAppItem(seed?: Partial<NodeQuickAppItem>): NodeQu
     label,
     kind,
     target,
+    launchMode:
+      isQuickAppLaunchMode(seed?.launchMode)
+        ? seed.launchMode
+        : kind === "html_template"
+          ? "ode_window"
+          : "system",
     iconKey: isQuickAppIconKey(seed?.iconKey) ? seed.iconKey : "auto",
     customIconDataUrl: normalizeQuickAppCustomIconDataUrl(seed?.customIconDataUrl)
   };
@@ -159,24 +176,39 @@ export function normalizeNodeQuickApps(raw: unknown): NodeQuickAppItem[] {
   return items;
 }
 
-export function getNodeQuickApps(node: AppNode | null | undefined): NodeQuickAppItem[] {
-  return normalizeNodeQuickApps(node?.properties?.[NODE_QUICK_APPS_PROPERTY]);
+export function getScopedQuickApps(
+  node: AppNode | null | undefined,
+  propertyKey: string = NODE_QUICK_APPS_PROPERTY
+): NodeQuickAppItem[] {
+  return normalizeNodeQuickApps(node?.properties?.[propertyKey]);
 }
 
-export function buildNodeQuickAppsProperties(
+export function getNodeQuickApps(node: AppNode | null | undefined): NodeQuickAppItem[] {
+  return getScopedQuickApps(node, NODE_QUICK_APPS_PROPERTY);
+}
+
+export function buildScopedQuickAppsProperties(
   properties: Record<string, unknown> | undefined,
-  quickApps: NodeQuickAppItem[]
+  quickApps: NodeQuickAppItem[],
+  propertyKey: string = NODE_QUICK_APPS_PROPERTY
 ): Record<string, unknown> {
   const nextProperties: Record<string, unknown> = {
     ...(properties ?? {})
   };
   const normalized = normalizeNodeQuickApps(quickApps);
   if (normalized.length > 0) {
-    nextProperties[NODE_QUICK_APPS_PROPERTY] = normalized;
+    nextProperties[propertyKey] = normalized;
   } else {
-    delete nextProperties[NODE_QUICK_APPS_PROPERTY];
+    delete nextProperties[propertyKey];
   }
   return nextProperties;
+}
+
+export function buildNodeQuickAppsProperties(
+  properties: Record<string, unknown> | undefined,
+  quickApps: NodeQuickAppItem[]
+): Record<string, unknown> {
+  return buildScopedQuickAppsProperties(properties, quickApps, NODE_QUICK_APPS_PROPERTY);
 }
 
 export function resolveQuickAppFaviconUrl(target: string): string | null {
@@ -207,6 +239,7 @@ export function resolveQuickAppSuggestedIconKey(item: Pick<NodeQuickAppItem, "ki
   if (haystack.includes("jira") || haystack.includes("atlassian")) return "jira";
   if (haystack.includes("mail")) return "mail";
   if (haystack.includes("chat") || haystack.includes("message")) return "chat";
+  if (item.kind === "html_template") return "app";
   if (item.kind === "local_path") {
     const normalized = item.target.replace(/[\\/]+$/, "");
     const leaf = normalized.split(/[\\/]/).filter(Boolean).pop() ?? "";
@@ -222,6 +255,47 @@ export function resolveQuickAppPreferredIconKey(item: Pick<NodeQuickAppItem, "ki
 
 export function resolveQuickAppLaunchTarget(item: Pick<NodeQuickAppItem, "kind" | "target">): string {
   return normalizeQuickAppTarget(item.kind, item.target);
+}
+
+export function resolveQuickAppLaunchMode(item: Pick<NodeQuickAppItem, "launchMode">): NodeQuickAppLaunchMode {
+  return isQuickAppLaunchMode(item.launchMode) ? item.launchMode : "system";
+}
+
+const ODE_WINDOW_LOCAL_FILE_EXTENSIONS = new Set([
+  "htm",
+  "html",
+  "md",
+  "txt",
+  "json",
+  "pdf",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "svg",
+  "mp4",
+  "webm"
+]);
+
+export function canQuickAppTargetOpenInOdeWindow(item: Pick<NodeQuickAppItem, "kind">, target: string): boolean {
+  const normalizedTarget = resolveQuickAppLaunchTarget({ kind: item.kind, target });
+  if (!normalizedTarget) return false;
+
+  if (item.kind === "url") {
+    try {
+      const url = new URL(normalizedTarget);
+      return url.protocol === "http:" || url.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  const leaf = getQuickAppTargetLeafName(normalizedTarget);
+  const dotIndex = leaf.lastIndexOf(".");
+  if (dotIndex <= 0 || dotIndex === leaf.length - 1) return false;
+  const extension = leaf.slice(dotIndex + 1).toLowerCase();
+  return ODE_WINDOW_LOCAL_FILE_EXTENSIONS.has(extension);
 }
 
 export function getQuickAppTargetLeafName(target: string): string {

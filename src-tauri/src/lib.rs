@@ -36,7 +36,7 @@ use windows::Win32::{
         GetWindowRect, GetWindowThreadProcessId, PostMessageW, SetWindowPos, ShowWindow,
         ShowWindowAsync,
         SWP_NOACTIVATE,
-        SWP_NOOWNERZORDER, SWP_NOZORDER, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
+        SWP_NOOWNERZORDER, SWP_NOZORDER, SW_MAXIMIZE, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
     },
 };
 
@@ -172,6 +172,164 @@ struct WindowsPrimaryWindowFitOptions {
     margin: Option<i32>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenQuickAppWindowRequest {
+    label: String,
+    title: String,
+    url: String,
+    width: Option<f64>,
+    height: Option<f64>,
+    min_width: Option<f64>,
+    min_height: Option<f64>,
+}
+
+const ODE_LOCAL_HTML_THEME_INIT_SCRIPT: &str = r#"
+(() => {
+  const STYLE_ID = 'ode-local-html-theme';
+  const BODY_CLASS = 'ode-local-html-theme';
+
+  const applyTheme = () => {
+    const doc = window.document;
+    if (!doc) {
+      return;
+    }
+
+    const root = doc.documentElement;
+    const head = doc.head || root;
+    if (root) {
+      root.style.background = '#051527';
+    }
+
+    if (head && !doc.getElementById(STYLE_ID)) {
+      const style = doc.createElement('style');
+      style.id = STYLE_ID;
+      style.textContent = `
+        :root {
+          --ode-quickapp-bg: #051527;
+          --ode-quickapp-panel: rgba(5, 21, 39, 0.96);
+          --ode-quickapp-panel-strong: rgba(9, 39, 62, 0.96);
+          --ode-quickapp-border: rgba(88, 197, 255, 0.2);
+          --ode-quickapp-border-strong: rgba(88, 197, 255, 0.34);
+          --ode-quickapp-text: #e9f6ff;
+          --ode-quickapp-text-muted: #9fc6dc;
+          --ode-quickapp-content: #f7fbff;
+          --ode-quickapp-content-text: #163247;
+        }
+
+        html,
+        body {
+          background: var(--ode-quickapp-bg) !important;
+        }
+
+        body.${BODY_CLASS} {
+          color: var(--ode-quickapp-text) !important;
+        }
+
+        body.${BODY_CLASS} .header,
+        body.${BODY_CLASS} .tabs {
+          background: var(--ode-quickapp-panel) !important;
+          border-bottom: 1px solid var(--ode-quickapp-border) !important;
+          box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.02);
+        }
+
+        body.${BODY_CLASS} .header {
+          padding: 14px 18px !important;
+        }
+
+        body.${BODY_CLASS} .tab {
+          background: rgba(9, 39, 62, 0.7) !important;
+          border: 1px solid transparent !important;
+          color: #b9deef !important;
+        }
+
+        body.${BODY_CLASS} .tab.active {
+          background: linear-gradient(180deg, rgba(33, 156, 214, 0.34) 0%, rgba(11, 57, 89, 0.94) 100%) !important;
+          border-color: var(--ode-quickapp-border-strong) !important;
+          color: #ffffff !important;
+          box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
+        }
+
+        body.${BODY_CLASS} .zoom-controls button,
+        body.${BODY_CLASS} .header-button,
+        body.${BODY_CLASS} .window-actions button {
+          border: 1px solid rgba(88, 197, 255, 0.18) !important;
+          border-radius: 12px !important;
+          box-shadow: none !important;
+        }
+
+        body.${BODY_CLASS} .zoom-controls button {
+          background: rgba(7, 29, 47, 0.5) !important;
+          color: var(--ode-quickapp-text) !important;
+        }
+
+        body.${BODY_CLASS} .save-all-button {
+          background: linear-gradient(180deg, #2ccf73 0%, #1f9b57 100%) !important;
+        }
+
+        body.${BODY_CLASS} .export-button {
+          background: linear-gradient(180deg, #38b9ff 0%, #157dc5 100%) !important;
+        }
+
+        body.${BODY_CLASS} .import-button,
+        body.${BODY_CLASS} .theme-toggle {
+          background: linear-gradient(180deg, #73879a 0%, #566776 100%) !important;
+        }
+
+        body.${BODY_CLASS} .header-button,
+        body.${BODY_CLASS} .window-actions button {
+          color: #ffffff !important;
+          font-weight: 600 !important;
+        }
+
+        body.${BODY_CLASS} .window-container {
+          background: var(--ode-quickapp-content) !important;
+          color: var(--ode-quickapp-content-text) !important;
+        }
+
+        body.${BODY_CLASS} .window-header {
+          border-bottom: 1px solid rgba(11, 57, 89, 0.12) !important;
+        }
+
+        body.${BODY_CLASS} .window-title,
+        body.${BODY_CLASS} h1,
+        body.${BODY_CLASS} h2,
+        body.${BODY_CLASS} h3,
+        body.${BODY_CLASS} label {
+          color: var(--ode-quickapp-content-text) !important;
+        }
+
+        body.${BODY_CLASS} input,
+        body.${BODY_CLASS} textarea,
+        body.${BODY_CLASS} select {
+          border-radius: 10px !important;
+        }
+      `;
+      head.appendChild(style);
+    }
+
+    if (doc.body) {
+      doc.body.classList.add(BODY_CLASS);
+    }
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyTheme, { once: true });
+  } else {
+    applyTheme();
+  }
+
+  window.addEventListener('load', applyTheme);
+  const observeTarget = document.documentElement || document;
+  if (observeTarget) {
+    new MutationObserver(() => applyTheme()).observe(observeTarget, {
+      childList: true,
+      subtree: true
+    });
+  }
+})();
+"#;
+
 fn db_err<E: std::fmt::Display>(err: E) -> String {
     format!("{err}")
 }
@@ -209,6 +367,86 @@ fn apply_primary_window_icon(app: &tauri::AppHandle) {
             eprintln!("{err}");
         }
     }
+}
+
+fn resolve_existing_file_path(raw: &str) -> Option<PathBuf> {
+    let trimmed = raw.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let candidate_path = PathBuf::from(trimmed);
+    if candidate_path.exists() {
+        return Some(fs::canonicalize(&candidate_path).unwrap_or(candidate_path));
+    }
+
+    if let Ok(parsed) = tauri::Url::parse(trimmed) {
+        if parsed.scheme() == "file" {
+            if let Ok(file_path) = parsed.to_file_path() {
+                if file_path.exists() {
+                    return Some(fs::canonicalize(&file_path).unwrap_or(file_path));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn is_local_html_quick_app_target(raw: &str) -> bool {
+    let Some(path) = resolve_existing_file_path(raw) else {
+        return false;
+    };
+
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| {
+            extension.eq_ignore_ascii_case("htm") || extension.eq_ignore_ascii_case("html")
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_existing_file_url(raw: &str) -> Result<Option<tauri::WebviewUrl>, String> {
+    let Some(canonical_path) = resolve_existing_file_path(raw) else {
+        return Ok(None);
+    };
+
+    let file_url = tauri::Url::from_file_path(&canonical_path).map_err(|()| {
+        format!(
+            "failed to convert local path {:?} into a webview file URL",
+            canonical_path
+        )
+    })?;
+    Ok(Some(tauri::WebviewUrl::CustomProtocol(file_url)))
+}
+
+fn resolve_webview_url(raw: &str) -> Result<tauri::WebviewUrl, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Err("webview url is required".to_string());
+    }
+
+    if let Some(file_url) = resolve_existing_file_url(trimmed)? {
+        return Ok(file_url);
+    }
+
+    if let Ok(parsed) = tauri::Url::parse(trimmed) {
+        return Ok(match parsed.scheme() {
+            "http" | "https" => tauri::WebviewUrl::External(parsed),
+            _ => tauri::WebviewUrl::CustomProtocol(parsed),
+        });
+    }
+
+    let normalized = trimmed
+        .trim_start_matches('/')
+        .strip_prefix("./")
+        .unwrap_or(trimmed)
+        .to_string();
+    if normalized.is_empty() {
+        return Err("webview url path is required".to_string());
+    }
+
+    Ok(tauri::WebviewUrl::App(PathBuf::from(normalized)))
 }
 
 #[cfg(target_os = "windows")]
@@ -375,6 +613,20 @@ fn minimize_windows_window(hwnd: HWND) {
         if !ShowWindowAsync(hwnd, SW_MINIMIZE).as_bool() {
             let _ = ShowWindow(hwnd, SW_MINIMIZE);
         }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn maximize_windows_window(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_MAXIMIZE);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn restore_windows_window(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
     }
 }
 
@@ -1168,6 +1420,39 @@ fn is_reserved_mirror_entry(name: &str) -> bool {
         || name.eq_ignore_ascii_case(ODE_CONTEXT_FILE_NAME)
 }
 
+fn is_internal_system_node_name(name: &str) -> bool {
+    let trimmed = name.trim().to_ascii_lowercase();
+    trimmed.starts_with("__ode_") && trimmed.ends_with("__")
+}
+
+fn is_internal_workspace_entry_name(name: &str) -> bool {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if is_internal_system_node_name(trimmed) {
+        return true;
+    }
+    let normalized = normalize_external_mirror_entry_name(trimmed);
+    is_internal_system_node_name(&normalized)
+}
+
+fn read_bool_property(properties: &Value, keys: &[&str]) -> bool {
+    let Value::Object(map) = properties else {
+        return false;
+    };
+
+    keys.iter().any(|key| matches!(map.get(*key), Some(Value::Bool(true))))
+}
+
+fn is_internal_workspace_projection_node(node: &NodeRecord) -> bool {
+    is_internal_system_node_name(&node.name)
+        || read_bool_property(
+            &node.properties,
+            &["odeWorkareaRoot", "ode_workarea_root"],
+        )
+}
+
 fn should_ignore_external_entry_name(name: &str) -> bool {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -1536,7 +1821,11 @@ fn sync_project_workspace_projection(
             continue;
         }
 
-        let target_root = PathBuf::from(clean_project_path);
+        let target_root = collapse_redundant_workspace_name_segments(
+            PathBuf::from(clean_project_path),
+            &root.name,
+        );
+        let target_root_display = target_root.to_string_lossy().to_string();
         fs::create_dir_all(&target_root).map_err(|err| {
             format!(
                 "failed to create project workspace root {:?}: {err}",
@@ -1546,6 +1835,7 @@ fn sync_project_workspace_projection(
 
         let previous_entries = previous_entries_by_path
             .remove(clean_project_path)
+            .or_else(|| previous_entries_by_path.remove(&target_root_display))
             .unwrap_or_default();
 
         let created_entries = sync_desktop_projection_recursive(
@@ -1569,7 +1859,16 @@ fn sync_project_workspace_projection(
             let stale_entry = target_root.join(previous_entry);
             remove_projected_entry(&stale_entry)?;
         }
-        next_entries_by_path.insert(clean_project_path.to_string(), created_entries);
+        let existing_entries = fs::read_dir(&target_root)
+            .map_err(|err| format!("failed to read project workspace root {:?}: {err}", target_root))?;
+        for entry in existing_entries.flatten() {
+            let entry_name = entry.file_name().to_string_lossy().to_string();
+            if !is_internal_workspace_entry_name(&entry_name) {
+                continue;
+            }
+            remove_projected_entry(&entry.path())?;
+        }
+        next_entries_by_path.insert(target_root_display, created_entries);
     }
 
     for (stale_path, stale_entries) in previous_entries_by_path {
@@ -1604,6 +1903,9 @@ fn sync_desktop_projection_recursive(
     let mut created_entry_names: Vec<String> = Vec::new();
     let mut folder_index = 0usize;
     for child in children.iter() {
+        if is_internal_workspace_projection_node(child) {
+            continue;
+        }
         let expects_file = child.node_type.eq_ignore_ascii_case("file");
         let number_label = if expects_file {
             String::new()
@@ -1708,13 +2010,17 @@ fn sync_desktop_projection_recursive(
                 Err(_) => continue,
             };
             let entry_name = entry.file_name().to_string_lossy().to_string();
+            let entry_path = entry.path();
+            if is_internal_workspace_entry_name(&entry_name) {
+                remove_projected_entry(&entry_path)?;
+                continue;
+            }
             if should_ignore_external_entry_name(&entry_name) {
                 continue;
             }
             if created_keys.contains(&entry_name.to_lowercase()) {
                 continue;
             }
-            let entry_path = entry.path();
             remove_projected_entry(&entry_path)?;
         }
     }
@@ -2236,6 +2542,117 @@ fn normalize_project_root_path(input: &str) -> Result<PathBuf, String> {
     Ok(normalize_windows_extended_path(canonical))
 }
 
+fn collapse_redundant_workspace_name_segments(
+    mut candidate: PathBuf,
+    workspace_name: &str,
+) -> PathBuf {
+    let normalized_workspace_name = workspace_name.trim().to_ascii_lowercase();
+    if normalized_workspace_name.is_empty() {
+        return candidate;
+    }
+
+    loop {
+        let current_name = candidate
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.trim().to_ascii_lowercase());
+        let parent = match candidate.parent() {
+            Some(value) => value,
+            None => break,
+        };
+        let parent_name = parent
+            .file_name()
+            .and_then(|value| value.to_str())
+            .map(|value| value.trim().to_ascii_lowercase());
+
+        let should_collapse = current_name.as_deref() == Some(normalized_workspace_name.as_str())
+            && parent_name.as_deref() == Some(normalized_workspace_name.as_str());
+        if !should_collapse {
+            break;
+        }
+
+        candidate = parent.to_path_buf();
+    }
+
+    candidate
+}
+
+fn normalize_linked_project_root_path(
+    input: &str,
+    workspace_name: &str,
+) -> Result<PathBuf, String> {
+    let trimmed = {
+        let candidate = input.trim();
+        if candidate.len() >= 2 {
+            let first = candidate.as_bytes()[0];
+            let last = candidate.as_bytes()[candidate.len() - 1];
+            if (first == b'"' && last == b'"') || (first == b'\'' && last == b'\'') {
+                candidate[1..candidate.len() - 1].trim()
+            } else {
+                candidate
+            }
+        } else {
+            candidate
+        }
+    };
+    if trimmed.is_empty() {
+        return Err("project path is empty".to_string());
+    }
+
+    let collapsed = collapse_redundant_workspace_name_segments(PathBuf::from(trimmed), workspace_name);
+    let collapsed_display = collapsed.to_string_lossy().to_string();
+    normalize_project_root_path(&collapsed_display)
+}
+
+async fn update_project_root_path_records(
+    db: &Surreal<Db>,
+    project: &ProjectRecord,
+    root_path_display: &str,
+) -> Result<(), String> {
+    let root_path_key = project_path_key(root_path_display);
+    let updated_at = now_ms();
+    db.query(
+        "UPDATE project SET rootPath = $root_path, root_path = $root_path, updatedAt = $updated_at, updated_at = $updated_at WHERE projectId = $project_id OR project_id = $project_id;",
+    )
+    .bind(("root_path", root_path_display.to_string()))
+    .bind(("updated_at", updated_at))
+    .bind(("project_id", project.project_id.clone()))
+    .await
+    .map_err(db_err)?;
+
+    let root_node = fetch_node_record(db, &project.root_node_id)
+        .await?
+        .ok_or_else(|| format!("Project root node not found: {}", project.root_node_id))?;
+    let mut root_properties = match root_node.properties {
+        Value::Object(map) => map,
+        _ => serde_json::Map::new(),
+    };
+    root_properties.insert(
+        "projectPath".to_string(),
+        Value::String(root_path_display.to_string()),
+    );
+    root_properties.insert(
+        "projectPathKey".to_string(),
+        Value::String(root_path_key),
+    );
+    root_properties.insert(
+        "workspacePath".to_string(),
+        Value::String(root_path_display.to_string()),
+    );
+    root_properties.insert(
+        "workspaceKind".to_string(),
+        Value::String("linked".to_string()),
+    );
+    db.query("UPDATE node SET properties = $properties, updatedAt = $updated_at WHERE nodeId = $node_id;")
+        .bind(("properties", Value::Object(root_properties)))
+        .bind(("updated_at", updated_at))
+        .bind(("node_id", project.root_node_id.clone()))
+        .await
+        .map_err(db_err)?;
+
+    Ok(())
+}
+
 fn project_path_key(path: &str) -> String {
     #[cfg(target_os = "windows")]
     {
@@ -2392,7 +2809,9 @@ async fn import_project_tree_nodes(
 
             let path = entry.path();
             let raw_name = entry.file_name().to_string_lossy().to_string();
-            if should_ignore_external_entry_name(&raw_name) {
+            if should_ignore_external_entry_name(&raw_name)
+                || is_internal_workspace_entry_name(&raw_name)
+            {
                 continue;
             }
             let desired_name = normalize_external_mirror_entry_name(&raw_name);
@@ -5379,7 +5798,9 @@ async fn import_external_entries_from_source(
 
         for entry in entries {
             let raw_name = entry.file_name().to_string_lossy().to_string();
-            if should_ignore_external_entry_name(&raw_name) {
+            if should_ignore_external_entry_name(&raw_name)
+                || is_internal_workspace_entry_name(&raw_name)
+            {
                 continue;
             }
 
@@ -5534,6 +5955,9 @@ fn build_expected_workspace_entries(
     let mut entries = Vec::with_capacity(children.len());
     let mut folder_index = 0usize;
     for child in children.iter() {
+        if is_internal_workspace_projection_node(child) {
+            continue;
+        }
         let number_label = if child.node_type.eq_ignore_ascii_case("file") {
             String::new()
         } else {
@@ -5598,6 +6022,34 @@ fn collect_missing_workspace_node_ids(
     Ok(stale_node_ids)
 }
 
+fn collect_leaked_internal_workspace_node_ids(
+    children_map: &HashMap<String, Vec<NodeRecord>>,
+    parent_id: &str,
+) -> Vec<String> {
+    let mut leaked_node_ids: Vec<String> = Vec::new();
+    let Some(children) = children_map.get(parent_id) else {
+        return leaked_node_ids;
+    };
+
+    for child in children {
+        if is_internal_system_node_name(&child.name)
+            && !read_bool_property(
+                &child.properties,
+                &["odeWorkareaRoot", "ode_workarea_root"],
+            )
+        {
+            leaked_node_ids.push(child.node_id.clone());
+            continue;
+        }
+        leaked_node_ids.extend(collect_leaked_internal_workspace_node_ids(
+            children_map,
+            &child.node_id,
+        ));
+    }
+
+    leaked_node_ids
+}
+
 fn count_workspace_external_changes_recursive(
     children_map: &HashMap<String, Vec<NodeRecord>>,
     parent_id: &str,
@@ -5617,7 +6069,9 @@ fn count_workspace_external_changes_recursive(
 
     for source_entry in source_entries.flatten() {
         let raw_name = source_entry.file_name().to_string_lossy().to_string();
-        if should_ignore_external_entry_name(&raw_name) {
+        if should_ignore_external_entry_name(&raw_name)
+            || is_internal_workspace_entry_name(&raw_name)
+        {
             continue;
         }
         let lower_name = raw_name.to_lowercase();
@@ -5724,7 +6178,9 @@ async fn import_missing_workspace_entries_from_source(
 
         for entry in entries {
             let raw_name = entry.file_name().to_string_lossy().to_string();
-            if should_ignore_external_entry_name(&raw_name) {
+            if should_ignore_external_entry_name(&raw_name)
+                || is_internal_workspace_entry_name(&raw_name)
+            {
                 continue;
             }
 
@@ -5906,7 +6362,8 @@ async fn detect_project_workspace_external_changes(
         ));
     }
 
-    let normalized_project_root = normalize_project_root_path(&project.root_path)?;
+    let normalized_project_root =
+        normalize_linked_project_root_path(&project.root_path, &project.name)?;
     let all_nodes = fetch_all_nodes(&db).await?;
     let children_map = build_children_map(&all_nodes);
     count_workspace_external_changes_recursive(
@@ -5940,9 +6397,16 @@ async fn re_sync_project_workspace(
         ));
     }
 
-    let normalized_project_root = normalize_project_root_path(&project.root_path)?;
+    let normalized_project_root =
+        normalize_linked_project_root_path(&project.root_path, &project.name)?;
+    let normalized_project_root_display = normalized_project_root.to_string_lossy().to_string();
+    if project_path_key(&project.root_path) != project_path_key(&normalized_project_root_display) {
+        update_project_root_path_records(&db, &project, &normalized_project_root_display).await?;
+    }
     let all_nodes = fetch_all_nodes(&db).await?;
     let children_map = build_children_map(&all_nodes);
+    let leaked_internal_node_ids =
+        collect_leaked_internal_workspace_node_ids(&children_map, &project.root_node_id);
     let stale_node_ids = collect_missing_workspace_node_ids(
         &children_map,
         &project.root_node_id,
@@ -5951,6 +6415,10 @@ async fn re_sync_project_workspace(
     )?;
 
     let mut removed_count = 0i64;
+    for leaked_node_id in leaked_internal_node_ids {
+        delete_node(app.clone(), leaked_node_id, Some(false)).await?;
+        removed_count += 1;
+    }
     for stale_node_id in stale_node_ids {
         delete_node(app.clone(), stale_node_id, Some(false)).await?;
         removed_count += 1;
@@ -6637,6 +7105,44 @@ fn set_windows_primary_window_fullscreen(
         let _ = app;
         let _ = fullscreen;
         Err("Primary window fullscreen control is only supported on Windows.".to_string())
+    }
+}
+
+#[tauri::command]
+fn maximize_windows_primary_window(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let window = get_primary_webview_window(&app)?;
+        let hwnd = window
+            .hwnd()
+            .map_err(|err| format!("failed to resolve the primary window handle: {err}"))?;
+        maximize_windows_window(hwnd);
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err("Primary window maximize is only supported on Windows.".to_string())
+    }
+}
+
+#[tauri::command]
+fn restore_windows_primary_window(app: tauri::AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let window = get_primary_webview_window(&app)?;
+        let hwnd = window
+            .hwnd()
+            .map_err(|err| format!("failed to resolve the primary window handle: {err}"))?;
+        restore_windows_window(hwnd);
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app;
+        Err("Primary window restore is only supported on Windows.".to_string())
     }
 }
 
@@ -7918,17 +8424,26 @@ async fn set_project_workspace_path(
     if raw_path.is_empty() {
         return Err("project path is empty".to_string());
     }
-    let candidate_path = PathBuf::from(&raw_path);
+    let candidate_path = collapse_redundant_workspace_name_segments(
+        PathBuf::from(&raw_path),
+        &project.name,
+    );
     if candidate_path.exists() {
         if !candidate_path.is_dir() {
-            return Err(format!("project path is not a directory: {raw_path}"));
+            return Err(format!(
+                "project path is not a directory: {}",
+                candidate_path.to_string_lossy()
+            ));
         }
     } else {
         fs::create_dir_all(&candidate_path)
             .map_err(|err| format!("failed to create project path {:?}: {err}", candidate_path))?;
     }
 
-    let normalized_path = normalize_project_root_path(&raw_path)?;
+    let normalized_path = normalize_linked_project_root_path(
+        &candidate_path.to_string_lossy(),
+        &project.name,
+    )?;
     let normalized_display = normalized_path.to_string_lossy().to_string();
     let normalized_key = project_path_key(&normalized_display);
 
@@ -7943,45 +8458,7 @@ async fn set_project_workspace_path(
         ));
     }
 
-    let updated_at = now_ms();
-    db.query(
-        "UPDATE project SET rootPath = $root_path, root_path = $root_path, updatedAt = $updated_at, updated_at = $updated_at WHERE projectId = $project_id OR project_id = $project_id;",
-    )
-    .bind(("root_path", normalized_display.clone()))
-    .bind(("updated_at", updated_at))
-    .bind(("project_id", project.project_id.clone()))
-    .await
-    .map_err(db_err)?;
-
-    let root_node = fetch_node_record(&db, &project.root_node_id)
-        .await?
-        .ok_or_else(|| format!("Project root node not found: {}", project.root_node_id))?;
-    let mut root_properties = match root_node.properties {
-        Value::Object(map) => map,
-        _ => serde_json::Map::new(),
-    };
-    root_properties.insert(
-        "projectPath".to_string(),
-        Value::String(normalized_display.clone()),
-    );
-    root_properties.insert(
-        "projectPathKey".to_string(),
-        Value::String(normalized_key.clone()),
-    );
-    root_properties.insert(
-        "workspacePath".to_string(),
-        Value::String(normalized_display.clone()),
-    );
-    root_properties.insert(
-        "workspaceKind".to_string(),
-        Value::String("linked".to_string()),
-    );
-    db.query("UPDATE node SET properties = $properties, updatedAt = $updated_at WHERE nodeId = $node_id;")
-        .bind(("properties", Value::Object(root_properties)))
-        .bind(("updated_at", updated_at))
-        .bind(("node_id", project.root_node_id.clone()))
-        .await
-        .map_err(db_err)?;
+    update_project_root_path_records(&db, &project, &normalized_display).await?;
 
     sync_desktop_projection_from_db(&app, &db).await?;
     let updated_project = fetch_project_record(&db, &project.project_id)
@@ -8854,6 +9331,67 @@ Start-Process -FilePath $target | Out-Null
 }
 
 #[tauri::command]
+async fn open_quick_app_window(
+    app: tauri::AppHandle,
+    request: OpenQuickAppWindowRequest,
+) -> Result<(), String> {
+    let label = request.label.trim();
+    if label.is_empty() {
+        return Err("quick app window label is required".to_string());
+    }
+
+    let title = request.title.trim();
+    if title.is_empty() {
+        return Err("quick app window title is required".to_string());
+    }
+
+    let url = request.url.trim();
+    if url.is_empty() {
+        return Err("quick app window url is required".to_string());
+    }
+
+    if let Some(existing) = app.get_webview_window(label) {
+        let _ = existing.unminimize();
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let should_apply_local_html_theme = is_local_html_quick_app_target(url);
+    let webview_url = resolve_webview_url(url)?;
+    let width = request.width.unwrap_or(1380.0).max(960.0);
+    let height = request.height.unwrap_or(920.0).max(680.0);
+    let min_width = request.min_width.unwrap_or(960.0).max(640.0);
+    let min_height = request.min_height.unwrap_or(680.0).max(480.0);
+
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        &app,
+        label.to_string(),
+        webview_url,
+    )
+    .title(title)
+    .center()
+    .inner_size(width, height)
+    .min_inner_size(min_width, min_height)
+    .resizable(true)
+    .focused(true)
+    .visible(true);
+
+    if should_apply_local_html_theme {
+        builder = builder.initialization_script(ODE_LOCAL_HTML_THEME_INIT_SCRIPT);
+    }
+
+    let window = builder
+    .build()
+    .map_err(|err| format!("failed to open quick app window: {err}"))?;
+
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+    Ok(())
+}
+
+#[tauri::command]
 fn read_local_image_data_url(path: String) -> Result<Option<String>, String> {
     let trimmed = path.trim().trim_matches('"');
     if trimmed.is_empty() {
@@ -9167,6 +9705,8 @@ pub fn run() {
             fit_windows_primary_window_to_work_area,
             is_windows_primary_window_fullscreen,
             set_windows_primary_window_fullscreen,
+            maximize_windows_primary_window,
+            restore_windows_primary_window,
             minimize_windows_primary_window,
             close_windows_primary_window,
             get_windows_clipboard_file_paths,
@@ -9175,6 +9715,7 @@ pub fn run() {
             pick_qa_evidence_files,
             get_windows_language_snapshot,
             open_local_path,
+            open_quick_app_window,
             export_tree_structure_excel,
             export_procedure_table_excel,
             pick_windows_tree_spreadsheet_file,
@@ -9210,11 +9751,11 @@ pub fn run() {
             analyze_ticket,
             generate_ticket_reply,
             open_external_url,
-            app_updater::check_for_app_updates,
             start_windows_snipping_tool,
             probe_single_instance_relaunch,
             attach_clipboard_image_to_ticket,
             run_quality_gate_command,
+            app_updater::check_for_app_updates,
             ai_server::start_local_ai_server,
             ai_server::stop_local_ai_server,
             ai_server::check_local_ai_status
@@ -9357,6 +9898,13 @@ mod tests {
     }
 
     #[test]
+    fn internal_workspace_entries_are_detected_even_when_numbered() {
+        assert!(is_internal_workspace_entry_name("__ode_execution__"));
+        assert!(is_internal_workspace_entry_name("[5] __ode_execution__"));
+        assert!(!is_internal_workspace_entry_name("[1] Pilotage"));
+    }
+
+    #[test]
     fn mirror_display_name_always_uses_bracketed_numbering() {
         assert_eq!(build_mirror_display_name("1.2", "[7] Test"), "[1.2] Test");
         assert_eq!(build_mirror_display_name("3", "(2) Plan"), "[3] Plan");
@@ -9385,6 +9933,34 @@ mod tests {
                 "[2] Folder B".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn expected_workspace_entries_skip_internal_projection_nodes() {
+        let mut public_folder = test_node("public_folder", ROOT_PARENT_ID);
+        public_folder.name = "Pilotage".to_string();
+
+        let mut internal_folder = test_node("internal_folder", ROOT_PARENT_ID);
+        internal_folder.name = "__ode_execution__".to_string();
+        internal_folder.properties = json!({
+            "odeWorkareaRoot": true
+        });
+
+        let entries = build_expected_workspace_entries(&[public_folder, internal_folder], "");
+        let entry_names: Vec<String> = entries.into_iter().map(|entry| entry.entry_name).collect();
+        assert_eq!(entry_names, vec!["[1] Pilotage".to_string()]);
+    }
+
+    #[test]
+    fn redundant_workspace_suffix_segments_collapse_to_single_workspace_folder() {
+        let base = PathBuf::from(r"C:\workspaces");
+        let repeated = base
+            .join("ODETool Antoine")
+            .join("ODETool Antoine")
+            .join("ODETool Antoine");
+        let collapsed =
+            collapse_redundant_workspace_name_segments(repeated, "ODETool Antoine");
+        assert_eq!(collapsed, base.join("ODETool Antoine"));
     }
 
     #[test]

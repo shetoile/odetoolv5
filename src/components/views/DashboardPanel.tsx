@@ -46,6 +46,7 @@ type DashboardWidgetDraft = {
   aggregation: DashboardAggregation;
   measureFieldId: string;
   groupFieldId: string;
+  secondaryGroupFieldId: string;
   displayFieldIds: string[];
   filterFieldId: string;
   filterOperator: DashboardFilterOperator;
@@ -73,6 +74,14 @@ type DashboardRecordWindowSpec =
       widgetNodeId: string;
       kind: "table_row";
       rowId: string;
+    }
+  | {
+      id: string;
+      key: string;
+      widgetNodeId: string;
+      kind: "matrix_cell";
+      rowLabel: string;
+      columnLabel: string;
     };
 
 type DashboardRecordWindowSeed =
@@ -92,6 +101,13 @@ type DashboardRecordWindowSeed =
       widgetNodeId: string;
       kind: "table_row";
       rowId: string;
+    }
+  | {
+      key: string;
+      widgetNodeId: string;
+      kind: "matrix_cell";
+      rowLabel: string;
+      columnLabel: string;
     };
 
 type DashboardRecordWindow = {
@@ -109,7 +125,8 @@ const MAX_RECORD_WINDOWS = 12;
 const WIDGET_TYPE_OPTIONS: Array<{ value: DashboardWidgetType; label: string }> = [
   { value: "metric", label: "Metric" },
   { value: "distribution", label: "Distribution" },
-  { value: "table", label: "Table" }
+  { value: "table", label: "Table" },
+  { value: "matrix", label: "Matrix" }
 ];
 
 const AGGREGATION_OPTIONS: Array<{ value: DashboardAggregation; label: string }> = [
@@ -139,6 +156,7 @@ function buildWidgetDraft(widget: DashboardWidgetDefinition): DashboardWidgetDra
     aggregation: widget.aggregation,
     measureFieldId: widget.measureFieldId ?? "",
     groupFieldId: widget.groupFieldId ?? "",
+    secondaryGroupFieldId: widget.secondaryGroupFieldId ?? "",
     displayFieldIds: widget.displayFieldIds,
     filterFieldId: widget.filterFieldId ?? "",
     filterOperator: widget.filterOperator,
@@ -162,6 +180,7 @@ function buildWidgetProperties(draft: DashboardWidgetDraft): Record<string, unkn
     odeDashboardAggregation: draft.aggregation,
     odeDashboardMeasureFieldId: draft.measureFieldId.trim(),
     odeDashboardGroupFieldId: draft.groupFieldId.trim(),
+    odeDashboardSecondaryGroupFieldId: draft.secondaryGroupFieldId.trim(),
     odeDashboardDisplayFieldIds: draft.displayFieldIds,
     odeDashboardFilterFieldId: draft.filterFieldId.trim(),
     odeDashboardFilterOperator: draft.filterOperator,
@@ -196,6 +215,11 @@ function normalizeRecordWindowSpec(value: unknown): DashboardRecordWindowSpec | 
   if (kind === "table_row") {
     const rowId = typeof record.rowId === "string" ? record.rowId.trim() : "";
     return rowId ? { id, key, widgetNodeId, kind, rowId } : null;
+  }
+  if (kind === "matrix_cell") {
+    const rowLabel = typeof record.rowLabel === "string" ? record.rowLabel.trim() : "";
+    const columnLabel = typeof record.columnLabel === "string" ? record.columnLabel.trim() : "";
+    return rowLabel || columnLabel ? { id, key, widgetNodeId, kind, rowLabel, columnLabel } : null;
   }
   return null;
 }
@@ -330,6 +354,20 @@ function resolveRecordWindowFromSpec(
     });
   }
 
+  if (spec.kind === "matrix_cell" && result.kind === "matrix") {
+    const row = result.rows.find((entry) => entry.label === spec.rowLabel) ?? null;
+    const cell = row?.cells.find((entry) => entry.label === spec.columnLabel) ?? null;
+    if (!cell) return null;
+    return buildRecordWindowFromRows({
+      spec,
+      title: `${widget.title} · ${spec.rowLabel} / ${spec.columnLabel}`,
+      subtitle: `${cell.rows.length} record${cell.rows.length === 1 ? "" : "s"}`,
+      rows: cell.rows,
+      fieldOptions: result.fieldOptions,
+      sourceLabel
+    });
+  }
+
   return null;
 }
 
@@ -404,6 +442,48 @@ function renderWidgetResult(result: DashboardWidgetResult) {
               );
             })
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (result.kind === "matrix") {
+    return (
+      <div className="min-h-[180px] rounded-[24px] border border-[rgba(66,178,255,0.24)] bg-[rgba(7,33,52,0.82)] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.22)]">
+        <div className="overflow-x-auto">
+          <div className="overflow-hidden rounded-2xl border border-[rgba(120,196,255,0.2)]">
+            <div
+              className="grid border-b border-[rgba(120,196,255,0.12)] bg-[rgba(9,26,43,0.92)] px-3 py-2 text-[0.72rem] font-medium uppercase tracking-[0.14em] text-[rgba(169,224,255,0.7)]"
+              style={{ gridTemplateColumns: `minmax(140px,1.1fr) repeat(${Math.max(result.columns.length, 1)}, minmax(100px, 1fr))` }}
+            >
+              <span className="truncate">{result.rowFieldLabel}</span>
+              {(result.columns.length > 0 ? result.columns : [result.columnFieldLabel || "Column"]).map((column) => (
+                <span key={column} className="truncate text-center">
+                  {column}
+                </span>
+              ))}
+            </div>
+            <div className="divide-y divide-[rgba(120,196,255,0.08)]">
+              {result.rows.length === 0 ? (
+                <div className="px-3 py-5 text-sm text-[rgba(188,225,255,0.72)]">No grouped rows yet.</div>
+              ) : (
+                result.rows.map((row) => (
+                  <div
+                    key={row.label}
+                    className="grid px-3 py-2 text-sm text-[#e8f7ff]"
+                    style={{ gridTemplateColumns: `minmax(140px,1.1fr) repeat(${Math.max(row.cells.length, 1)}, minmax(100px, 1fr))` }}
+                  >
+                    <span className="truncate font-medium text-[#dff4ff]">{row.label}</span>
+                    {row.cells.map((cell) => (
+                      <span key={cell.key} className="truncate text-center text-[#8ad3ff]">
+                        {cell.displayValue}
+                      </span>
+                    ))}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -531,6 +611,20 @@ function resolveRecordWindowFromSpecSafe(
     });
   }
 
+  if (spec.kind === "matrix_cell" && result.kind === "matrix") {
+    const row = result.rows.find((entry) => entry.label === spec.rowLabel) ?? null;
+    const cell = row?.cells.find((entry) => entry.label === spec.columnLabel) ?? null;
+    if (!cell) return null;
+    return buildRecordWindowFromRowsSafe({
+      spec,
+      title: `${widget.title} - ${spec.rowLabel} / ${spec.columnLabel}`,
+      subtitle: buildRecordCountLabel(cell.rows.length),
+      rows: cell.rows,
+      fieldOptions: result.fieldOptions,
+      sourceLabel
+    });
+  }
+
   return null;
 }
 
@@ -601,6 +695,61 @@ function renderInteractiveWidgetResult(options: {
               );
             })
           )}
+        </div>
+      </div>
+    );
+  }
+
+  if (result.kind === "matrix") {
+    return (
+      <div className="min-h-[180px] rounded-[24px] border border-[rgba(66,178,255,0.24)] bg-[rgba(7,33,52,0.82)] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.22)]">
+        <div className="overflow-x-auto">
+          <div className="overflow-hidden rounded-2xl border border-[rgba(120,196,255,0.2)]">
+            <div
+              className="grid border-b border-[rgba(120,196,255,0.12)] bg-[rgba(9,26,43,0.92)] px-3 py-2 text-[0.72rem] font-medium uppercase tracking-[0.14em] text-[rgba(169,224,255,0.7)]"
+              style={{ gridTemplateColumns: `minmax(140px,1.1fr) repeat(${Math.max(result.columns.length, 1)}, minmax(100px, 1fr))` }}
+            >
+              <span className="truncate">{result.rowFieldLabel}</span>
+              {(result.columns.length > 0 ? result.columns : [result.columnFieldLabel || "Column"]).map((column) => (
+                <span key={column} className="truncate text-center">
+                  {column}
+                </span>
+              ))}
+            </div>
+            <div className="divide-y divide-[rgba(120,196,255,0.08)]">
+              {result.rows.length === 0 ? (
+                <div className="px-3 py-5 text-sm text-[rgba(188,225,255,0.72)]">No grouped rows yet for this widget.</div>
+              ) : (
+                result.rows.map((row) => (
+                  <div
+                    key={row.label}
+                    className="grid px-3 py-2 text-sm text-[#e8f7ff]"
+                    style={{ gridTemplateColumns: `minmax(140px,1.1fr) repeat(${Math.max(row.cells.length, 1)}, minmax(100px, 1fr))` }}
+                  >
+                    <span className="truncate font-medium text-[#dff4ff]">{row.label}</span>
+                    {row.cells.map((cell) => (
+                      <button
+                        key={cell.key}
+                        type="button"
+                        className="rounded-lg px-2 py-1 text-center text-[#8ad3ff] transition hover:bg-[rgba(11,35,55,0.78)] hover:text-white"
+                        onClick={() => {
+                          onOpenRecordWindow({
+                            key: `matrix:${widget.nodeId}:${row.label}:${cell.label}`,
+                            widgetNodeId: widget.nodeId,
+                            kind: "matrix_cell",
+                            rowLabel: row.label,
+                            columnLabel: cell.label
+                          });
+                        }}
+                      >
+                        {cell.displayValue}
+                      </button>
+                    ))}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -811,6 +960,7 @@ export function DashboardPanel({
         aggregation: draft.aggregation,
         measureFieldId: draft.measureFieldId.trim() || null,
         groupFieldId: draft.groupFieldId.trim() || null,
+        secondaryGroupFieldId: draft.secondaryGroupFieldId.trim() || null,
         displayFieldIds: draft.displayFieldIds,
         filterFieldId: draft.filterFieldId.trim() || null,
         filterOperator: draft.filterOperator,
@@ -911,19 +1061,16 @@ export function DashboardPanel({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-[28px] border border-[rgba(76,184,255,0.18)] bg-[rgba(4,21,34,0.82)] px-6 py-5 shadow-[0_24px_70px_rgba(0,0,0,0.22)]">
-        <div className="flex items-center justify-between gap-4">
-          <div className="text-3xl font-semibold text-[#f4fbff]">{rootNode.name}</div>
-          <div className="flex items-center gap-3">
-            <DashboardIconButton
-              label={pendingCreate ? "Creating widget" : "Add Widget"}
-              onClick={() => {
-                void handleAddWidget();
-              }}
-            >
-              <PlusGlyphSmall />
-            </DashboardIconButton>
-          </div>
+      <section className="rounded-[28px] border border-[rgba(76,184,255,0.16)] bg-[rgba(4,21,34,0.58)] px-5 py-4 shadow-[0_22px_62px_rgba(0,0,0,0.18)]">
+        <div className="flex items-center justify-end">
+          <DashboardIconButton
+            label={pendingCreate ? "Creating widget" : "Add Widget"}
+            onClick={() => {
+              void handleAddWidget();
+            }}
+          >
+            <PlusGlyphSmall />
+          </DashboardIconButton>
         </div>
       </section>
 
@@ -1017,21 +1164,7 @@ export function DashboardPanel({
         </section>
       ) : null}
 
-      {widgetNodes.length === 0 ? (
-        <section className="rounded-[28px] border border-dashed border-[rgba(120,196,255,0.22)] bg-[rgba(6,24,38,0.52)] px-6 py-10 text-center">
-          <div className="text-lg font-medium text-[#edf8ff]">No widgets</div>
-          <div className="mt-5 flex justify-center">
-            <DashboardIconButton
-              label={pendingCreate ? "Creating widget" : "Add Widget"}
-              onClick={() => {
-                void handleAddWidget();
-              }}
-            >
-              <PlusGlyphSmall />
-            </DashboardIconButton>
-          </div>
-        </section>
-      ) : (
+      {widgetNodes.length > 0 ? (
         <section className="grid gap-5 xl:grid-cols-2">
           {widgetDefinitions.map((widget, index) => {
             const result = widgetResultsById.get(widget.nodeId) ?? evaluateDashboardWidget(widget, allNodes);
@@ -1118,7 +1251,7 @@ export function DashboardPanel({
             );
           })}
         </section>
-      )}
+      ) : null}
 
       {draft && editingWidgetId ? (
         <section
@@ -1166,7 +1299,15 @@ export function DashboardPanel({
                 value={draft.widgetType}
                 onChange={(event) => {
                   const widgetType = event.target.value as DashboardWidgetType;
-                  setDraft((current) => (current ? { ...current, widgetType } : current));
+                  setDraft((current) =>
+                    current
+                      ? {
+                          ...current,
+                          widgetType,
+                          secondaryGroupFieldId: widgetType === "matrix" ? current.secondaryGroupFieldId : ""
+                        }
+                      : current
+                  );
                 }}
                 className="ode-input w-full rounded-2xl px-4 py-3"
               >
@@ -1193,6 +1334,7 @@ export function DashboardPanel({
                           sourceNodeId: nextSource,
                           measureFieldId: "",
                           groupFieldId: "",
+                          secondaryGroupFieldId: "",
                           displayFieldIds: [],
                           filterFieldId: ""
                         }
@@ -1219,6 +1361,7 @@ export function DashboardPanel({
                           sourceNodeId,
                           measureFieldId: "",
                           groupFieldId: "",
+                          secondaryGroupFieldId: "",
                           displayFieldIds: [],
                           filterFieldId: ""
                         }
@@ -1273,7 +1416,11 @@ export function DashboardPanel({
             {draft.widgetType !== "metric" ? (
               <label className="space-y-2">
                 <span className="text-sm font-medium text-[#dbf3ff]">
-                  {draft.widgetType === "distribution" ? "Group field" : "Primary grouping field"}
+                  {draft.widgetType === "distribution"
+                    ? "Group field"
+                    : draft.widgetType === "matrix"
+                      ? "Column field"
+                      : "Primary grouping field"}
                 </span>
                 <select
                   value={draft.groupFieldId}
@@ -1307,9 +1454,32 @@ export function DashboardPanel({
               </label>
             )}
 
+            {draft.widgetType === "matrix" ? (
+              <label className="space-y-2">
+                <span className="text-sm font-medium text-[#dbf3ff]">Row field</span>
+                <select
+                  value={draft.secondaryGroupFieldId}
+                  onChange={(event) => {
+                    const secondaryGroupFieldId = event.target.value;
+                    setDraft((current) => (current ? { ...current, secondaryGroupFieldId } : current));
+                  }}
+                  className="ode-input w-full rounded-2xl px-4 py-3"
+                >
+                  <option value="">Select a field</option>
+                  {activeFieldOptions.map((field) => (
+                    <option key={`${field.id}-secondary`} value={field.id}>
+                      {field.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+
             {draft.widgetType !== "table" || draft.aggregation !== "count" ? (
               <label className="space-y-2">
-                <span className="text-sm font-medium text-[#dbf3ff]">Measure field</span>
+                <span className="text-sm font-medium text-[#dbf3ff]">
+                  {draft.widgetType === "matrix" ? "Cell value field" : "Measure field"}
+                </span>
                 <select
                   value={draft.measureFieldId}
                   onChange={(event) => {

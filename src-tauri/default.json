@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/capability.json",
   "identifier": "default",
   "description": "Default permissions for ODETool Pro",
-  "windows": ["main", "odetool-panel-*", "odetool-node-*"],
+  "windows": ["main", "odetool-panel-*", "odetool-node-*", "odetool-quick-app-*"],
   "permissions": [
     "core:default",
     "core:window:default",

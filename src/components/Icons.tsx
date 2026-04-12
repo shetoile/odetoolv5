@@ -1202,6 +1202,76 @@ export function TableGridGlyphSmall() {
   );
 }
 
+export function TableRowAddAboveGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="5.2" y="8" width="13.6" height="10.4" rx="1.7" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M5.2 13.2h13.6M9.8 8v10.4M14.4 8v10.4" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M12 3.8v3.2M10.4 5.4h3.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TableRowAddBelowGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="5.2" y="5.6" width="13.6" height="10.4" rx="1.7" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M5.2 10.8h13.6M9.8 5.6V16M14.4 5.6V16" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M12 17v3.2M10.4 18.6h3.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TableColumnAddLeftGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="8" y="5.2" width="10.4" height="13.6" rx="1.7" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M8 9.8h10.4M8 14.4h10.4M13.2 5.2v13.6" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M3.8 12h3.2M5.4 10.4v3.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TableColumnAddRightGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="5.6" y="5.2" width="10.4" height="13.6" rx="1.7" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M5.6 9.8H16M5.6 14.4H16M10.8 5.2v13.6" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M17 12h3.2M18.6 10.4v3.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TableRowDeleteGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="5.2" y="8" width="13.6" height="10.4" rx="1.7" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M5.2 13.2h13.6M9.8 8v10.4M14.4 8v10.4" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M10.2 5.4h3.6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TableColumnDeleteGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="8" y="5.2" width="10.4" height="13.6" rx="1.7" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M8 9.8h10.4M8 14.4h10.4M13.2 5.2v13.6" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M3.8 12H7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function TableDeleteGlyphSmall() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
+      <rect x="5.1" y="5.6" width="13.8" height="12.8" rx="1.8" fill="none" stroke="currentColor" strokeWidth="1.55" />
+      <path d="M5.1 10h13.8M5.1 14.4h13.8M9.7 5.6v12.8M14.3 5.6v12.8" fill="none" stroke="currentColor" strokeWidth="1.35" strokeLinecap="round" />
+      <path d="M8.4 8.9l7.2 6.2M15.6 8.9l-7.2 6.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function PageBreakGlyphSmall() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>

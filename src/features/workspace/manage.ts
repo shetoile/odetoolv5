@@ -25,6 +25,15 @@ export function resolveWorkspaceOpenFolderPath(project: ProjectSummary | null): 
   return path;
 }
 
+export function resolveWorkspaceSuggestedNameFromPath(path: string): string {
+  const trimmed = path.trim().replace(/^["']+|["']+$/g, "");
+  if (!trimmed) return "";
+  const normalized = trimmed.replace(/[\\/]+$/, "");
+  if (!normalized) return "";
+  const segments = normalized.split(/[\\/]+/).filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? "";
+}
+
 export function buildWorkspaceCreateInlineOpenState() {
   return {
     workspaceSettingsOpen: true,

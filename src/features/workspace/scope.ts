@@ -5,8 +5,26 @@ import {
   resolveNodeTreeNumbering
 } from "@/lib/nodeNumbering";
 import type { AppNode, ProjectSummary } from "@/lib/types";
+import type { DesktopViewMode, WorkspaceFocusMode, WorkspaceMode } from "@/features/workspace/viewMode";
 
 export const INTERNAL_WORKSPACE_ROOT_PREFIX = "workspace://internal/";
+
+export type WorkspaceScopeContext = {
+  activeProject: ProjectSummary | null;
+  activeProjectId: string | null;
+  activeProjectRootId: string | null;
+  activeWorkspaceRootId: string | null;
+  documentationModeActive: boolean;
+  documentationWorkspaceRootId: string | null;
+  fullProjectScopedNodeIds: Set<string> | null;
+  documentationScopedNodeIds: Set<string> | null;
+  projectScopedNodeIds: Set<string> | null;
+  workspaceMode: WorkspaceMode;
+  desktopViewMode: DesktopViewMode;
+  workspaceFocusMode: WorkspaceFocusMode;
+  libraryModeActive: boolean;
+  executionModeActive: boolean;
+};
 
 export function isInternalWorkspaceRootPath(path: string | null | undefined): boolean {
   const normalizedPath = path?.trim() ?? "";
@@ -22,6 +40,16 @@ export function resolveActiveProject(
 
 export function hasLinkedWorkspaceFolder(project: ProjectSummary | null): boolean {
   return Boolean(project && !isInternalWorkspaceRootPath(project.rootPath));
+}
+
+export function resolveActiveWorkspaceRootId(params: {
+  documentationModeActive: boolean;
+  documentationWorkspaceRootId: string | null;
+  activeProjectRootId: string | null;
+}): string | null {
+  return params.documentationModeActive
+    ? params.documentationWorkspaceRootId ?? params.activeProjectRootId
+    : params.activeProjectRootId;
 }
 
 export function collectProjectScopedNodeIds(
@@ -43,6 +71,71 @@ export function collectProjectScopedNodeIds(
   }
 
   return scoped;
+}
+
+export function resolveProjectScopedNodeIdsForView(params: {
+  documentationModeActive: boolean;
+  documentationWorkspaceRootId: string | null;
+  fullProjectScopedNodeIds: Set<string> | null;
+  documentationScopedNodeIds: Set<string> | null;
+}): Set<string> | null {
+  if (!params.fullProjectScopedNodeIds) return null;
+  if (params.documentationModeActive) {
+    if (!params.documentationWorkspaceRootId || !params.documentationScopedNodeIds) {
+      return new Set<string>();
+    }
+    return params.documentationScopedNodeIds;
+  }
+  if (!params.documentationWorkspaceRootId || !params.documentationScopedNodeIds) {
+    return params.fullProjectScopedNodeIds;
+  }
+
+  const visibleIds = new Set(params.fullProjectScopedNodeIds);
+  params.documentationScopedNodeIds.forEach((nodeId) => {
+    visibleIds.delete(nodeId);
+  });
+  return visibleIds;
+}
+
+export function createWorkspaceScopeContext(params: {
+  activeProject: ProjectSummary | null;
+  activeProjectId: string | null;
+  activeProjectRootId: string | null;
+  documentationModeActive: boolean;
+  documentationWorkspaceRootId: string | null;
+  fullProjectScopedNodeIds: Set<string> | null;
+  documentationScopedNodeIds: Set<string> | null;
+  workspaceMode: WorkspaceMode;
+  desktopViewMode: DesktopViewMode;
+  workspaceFocusMode: WorkspaceFocusMode;
+}): WorkspaceScopeContext {
+  const activeWorkspaceRootId = resolveActiveWorkspaceRootId({
+    documentationModeActive: params.documentationModeActive,
+    documentationWorkspaceRootId: params.documentationWorkspaceRootId,
+    activeProjectRootId: params.activeProjectRootId
+  });
+
+  return {
+    activeProject: params.activeProject,
+    activeProjectId: params.activeProjectId,
+    activeProjectRootId: params.activeProjectRootId,
+    activeWorkspaceRootId,
+    documentationModeActive: params.documentationModeActive,
+    documentationWorkspaceRootId: params.documentationWorkspaceRootId,
+    fullProjectScopedNodeIds: params.fullProjectScopedNodeIds,
+    documentationScopedNodeIds: params.documentationScopedNodeIds,
+    projectScopedNodeIds: resolveProjectScopedNodeIdsForView({
+      documentationModeActive: params.documentationModeActive,
+      documentationWorkspaceRootId: params.documentationWorkspaceRootId,
+      fullProjectScopedNodeIds: params.fullProjectScopedNodeIds,
+      documentationScopedNodeIds: params.documentationScopedNodeIds
+    }),
+    workspaceMode: params.workspaceMode,
+    desktopViewMode: params.desktopViewMode,
+    workspaceFocusMode: params.workspaceFocusMode,
+    libraryModeActive: params.desktopViewMode === "library",
+    executionModeActive: params.workspaceMode === "grid" && params.workspaceFocusMode === "execution"
+  };
 }
 
 type WorkspaceViewResolutionParams = {

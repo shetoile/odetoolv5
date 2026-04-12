@@ -9,6 +9,7 @@ import {
 } from "@/components/Icons";
 import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
 import { QuickAppIcon } from "@/components/quick-apps/QuickAppIcon";
+import type { HtmlAppTemplate } from "@/lib/htmlAppTemplates";
 import type { NodeQuickAppItem } from "@/lib/nodeQuickApps";
 import type { TranslationParams } from "@/lib/i18n";
 
@@ -18,12 +19,16 @@ interface NodeQuickAppsModalProps {
   t: TranslateFn;
   open: boolean;
   nodeLabel: string;
+  hintText?: string;
   items: NodeQuickAppItem[];
+  htmlTemplates?: HtmlAppTemplate[];
   saving?: boolean;
   onAdd: () => void;
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onChange: (id: string, patch: Partial<NodeQuickAppItem>) => void;
+  onPickLocalPath: (id: string) => void | Promise<void>;
+  onOpenHtmlTemplateManager?: () => void;
   onClose: () => void;
   onSave: () => void | Promise<void>;
 }
@@ -82,12 +87,16 @@ export function NodeQuickAppsModal({
   t,
   open,
   nodeLabel,
+  hintText,
   items,
+  htmlTemplates = [],
   saving = false,
   onAdd,
   onRemove,
   onMove,
   onChange,
+  onPickLocalPath,
+  onOpenHtmlTemplateManager,
   onClose,
   onSave
 }: NodeQuickAppsModalProps) {
@@ -161,6 +170,10 @@ export function NodeQuickAppsModal({
         </div>
 
         <div className="max-h-[68vh] overflow-auto px-6 py-5">
+          <div className="mb-4 rounded-[18px] border border-[rgba(88,197,255,0.14)] bg-[rgba(5,27,44,0.38)] px-4 py-3 text-[0.9rem] leading-6 text-[var(--ode-text-dim)]">
+            {hintText ?? t("quick_apps.modal_hint")}
+          </div>
+
           <div className="mb-4 flex items-center justify-end gap-3">
             <button type="button" className="ode-text-btn inline-flex h-10 items-center gap-2 px-4" onClick={onAdd}>
               <PlusGlyphSmall />
@@ -189,7 +202,7 @@ export function NodeQuickAppsModal({
                     </div>
 
                     <div className="min-w-0 flex-1 space-y-3">
-                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_220px_auto]">
                         <input
                           className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
                           value={item.label}
@@ -202,12 +215,37 @@ export function NodeQuickAppsModal({
                           value={item.kind}
                           onChange={(event) =>
                             onChange(item.id, {
-                              kind: event.target.value === "local_path" ? "local_path" : "url"
+                              kind:
+                                event.target.value === "local_path"
+                                  ? "local_path"
+                                  : event.target.value === "html_template"
+                                    ? "html_template"
+                                    : "url",
+                              launchMode: event.target.value === "html_template" ? "ode_window" : item.launchMode,
+                              target:
+                                event.target.value === "html_template" && !item.target
+                                  ? htmlTemplates[0]?.id ?? ""
+                                  : item.target
                             })
                           }
                         >
                           <option value="url">{t("quick_apps.kind_url")}</option>
                           <option value="local_path">{t("quick_apps.kind_local_path")}</option>
+                          <option value="html_template">HTML template</option>
+                        </select>
+
+                        <select
+                          className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
+                          value={item.kind === "html_template" ? "ode_window" : item.launchMode ?? "system"}
+                          onChange={(event) =>
+                            onChange(item.id, {
+                              launchMode: event.target.value === "ode_window" ? "ode_window" : "system"
+                            })
+                          }
+                          disabled={item.kind === "html_template"}
+                        >
+                          <option value="system">{t("quick_apps.launch_mode_system")}</option>
+                          <option value="ode_window">{t("quick_apps.launch_mode_ode_window")}</option>
                         </select>
 
                         <div className="flex items-center gap-2">
@@ -243,16 +281,77 @@ export function NodeQuickAppsModal({
                         </div>
                       </div>
 
-                      <input
-                        className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
-                        value={item.target}
-                        placeholder={
-                          item.kind === "local_path"
-                            ? t("quick_apps.target_placeholder_path")
-                            : t("quick_apps.target_placeholder_url")
-                        }
-                        onChange={(event) => onChange(item.id, { target: event.target.value })}
-                      />
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                        {item.kind === "html_template" ? (
+                          <select
+                            className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
+                            value={item.target}
+                            onChange={(event) => {
+                              const selectedTemplate = htmlTemplates.find((template) => template.id === event.target.value) ?? null;
+                              onChange(item.id, {
+                                target: event.target.value,
+                                launchMode: "ode_window",
+                                label: item.label.trim().length > 0 ? item.label : selectedTemplate?.label ?? item.label
+                              });
+                            }}
+                          >
+                            <option value="">Choose a shared HTML template</option>
+                            {htmlTemplates.map((template) => (
+                              <option key={template.id} value={template.id}>
+                                {template.label} (v{template.version})
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
+                            value={item.target}
+                            placeholder={
+                              item.kind === "local_path"
+                                ? t("quick_apps.target_placeholder_path")
+                                : t("quick_apps.target_placeholder_url")
+                            }
+                            onChange={(event) => onChange(item.id, { target: event.target.value })}
+                          />
+                        )}
+
+                        {item.kind === "local_path" ? (
+                          <button
+                            type="button"
+                            className="ode-text-btn inline-flex h-11 items-center justify-center px-4"
+                            onClick={() => {
+                              void onPickLocalPath(item.id);
+                            }}
+                            disabled={saving}
+                          >
+                            {t("quick_apps.pick_local_path")}
+                          </button>
+                        ) : item.kind === "html_template" ? (
+                          <button
+                            type="button"
+                            className="ode-text-btn inline-flex h-11 items-center justify-center px-4"
+                            onClick={() => {
+                              onOpenHtmlTemplateManager?.();
+                            }}
+                            disabled={saving}
+                          >
+                            Manage templates
+                          </button>
+                        ) : null}
+                      </div>
+
+                      {item.kind === "html_template" ? (
+                        <div className="text-[0.82rem] text-[var(--ode-text-dim)]">
+                          {item.target
+                            ? (() => {
+                                const selectedTemplate = htmlTemplates.find((template) => template.id === item.target) ?? null;
+                                return selectedTemplate
+                                  ? `Shared source: ${selectedTemplate.entryPath}`
+                                  : "This node app is linked to a missing HTML template.";
+                              })()
+                            : "Choose one shared HTML template. Every node linked to it will follow future updates."}
+                        </div>
+                      ) : null}
 
                       <div className="flex flex-wrap items-center gap-2">
                         <label className="ode-text-btn inline-flex h-9 cursor-pointer items-center gap-2 px-3">

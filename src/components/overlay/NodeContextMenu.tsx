@@ -32,9 +32,12 @@ interface NodeContextMenuProps {
   contextMenuGroupCanDelete: boolean;
   canDistributeToNAWorkspace: boolean;
   canCreateChantier: boolean;
+  chantierSeedItems: string[];
   canSaveAsOrganisationModel: boolean;
   canSaveAsDatabaseTemplate: boolean;
   restrictToFavoriteGroupsOnly: boolean;
+  onCreateChantierFromSeedItem: (item: string) => void;
+  onCreateChantierFromSeedSelection: (items: string[]) => void;
   onRunAction: (action: ContextMenuAction) => void;
 }
 
@@ -95,13 +98,18 @@ export function NodeContextMenu({
   contextMenuGroupCanDelete,
   canDistributeToNAWorkspace,
   canCreateChantier,
+  chantierSeedItems,
   canSaveAsOrganisationModel,
   canSaveAsDatabaseTemplate,
   restrictToFavoriteGroupsOnly,
+  onCreateChantierFromSeedItem,
+  onCreateChantierFromSeedSelection,
   onRunAction
 }: NodeContextMenuProps) {
   const menuRef = useRef<HTMLDivElement | null>(null);
   const [menuPlacement, setMenuPlacement] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
+  const [chantierMenuExpanded, setChantierMenuExpanded] = useState(false);
+  const [selectedChantierSeedItems, setSelectedChantierSeedItems] = useState<string[]>([]);
   const selectedOrContextNodeId = contextMenu?.nodeId ?? selectedNodeId;
   const contextNodeIsWorkspaceRoot = Boolean(contextMenu?.nodeId && workspaceRootIdSet.has(contextMenu.nodeId));
   const contextMenuIsWorkarea = contextMenu?.workareaMode === true;
@@ -159,6 +167,21 @@ export function NodeContextMenu({
       window.cancelAnimationFrame(frame);
     };
   }, [contextMenu]);
+
+  useEffect(() => {
+    setChantierMenuExpanded(false);
+    setSelectedChantierSeedItems([]);
+  }, [contextMenu?.nodeId, contextMenu?.x, contextMenu?.y]);
+
+  const orderedSelectedChantierSeedItems = chantierSeedItems.filter((item) =>
+    selectedChantierSeedItems.includes(item)
+  );
+
+  const toggleChantierSeedItem = (item: string) => {
+    setSelectedChantierSeedItems((current) =>
+      current.includes(item) ? current.filter((entry) => entry !== item) : [...current, item]
+    );
+  };
 
   useLayoutEffect(() => {
     if (!contextMenu) {
@@ -522,11 +545,79 @@ export function NodeContextMenu({
                   />
                 ) : null}
                 {canCreateChantier ? (
-                  <ContextMenuItem
-                    label={t("context.create_chantier")}
-                    action="create_chantier"
-                    onRunAction={onRunAction}
-                  />
+                  chantierSeedItems.length > 0 ? (
+                    <div className="ode-context-subgroup">
+                      <button
+                        type="button"
+                        className="ode-context-item"
+                        onMouseEnter={() => setChantierMenuExpanded(true)}
+                        onFocus={() => setChantierMenuExpanded(true)}
+                        onClick={() => setChantierMenuExpanded((current) => !current)}
+                      >
+                        <span className="ode-context-item-main">
+                          <span>{t("context.create_chantier")}</span>
+                        </span>
+                        <span className="ode-context-item-shortcut" aria-hidden="true">
+                          {chantierMenuExpanded ? "v" : ">"}
+                        </span>
+                      </button>
+                      {chantierMenuExpanded ? (
+                        <div className="ode-context-subpanel">
+                          {chantierSeedItems.map((item) => {
+                            const selected = selectedChantierSeedItems.includes(item);
+                            return (
+                              <div key={`chantier-seed-${item}`} className="ode-context-seed-row">
+                                <button
+                                  type="button"
+                                  className="ode-context-item ode-context-seed-label"
+                                  onClick={() => onCreateChantierFromSeedItem(item)}
+                                >
+                                  <span className="ode-context-item-main">
+                                    <span>{item}</span>
+                                  </span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ode-context-item ode-context-seed-toggle"
+                                  aria-pressed={selected}
+                                  aria-label={item}
+                                  onClick={(event) => {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    toggleChantierSeedItem(item);
+                                  }}
+                                >
+                                  <span
+                                    className={`ode-context-item-check${selected ? " ode-context-item-check-all" : ""}`}
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </div>
+                            );
+                          })}
+                          <div className="ode-context-separator" />
+                          <button
+                            type="button"
+                            className="ode-context-item"
+                            disabled={orderedSelectedChantierSeedItems.length === 0}
+                            onClick={() => onCreateChantierFromSeedSelection(orderedSelectedChantierSeedItems)}
+                          >
+                            <span className="ode-context-item-main">
+                              <span>
+                                {t("chantier.create_modal_confirm")} [{orderedSelectedChantierSeedItems.length}]
+                              </span>
+                            </span>
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ) : (
+                    <ContextMenuItem
+                      label={t("context.create_chantier")}
+                      action="create_chantier"
+                      onRunAction={onRunAction}
+                    />
+                  )
                 ) : null}
                 <div className="ode-context-separator" />
               </>

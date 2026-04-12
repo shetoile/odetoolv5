@@ -1,5 +1,6 @@
 import {
   Fragment,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -42,6 +43,13 @@ import {
   PlusGlyphSmall,
   QuoteGlyphSmall,
   TableGridGlyphSmall,
+  TableColumnAddLeftGlyphSmall,
+  TableColumnAddRightGlyphSmall,
+  TableColumnDeleteGlyphSmall,
+  TableDeleteGlyphSmall,
+  TableRowAddAboveGlyphSmall,
+  TableRowAddBelowGlyphSmall,
+  TableRowDeleteGlyphSmall,
   TrashGlyphSmall,
   TextBoldGlyphSmall,
   TextItalicGlyphSmall,
@@ -92,6 +100,7 @@ import {
   computeProcedurePreviewRecordValues,
   PROCEDURE_RECORDS_PROPERTY_KEY,
   buildProcedureDatabaseModel,
+  buildDefaultProcedurePriorityOptions,
   buildProcedureFieldDefinition as buildSharedProcedureFieldDefinition,
   decodeProcedureRecordToken,
   decodeProcedureNodeToken,
@@ -103,11 +112,14 @@ import {
   isProcedureNodeLinkFieldType,
   isProcedureOrganizationLinkFieldType,
   isProcedureRelationFieldType,
+  normalizeProcedureFieldAutoValue,
   normalizeProcedureFieldType as normalizeSharedFieldType,
   readProcedureRecords as readSharedProcedureRecords,
   type ProcedureAutomationRole,
+  type ProcedureFieldAutoValue,
   type ProcedureFieldDefinition,
   type ProcedureFieldType,
+  type ProcedurePriorityOption,
   type ProcedureRecord,
   type ProcedureRecordValue,
   type ProcedureTableDefinition
@@ -122,6 +134,7 @@ import {
 } from "@/lib/nodeQuickApps";
 import { ROOT_PARENT_ID, isFileLikeNode, type AppNode, type ProjectSummary } from "@/lib/types";
 import type { LanguageCode } from "@/lib/i18n";
+import type { UserAccountSummary } from "@/lib/userAccounts";
 
 type ProcedureFieldEntry = ProcedureFieldDefinition & {
   node: AppNode;
@@ -142,7 +155,11 @@ type FieldEditorDraft = {
   relationTargetNodeId: string;
   relationDisplayFieldIds: string[];
   formulaExpression: string;
+  priorityOptionsText: string;
+  priorityDefaultValue: string;
+  priorityTooltip: string;
   automationRole: ProcedureAutomationRole;
+  autoValue: ProcedureFieldAutoValue;
 };
 
 type SectionTextAlignment = "left" | "center" | "right" | "justify";
@@ -328,6 +345,8 @@ type SectionEditorContextMenuItem =
 interface ProcedureBuilderPanelProps {
   language: LanguageCode;
   workspaceName: string | null;
+  currentUserDisplayName?: string | null;
+  availableUsers?: UserAccountSummary[];
   rootNode: AppNode | null;
   selectedNode: AppNode | null;
   canReadNode?: (nodeId: string) => boolean;
@@ -336,6 +355,7 @@ interface ProcedureBuilderPanelProps {
   byParent: Map<string | null, AppNode[]>;
   scopedNumbering: Map<string, string>;
   allNodes: AppNode[];
+  databaseNodes?: AppNode[];
   projects: ProjectSummary[];
   activeProjectRootId: string | null;
   onSelectNode: (nodeId: string) => void;
@@ -545,6 +565,40 @@ function SectionEditorToolbarIconButton({
   );
 }
 
+type SectionEditorTableActionIconButtonProps = {
+  label: string;
+  danger?: boolean;
+  onMouseDown?: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+  onClick?: () => void;
+  children: ReactNode;
+};
+
+function SectionEditorTableActionIconButton({
+  label,
+  danger = false,
+  onMouseDown,
+  onClick,
+  children
+}: SectionEditorTableActionIconButtonProps) {
+  const buttonClassName = danger
+    ? "flex aspect-square w-full items-center justify-center rounded-[11px] border border-[rgba(255,143,143,0.18)] bg-[rgba(67,24,24,0.4)] text-[#ffd5d5] transition hover:border-[rgba(255,167,167,0.28)] hover:bg-[rgba(92,31,31,0.52)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(255,167,167,0.22)] [&_svg]:h-[18px] [&_svg]:w-[18px]"
+    : "flex aspect-square w-full items-center justify-center rounded-[11px] border border-[rgba(126,154,176,0.16)] bg-[rgba(8,24,37,0.84)] text-[var(--ode-text)] transition hover:border-[rgba(95,220,255,0.28)] hover:bg-[rgba(14,38,56,0.96)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(95,220,255,0.22)] [&_svg]:h-[18px] [&_svg]:w-[18px]";
+
+  return (
+    <OdeTooltip label={label}>
+      <button
+        type="button"
+        className={buttonClassName}
+        aria-label={label}
+        onMouseDown={onMouseDown}
+        onClick={onClick}
+      >
+        {children}
+      </button>
+    </OdeTooltip>
+  );
+}
+
 function SectionEditorContextMenu({
   menu,
   items,
@@ -714,6 +768,7 @@ const FIELD_TYPE_OPTIONS: Array<{ value: ProcedureFieldType; label: string }> = 
   { value: "short_text", label: "Short Text" },
   { value: "long_text", label: "Long Text" },
   { value: "rich_text", label: "Rich Text" },
+  { value: "message", label: "Message" },
   { value: "number", label: "Number" },
   { value: "year", label: "Year" },
   { value: "month", label: "Month" },
@@ -725,11 +780,16 @@ const FIELD_TYPE_OPTIONS: Array<{ value: ProcedureFieldType; label: string }> = 
   { value: "time", label: "Time" },
   { value: "datetime", label: "Date and Time" },
   { value: "duration", label: "Duration" },
+  { value: "priority", label: "Priority" },
   { value: "single_select", label: "Select" },
   { value: "multi_select", label: "Multi Select" },
+  { value: "tags", label: "Tags" },
   { value: "yes_no", label: "Yes / No" },
   { value: "email", label: "Email" },
   { value: "phone", label: "Phone" },
+  { value: "url", label: "Link (URL)" },
+  { value: "user_ref", label: "User" },
+  { value: "user_list", label: "User List" },
   { value: "identifier", label: "Identifier" },
   { value: "attachment", label: "Attachment" },
   { value: "table", label: "Table" },
@@ -754,6 +814,68 @@ const AUTOMATION_ROLE_OPTIONS: Array<{ value: ProcedureAutomationRole; label: st
   { value: "execution_due_date", label: "Execution Due Date" },
   { value: "execution_note", label: "Execution Note" }
 ];
+
+const AUTO_VALUE_OPTIONS: Array<{ value: ProcedureFieldAutoValue; label: string }> = [
+  { value: "none", label: "None" },
+  { value: "current_user", label: "Current User" },
+  { value: "today", label: "Today" },
+  { value: "now", label: "Current Date & Time" }
+];
+
+const DEFAULT_PRIORITY_OPTIONS = buildDefaultProcedurePriorityOptions();
+
+function formatPriorityOptionsText(options: ProcedurePriorityOption[]): string {
+  return options
+    .map((option) =>
+      [
+        option.value,
+        option.icon,
+        option.color,
+        String(option.rank),
+        String(option.score),
+        option.reviewDays === null ? "" : String(option.reviewDays),
+        option.escalate ? "yes" : "no",
+        option.tooltip
+      ].join(" | ")
+    )
+    .join("\n");
+}
+
+function parsePriorityOptionsText(value: string): ProcedurePriorityOption[] {
+  const lines = value
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    return DEFAULT_PRIORITY_OPTIONS;
+  }
+
+  const parsed = lines
+    .map((line, index) => {
+      const [labelPart, iconPart, colorPart, rankPart, scorePart, reviewDaysPart, escalatePart, ...tooltipParts] = line
+        .split("|")
+        .map((part) => part.trim());
+      const valueLabel = labelPart || "";
+      if (!valueLabel) return null;
+      const rank = Number(rankPart);
+      const score = Number(scorePart);
+      const reviewDays = Number(reviewDaysPart);
+      return {
+        value: valueLabel,
+        icon: iconPart || "",
+        color: colorPart || DEFAULT_PRIORITY_OPTIONS[Math.min(index, DEFAULT_PRIORITY_OPTIONS.length - 1)]?.color || "#5dc2ff",
+        rank: Number.isFinite(rank) ? rank : index + 1,
+        score: Number.isFinite(score) ? score : index + 1,
+        reviewDays: Number.isFinite(reviewDays) ? reviewDays : null,
+        escalate: /^(1|true|yes|y)$/i.test(escalatePart || ""),
+        tooltip: tooltipParts.join(" | ")
+      } satisfies ProcedurePriorityOption;
+    })
+    .filter((option): option is ProcedurePriorityOption => option !== null)
+    .sort((left, right) => left.rank - right.rank || left.value.localeCompare(right.value));
+
+  return parsed.length > 0 ? parsed : DEFAULT_PRIORITY_OPTIONS;
+}
 
 const SECTION_EDITOR_STYLE_OPTIONS: Array<{
   value: SectionEditorBlockStyle;
@@ -817,11 +939,15 @@ function normalizeFieldType(value: unknown): ProcedureFieldType {
 }
 
 function fieldTypeSupportsOptions(type: ProcedureFieldType): boolean {
-  return type === "single_select" || type === "multi_select" || type === "table";
+  return type === "single_select" || type === "multi_select" || type === "tags" || type === "table";
+}
+
+function fieldTypeUsesPrioritySettings(type: ProcedureFieldType): boolean {
+  return type === "priority";
 }
 
 function fieldTypeUsesTextarea(type: ProcedureFieldType): boolean {
-  return type === "long_text" || type === "rich_text" || type === "duration";
+  return type === "long_text" || type === "rich_text" || type === "duration" || type === "message";
 }
 
 function fieldTypeUsesNumericInput(type: ProcedureFieldType): boolean {
@@ -835,12 +961,58 @@ function fieldTypeUsesNumericInput(type: ProcedureFieldType): boolean {
   );
 }
 
+function fieldTypeAllowsAutoValue(type: ProcedureFieldType): boolean {
+  return type === "date" || type === "time" || type === "datetime" || type === "user_ref";
+}
+
+function resolveAutoValueByFieldType(type: ProcedureFieldType, value: ProcedureFieldAutoValue): ProcedureFieldAutoValue {
+  if (!fieldTypeAllowsAutoValue(type)) return "none";
+  if (value === "current_user" && type !== "user_ref") return "none";
+  if (value === "today" && type !== "date") return "none";
+  if (value === "now" && type !== "date" && type !== "time" && type !== "datetime") return "none";
+  return normalizeProcedureFieldAutoValue(value);
+}
+
+function getFieldTypeOptionFallback(type: ProcedureFieldType): string[] {
+  if (type === "table") return DEFAULT_TABLE_COLUMNS;
+  if (type === "tags") return [];
+  return DEFAULT_SELECT_OPTIONS;
+}
+
 function normalizeOptionLines(value: string, fallback: string[]): string[] {
   const cleaned = value
     .split(/\r?\n/g)
     .map((item) => item.trim())
     .filter(Boolean);
   return cleaned.length > 0 ? cleaned : fallback;
+}
+
+function normalizeTagValues(value: string): string[] {
+  return Array.from(
+    new Set(
+      value
+        .split(/[,\n;]/g)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function buildProcedureDateAutoValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function buildProcedureTimeAutoValue(date: Date): string {
+  const hours = `${date.getHours()}`.padStart(2, "0");
+  const minutes = `${date.getMinutes()}`.padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function buildProcedureDateTimeAutoValue(date: Date): string {
+  return `${buildProcedureDateAutoValue(date)}T${buildProcedureTimeAutoValue(date)}`;
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {
@@ -908,11 +1080,19 @@ function normalizeDraftValueForField(
   entry: Pick<ProcedureFieldDefinition, "type" | "options">,
   currentValue: ProcedureRecordValue | undefined
 ): ProcedureRecordValue {
-  if (entry.type === "multi_select" || entry.type === "relation_list" || isProcedureOrganizationLinkFieldType(entry.type)) {
+  if (
+    entry.type === "multi_select" ||
+    entry.type === "tags" ||
+    entry.type === "user_list" ||
+    entry.type === "relation_list" ||
+    isProcedureOrganizationLinkFieldType(entry.type)
+  ) {
     return Array.isArray(currentValue)
       ? currentValue.filter((item): item is string => typeof item === "string")
       : typeof currentValue === "string" && currentValue.trim().length > 0
-        ? [currentValue]
+        ? entry.type === "tags" || entry.type === "user_list"
+          ? normalizeTagValues(currentValue)
+          : [currentValue]
         : [];
   }
   if (entry.type === "attachment") {
@@ -1523,7 +1703,13 @@ function buildFieldEditorDraft(entry: ProcedureFieldEntry): FieldEditorDraft {
     relationTargetNodeId: entry.relationTargetNodeId ?? "",
     relationDisplayFieldIds: entry.relationDisplayFieldIds ?? [],
     formulaExpression: entry.formulaExpression,
-    automationRole: entry.automationRole
+    priorityOptionsText: formatPriorityOptionsText(
+      entry.priorityOptions.length > 0 ? entry.priorityOptions : buildDefaultProcedurePriorityOptions(entry.options)
+    ),
+    priorityDefaultValue: entry.priorityDefaultValue,
+    priorityTooltip: entry.priorityTooltip,
+    automationRole: entry.automationRole,
+    autoValue: entry.autoValue
   };
 }
 
@@ -1534,7 +1720,7 @@ function getProcedureConditionalVisibilityOptions(entry: Pick<ProcedureFieldDefi
   if (entry.type === "month") {
     return [...MONTH_FIELD_OPTIONS];
   }
-  if (entry.type === "single_select" || entry.type === "multi_select") {
+  if (entry.type === "priority" || entry.type === "single_select" || entry.type === "multi_select") {
     return entry.options.length > 0 ? entry.options : DEFAULT_SELECT_OPTIONS;
   }
   return [];
@@ -1586,6 +1772,7 @@ function isProcedureFieldCompatibleForAutofill(
     "time",
     "datetime",
     "duration",
+    "priority",
     "single_select",
     "yes_no",
     "email",
@@ -3426,6 +3613,7 @@ function renderInputType(fieldType: ProcedureFieldType): HTMLInputElement["type"
   if (fieldType === "datetime") return "datetime-local";
   if (fieldType === "email") return "email";
   if (fieldType === "phone") return "tel";
+  if (fieldType === "url") return "url";
   if (fieldTypeUsesNumericInput(fieldType)) return "number";
   return "text";
 }
@@ -3503,6 +3691,8 @@ function getDirectSectionChildren(node: AppNode, byParent: Map<string | null, Ap
 export function ProcedureBuilderPanel({
   language,
   workspaceName,
+  currentUserDisplayName,
+  availableUsers = [],
   rootNode,
   selectedNode,
   canReadNode,
@@ -3511,6 +3701,7 @@ export function ProcedureBuilderPanel({
   byParent,
   scopedNumbering,
   allNodes,
+  databaseNodes,
   projects,
   activeProjectRootId,
   onSelectNode,
@@ -3714,7 +3905,10 @@ export function ProcedureBuilderPanel({
     () => buildSectionEditorRichDocumentStyle(sectionEditorFormattingDefaults, sectionEditorHeadingStyleDefaults),
     [sectionEditorFormattingDefaults, sectionEditorHeadingStyleDefaults]
   );
-  const procedureDatabaseModel = useMemo(() => buildProcedureDatabaseModel(allNodes), [allNodes]);
+  const procedureDatabaseModel = useMemo(
+    () => buildProcedureDatabaseModel(databaseNodes ?? allNodes),
+    [allNodes, databaseNodes]
+  );
   const procedureDatabaseTables = useMemo(() => procedureDatabaseModel.tables, [procedureDatabaseModel]);
   const procedureNodeLinkCandidates = useMemo(
     () =>
@@ -3781,6 +3975,72 @@ export function ProcedureBuilderPanel({
       values: normalizedRecordEditorDraftValues
     });
   }, [allNodes, normalizedRecordEditorDraftValues, recordEditorParentNode, recordEditorRecordId]);
+  const procedureUserOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const user of availableUsers) {
+      if (user.disabled) continue;
+      const baseLabel = user.displayName.trim() || user.username.trim() || user.userId;
+      counts.set(baseLabel, (counts.get(baseLabel) ?? 0) + 1);
+    }
+    return availableUsers
+      .filter((user) => !user.disabled)
+      .map((user) => {
+        const baseLabel = user.displayName.trim() || user.username.trim() || user.userId;
+        const label =
+          (counts.get(baseLabel) ?? 0) > 1 && user.username.trim().length > 0
+            ? `${baseLabel} (@${user.username.trim()})`
+            : baseLabel;
+        return {
+          value: label,
+          label
+        };
+      });
+  }, [availableUsers]);
+  const currentProcedureUserLabel = useMemo(() => {
+    const trimmed = currentUserDisplayName?.trim() ?? "";
+    if (trimmed.length > 0) return trimmed;
+    return procedureUserOptions[0]?.value ?? "";
+  }, [currentUserDisplayName, procedureUserOptions]);
+  const buildAutoValueForField = useCallback(
+    (entry: Pick<ProcedureFieldDefinition, "type" | "autoValue" | "priorityDefaultValue">): ProcedureRecordValue | undefined => {
+      if (entry.type === "priority" && entry.priorityDefaultValue.trim().length > 0) {
+        return entry.priorityDefaultValue.trim();
+      }
+      if (entry.autoValue === "none") return undefined;
+      const now = new Date();
+      if (entry.autoValue === "current_user") {
+        if (entry.type !== "user_ref" || currentProcedureUserLabel.length === 0) return undefined;
+        return currentProcedureUserLabel;
+      }
+      if (entry.autoValue === "today") {
+        if (entry.type !== "date") return undefined;
+        return buildProcedureDateAutoValue(now);
+      }
+      if (entry.autoValue === "now") {
+        if (entry.type === "date") return buildProcedureDateAutoValue(now);
+        if (entry.type === "time") return buildProcedureTimeAutoValue(now);
+        if (entry.type === "datetime") return buildProcedureDateTimeAutoValue(now);
+      }
+      return undefined;
+    },
+    [currentProcedureUserLabel]
+  );
+  const applyFieldAutoDefaults = useCallback(
+    (
+      fields: ProcedureFieldEntry[],
+      values: Record<string, ProcedureRecordValue>
+    ): Record<string, ProcedureRecordValue> => {
+      const nextValues = { ...values };
+      for (const entry of fields) {
+        if (!isEmptyRecordValue(nextValues[entry.node.id])) continue;
+        const autoValue = buildAutoValueForField(entry);
+        if (autoValue === undefined) continue;
+        nextValues[entry.node.id] = autoValue;
+      }
+      return nextValues;
+    },
+    [buildAutoValueForField]
+  );
   const recordRelationChoicesByFieldId = useMemo(() => {
     const optionsByFieldId = new Map<
       string,
@@ -3902,14 +4162,20 @@ export function ProcedureBuilderPanel({
       return nextValue;
     }
 
-    if (entry.type === "multi_select") {
-      const options = entry.options.length > 0 ? entry.options : DEFAULT_SELECT_OPTIONS;
+    if (entry.type === "multi_select" || entry.type === "tags") {
+      const options = entry.options.length > 0 ? entry.options : entry.type === "tags" ? [] : DEFAULT_SELECT_OPTIONS;
       return splitProcedureImportValues(trimmed).map((item) => {
         const normalizedItem = normalizeProcedureImportKey(item);
-        return (
-          options.find((option) => normalizeProcedureImportKey(option) === normalizedItem) ?? item
-        );
+        return options.find((option) => normalizeProcedureImportKey(option) === normalizedItem) ?? item;
       });
+    }
+
+    if (entry.type === "user_list") {
+      return splitProcedureImportValues(trimmed);
+    }
+
+    if (entry.type === "user_ref") {
+      return trimmed;
     }
 
     if (entry.type === "yes_no") {
@@ -3920,7 +4186,7 @@ export function ProcedureBuilderPanel({
       return trimmed;
     }
 
-    if (entry.type === "single_select") {
+    if (entry.type === "priority" || entry.type === "single_select") {
       if (!trimmed) return "";
       const normalized = normalizeProcedureImportKey(trimmed);
       return entry.options.find((option) => normalizeProcedureImportKey(option) === normalized) ?? trimmed;
@@ -4639,7 +4905,7 @@ export function ProcedureBuilderPanel({
     const fields = getDirectFieldEntries(node, byParent).filter((entry) => canReadProcedureNode(entry.node.id));
     setRecordEditorParentNodeId(node.id);
     setRecordEditorRecordId(null);
-    setDraftValues(mergeDraftValues(fields, {}));
+    setDraftValues(applyFieldAutoDefaults(fields, mergeDraftValues(fields, {})));
     setRecordEditorOpen(true);
     setNotice(null);
   };
@@ -4652,7 +4918,7 @@ export function ProcedureBuilderPanel({
     const fields = getDirectFieldEntries(node, byParent).filter((entry) => canReadProcedureNode(entry.node.id));
     setRecordEditorParentNodeId(node.id);
     setRecordEditorRecordId(record.id);
-    setDraftValues(mergeDraftValues(fields, record.values));
+    setDraftValues(applyFieldAutoDefaults(fields, mergeDraftValues(fields, record.values)));
     setRecordEditorOpen(true);
     setNotice(null);
   };
@@ -4683,8 +4949,8 @@ export function ProcedureBuilderPanel({
 
   useEffect(() => {
     if (!recordEditorOpen || recordEditorFields.length === 0) return;
-    setDraftValues((current) => mergeDraftValues(recordEditorFields, current));
-  }, [recordEditorFields, recordEditorOpen]);
+    setDraftValues((current) => applyFieldAutoDefaults(recordEditorFields, mergeDraftValues(recordEditorFields, current)));
+  }, [applyFieldAutoDefaults, recordEditorFields, recordEditorOpen]);
 
   useEffect(() => {
     if (!requestedFieldOrderNodeId || !rootNode) return;
@@ -8298,12 +8564,21 @@ export function ProcedureBuilderPanel({
     const currentNode = subtreeNodeMap.get(fieldEditorNodeId) ?? null;
     const trimmedLabel = fieldEditorDraft.label.trim() || "New Field";
     const nextType = fieldEditorDraft.type;
-    const nextOptions = fieldTypeSupportsOptions(nextType)
-      ? normalizeOptionLines(
-          fieldEditorDraft.optionsText,
-          nextType === "table" ? DEFAULT_TABLE_COLUMNS : DEFAULT_SELECT_OPTIONS
-        )
+    const nextPriorityOptions = fieldTypeUsesPrioritySettings(nextType)
+      ? parsePriorityOptionsText(fieldEditorDraft.priorityOptionsText)
       : [];
+    const nextOptions = fieldTypeUsesPrioritySettings(nextType)
+      ? nextPriorityOptions.map((option) => option.value)
+      : fieldTypeSupportsOptions(nextType)
+        ? normalizeOptionLines(fieldEditorDraft.optionsText, getFieldTypeOptionFallback(nextType))
+        : [];
+    const nextPriorityDefaultValue =
+      nextType === "priority" && nextOptions.includes(fieldEditorDraft.priorityDefaultValue.trim())
+        ? fieldEditorDraft.priorityDefaultValue.trim()
+        : nextType === "priority"
+          ? nextOptions[0] ?? ""
+          : "";
+    const nextAutoValue = resolveAutoValueByFieldType(nextType, fieldEditorDraft.autoValue);
     setFieldEditorSaving(true);
     try {
       await onRenameNodeTitle(fieldEditorNodeId, trimmedLabel);
@@ -8345,7 +8620,11 @@ export function ProcedureBuilderPanel({
           isProcedureFormulaFieldType(nextType) && fieldEditorDraft.formulaExpression.trim().length > 0
             ? fieldEditorDraft.formulaExpression.trim()
             : "",
+        odeProcedurePriorityOptions: nextType === "priority" ? nextPriorityOptions : [],
+        odeProcedurePriorityDefaultValue: nextPriorityDefaultValue,
+        odeProcedurePriorityTooltip: nextType === "priority" ? fieldEditorDraft.priorityTooltip.trim() : "",
         odeProcedureAutomationRole: fieldEditorDraft.automationRole,
+        odeProcedureAutoValue: nextAutoValue,
         odeProcedureTableRows:
           nextType === "table"
             ? Array.isArray(currentNode?.properties?.odeProcedureTableRows)
@@ -8628,8 +8907,9 @@ export function ProcedureBuilderPanel({
       setNotice("The active role cannot edit records in this table.");
       return;
     }
+    const nextValues = applyFieldAutoDefaults(recordEditorFields, { ...normalizedRecordEditorDraftValues });
     const missingRequiredField = visibleRecordEditorFields.find(
-      (entry) => entry.required && !isProcedureFormulaFieldType(entry.type) && isEmptyRecordValue(draftValues[entry.node.id])
+      (entry) => entry.required && !isProcedureFormulaFieldType(entry.type) && isEmptyRecordValue(nextValues[entry.node.id])
     );
     if (missingRequiredField) {
       setNotice(`${missingRequiredField.node.name} is required.`);
@@ -8640,7 +8920,6 @@ export function ProcedureBuilderPanel({
       recordEditorRecordId !== null
         ? currentRecords.find((record) => record.id === recordEditorRecordId) ?? null
         : null;
-    const nextValues = { ...normalizedRecordEditorDraftValues };
     const persistedRecords = buildPersistedProcedureRecords(
       recordEditorParentNode.id,
       recordEditorFields,
@@ -8909,6 +9188,129 @@ export function ProcedureBuilderPanel({
       </div>
     );
 
+    if (entry.type === "user_ref") {
+      const selectedValue = typeof value === "string" ? value : "";
+      return (
+        <label
+          key={fieldId}
+          className="block rounded-[24px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.58)] px-4 py-4"
+        >
+          {commonLabel}
+          {procedureUserOptions.length > 0 ? (
+            <select
+              className="ode-input h-11 w-full rounded-[16px] px-4"
+              value={selectedValue}
+              onChange={(event) => handleFieldValueChange(fieldId, event.target.value)}
+            >
+              <option value="">{entry.placeholder || "Select a user"}</option>
+              {procedureUserOptions.map((option) => (
+                <option key={`${fieldId}-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              className="ode-input h-11 w-full rounded-[16px] px-4"
+              placeholder={entry.placeholder || "Enter a user"}
+              value={selectedValue}
+              onChange={(event) => handleFieldValueChange(fieldId, event.target.value)}
+            />
+          )}
+        </label>
+      );
+    }
+
+    if (entry.type === "user_list") {
+      const selectedValues = Array.isArray(value) ? value : normalizeTagValues(typeof value === "string" ? value : "");
+      return (
+        <div
+          key={fieldId}
+          className="rounded-[24px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.58)] px-4 py-4"
+        >
+          {commonLabel}
+          {procedureUserOptions.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {procedureUserOptions.map((option) => {
+                const checked = selectedValues.includes(option.value);
+                return (
+                  <button
+                    key={`${fieldId}-${option.value}`}
+                    type="button"
+                    className={`rounded-full border px-3 py-1.5 text-[0.82rem] transition ${
+                      checked
+                        ? "border-[var(--ode-border-accent)] bg-[rgba(21,111,156,0.32)] text-[var(--ode-text)]"
+                        : "border-[var(--ode-border)] bg-[rgba(4,27,43,0.42)] text-[var(--ode-text-muted)]"
+                    }`}
+                    onClick={() => {
+                      const nextValue = checked
+                        ? selectedValues.filter((item) => item !== option.value)
+                        : [...selectedValues, option.value];
+                      handleFieldValueChange(fieldId, Array.from(new Set(nextValue)));
+                    }}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <textarea
+              className="ode-input min-h-[120px] w-full rounded-[18px] px-4 py-3"
+              placeholder={entry.placeholder || "Enter users separated by commas"}
+              value={selectedValues.join(", ")}
+              onChange={(event) => handleFieldValueChange(fieldId, normalizeTagValues(event.target.value))}
+            />
+          )}
+        </div>
+      );
+    }
+
+    if (entry.type === "tags") {
+      const selectedValues = Array.isArray(value) ? value : normalizeTagValues(typeof value === "string" ? value : "");
+      return (
+        <div
+          key={fieldId}
+          className="rounded-[24px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.58)] px-4 py-4"
+        >
+          {commonLabel}
+          <textarea
+            className="ode-input min-h-[120px] w-full rounded-[18px] px-4 py-3"
+            placeholder={entry.placeholder || "Enter tags separated by commas"}
+            value={selectedValues.join(", ")}
+            onChange={(event) => handleFieldValueChange(fieldId, normalizeTagValues(event.target.value))}
+          />
+          {entry.options.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {entry.options.map((option) => {
+                const checked = selectedValues.includes(option);
+                return (
+                  <button
+                    key={`${fieldId}-tag-${option}`}
+                    type="button"
+                    className={`rounded-full border px-3 py-1.5 text-[0.82rem] transition ${
+                      checked
+                        ? "border-[var(--ode-border-accent)] bg-[rgba(21,111,156,0.32)] text-[var(--ode-text)]"
+                        : "border-[var(--ode-border)] bg-[rgba(4,27,43,0.42)] text-[var(--ode-text-muted)]"
+                    }`}
+                    onClick={() => {
+                      const nextValue = checked
+                        ? selectedValues.filter((item) => item !== option)
+                        : [...selectedValues, option];
+                      handleFieldValueChange(fieldId, Array.from(new Set(nextValue)));
+                    }}
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+
     if (entry.type === "multi_select") {
       const selectedValues = Array.isArray(value) ? value : [];
       const options = entry.options.length > 0 ? entry.options : DEFAULT_SELECT_OPTIONS;
@@ -8943,6 +9345,43 @@ export function ProcedureBuilderPanel({
             })}
           </div>
         </label>
+      );
+    }
+
+    if (entry.type === "priority") {
+      const selectedValue = typeof value === "string" ? value : "";
+      const options =
+        entry.priorityOptions.length > 0 ? entry.priorityOptions : buildDefaultProcedurePriorityOptions(entry.options);
+      return (
+        <div
+          key={fieldId}
+          className="rounded-[24px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.58)] px-4 py-4"
+          title={entry.priorityTooltip || undefined}
+        >
+          {commonLabel}
+          <div className="flex flex-wrap gap-2">
+            {options.map((option) => {
+              const checked = selectedValue === option.value;
+              return (
+                <button
+                  key={`${fieldId}-${option.value}`}
+                  type="button"
+                  title={option.tooltip || option.value}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[0.82rem] transition ${
+                    checked
+                      ? "border-[var(--ode-border-accent)] bg-[rgba(21,111,156,0.32)] text-[var(--ode-text)]"
+                      : "border-[var(--ode-border)] bg-[rgba(4,27,43,0.42)] text-[var(--ode-text-muted)]"
+                  }`}
+                  onClick={() => handleFieldValueChange(fieldId, option.value)}
+                >
+                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: option.color || "#5dc2ff" }} />
+                  {option.icon.trim().length > 0 ? <span className="text-[0.74rem] uppercase">{option.icon}</span> : null}
+                  <span>{option.value}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       );
     }
 
@@ -9293,7 +9732,9 @@ export function ProcedureBuilderPanel({
         >
           {commonLabel}
           <textarea
-            className="ode-input min-h-[128px] w-full rounded-[18px] px-4 py-3"
+            className={`ode-input w-full rounded-[18px] px-4 py-3 ${
+              entry.type === "message" ? "min-h-[180px]" : "min-h-[128px]"
+            }`}
             placeholder={entry.placeholder}
             value={typeof value === "string" ? value : ""}
             onChange={(event) => handleFieldValueChange(fieldId, event.target.value)}
@@ -10558,7 +10999,7 @@ export function ProcedureBuilderPanel({
     return (
       <section className="flex min-h-0 flex-1 items-center justify-center p-6">
         <div className="rounded-[28px] border border-[var(--ode-border)] bg-[rgba(4,23,39,0.74)] px-6 py-8 text-center text-[var(--ode-text-muted)] shadow-[0_20px_60px_rgba(0,0,0,0.22)]">
-          Select a folder to build a procedure.
+          Database is empty.
         </div>
       </section>
     );
@@ -11404,13 +11845,13 @@ export function ProcedureBuilderPanel({
                           </div>
                         ) : null}
                       </div>
-                      <div className="relative min-w-[180px] max-w-[260px] flex-1" ref={sectionEditorFontMenuRef}>
+                      <div className="relative w-[126px] shrink-0" ref={sectionEditorFontMenuRef}>
                         <OdeTooltip label={`Font family: ${sectionEditorCurrentFontFamily}`}>
                           <button
                             type="button"
                             aria-label="Font family"
                             disabled={!sectionEditorWritable}
-                            className={`${SECTION_EDITOR_TOOLBAR_SELECT_CLASS} flex w-full items-center justify-between gap-3 pr-2.5 text-left ${
+                            className={`${SECTION_EDITOR_TOOLBAR_SELECT_CLASS} flex w-full items-center justify-between gap-2 px-2.5 pr-2 text-left ${
                               sectionEditorFontMenuOpen ? "border-[rgba(95,220,255,0.42)] bg-[rgba(14,38,56,0.96)]" : ""
                             }`}
                             style={SECTION_EDITOR_TOOLBAR_SELECT_STYLE}
@@ -11438,7 +11879,7 @@ export function ProcedureBuilderPanel({
                           </button>
                         </OdeTooltip>
                         {sectionEditorFontMenuOpen ? (
-                          <div className="absolute left-0 top-full z-20 mt-2 w-[min(92vw,260px)] rounded-[16px] border border-[rgba(126,154,176,0.2)] bg-[rgba(7,20,31,0.98)] p-3 shadow-[0_24px_48px_rgba(0,0,0,0.36)]">
+                          <div className="absolute left-0 top-full z-20 mt-2 w-[min(92vw,220px)] rounded-[16px] border border-[rgba(126,154,176,0.2)] bg-[rgba(7,20,31,0.98)] p-3 shadow-[0_24px_48px_rgba(0,0,0,0.36)]">
                             <div className="rounded-[12px] border border-[rgba(126,154,176,0.16)] bg-[rgba(8,24,37,0.72)] px-3 py-2">
                               <span className="sr-only">Search fonts</span>
                               <input
@@ -11501,7 +11942,7 @@ export function ProcedureBuilderPanel({
                           </div>
                         ) : null}
                       </div>
-                      <div className="relative w-[92px] shrink-0" ref={sectionEditorFontSizeMenuRef}>
+                      <div className="relative w-[64px] shrink-0" ref={sectionEditorFontSizeMenuRef}>
                         <OdeTooltip label={`Font size: ${clampSectionEditorFontSizePt(sectionEditorCurrentFontSizePt)} pt`}>
                           <div className="flex h-9 w-full items-center overflow-hidden rounded-[10px] border border-[rgba(126,154,176,0.18)] bg-[rgba(8,24,37,0.96)] text-[#f8fafc] transition hover:border-[rgba(95,220,255,0.28)] hover:bg-[rgba(14,38,56,0.96)] focus-within:border-[rgba(95,220,255,0.42)] focus-within:ring-2 focus-within:ring-[rgba(95,220,255,0.22)]">
                             <span className="sr-only">Font size</span>
@@ -11510,7 +11951,7 @@ export function ProcedureBuilderPanel({
                               inputMode="decimal"
                               value={sectionEditorFontSizeInput}
                               disabled={!sectionEditorWritable}
-                              className="min-w-0 flex-1 border-none bg-transparent px-3 text-center text-[0.82rem] font-medium text-[#f8fafc] outline-none placeholder:text-[var(--ode-text-dim)]"
+                              className="min-w-0 flex-1 border-none bg-transparent px-2 text-center text-[0.8rem] font-medium text-[#f8fafc] outline-none placeholder:text-[var(--ode-text-dim)]"
                               onMouseDown={(event) => {
                                 event.stopPropagation();
                                 if (sectionEditorFormattingTargetRef.current === "label") {
@@ -11544,7 +11985,7 @@ export function ProcedureBuilderPanel({
                               type="button"
                               aria-label="Font size presets"
                               disabled={!sectionEditorWritable}
-                              className="flex h-full w-8 shrink-0 items-center justify-center border-l border-[rgba(126,154,176,0.16)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(14,38,56,0.96)] hover:text-[var(--ode-text)]"
+                              className="flex h-full w-7 shrink-0 items-center justify-center border-l border-[rgba(126,154,176,0.16)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(14,38,56,0.96)] hover:text-[var(--ode-text)]"
                               onMouseDown={(event) => {
                                 event.preventDefault();
                                 event.stopPropagation();
@@ -11564,7 +12005,7 @@ export function ProcedureBuilderPanel({
                           </div>
                         </OdeTooltip>
                         {sectionEditorFontSizeMenuOpen ? (
-                          <div className="absolute left-0 top-full z-20 mt-2 w-full min-w-[88px] rounded-[14px] border border-[rgba(126,154,176,0.18)] bg-[rgba(7,20,31,0.98)] p-2 shadow-[0_24px_48px_rgba(0,0,0,0.36)]">
+                          <div className="absolute left-0 top-full z-20 mt-2 w-full min-w-[64px] rounded-[14px] border border-[rgba(126,154,176,0.18)] bg-[rgba(7,20,31,0.98)] p-2 shadow-[0_24px_48px_rgba(0,0,0,0.36)]">
                             <div className="space-y-1">
                               {sectionEditorFontSizeOptions.map((fontSize) => {
                                 const selected = fontSize === clampSectionEditorFontSizePt(sectionEditorCurrentFontSizePt);
@@ -12146,85 +12587,78 @@ export function ProcedureBuilderPanel({
                                     {sectionEditorActiveTableState.columnCount} x {sectionEditorActiveTableState.rowCount}
                                   </div>
                                 </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <button
-                                    type="button"
-                                    className="flex items-center gap-2 rounded-[11px] border border-[rgba(126,154,176,0.16)] bg-[rgba(8,24,37,0.84)] px-3 py-2 text-left text-[0.78rem] font-medium text-[var(--ode-text)] transition hover:border-[rgba(95,220,255,0.28)] hover:bg-[rgba(14,38,56,0.96)]"
-                                    onMouseDown={preserveSectionEditorPanelFocus}
-                                    onClick={() => {
-                                      runSectionEditorTableAction(() => insertSectionEditorTableRowAtSelection("above"));
-                                    }}
-                                  >
-                                    <ArrowUpGlyphSmall />
-                                    <span>Add row above</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex items-center gap-2 rounded-[11px] border border-[rgba(126,154,176,0.16)] bg-[rgba(8,24,37,0.84)] px-3 py-2 text-left text-[0.78rem] font-medium text-[var(--ode-text)] transition hover:border-[rgba(95,220,255,0.28)] hover:bg-[rgba(14,38,56,0.96)]"
-                                    onMouseDown={preserveSectionEditorPanelFocus}
-                                    onClick={() => {
-                                      runSectionEditorTableAction(() => insertSectionEditorTableRowAtSelection("below"));
-                                    }}
-                                  >
-                                    <ArrowDownGlyphSmall />
-                                    <span>Add row below</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex items-center gap-2 rounded-[11px] border border-[rgba(126,154,176,0.16)] bg-[rgba(8,24,37,0.84)] px-3 py-2 text-left text-[0.78rem] font-medium text-[var(--ode-text)] transition hover:border-[rgba(95,220,255,0.28)] hover:bg-[rgba(14,38,56,0.96)]"
-                                    onMouseDown={preserveSectionEditorPanelFocus}
-                                    onClick={() => {
-                                      runSectionEditorTableAction(() => insertSectionEditorTableColumnAtSelection("left"));
-                                    }}
-                                  >
-                                    <ArrowLeftGlyphSmall />
-                                    <span>Add column left</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex items-center gap-2 rounded-[11px] border border-[rgba(126,154,176,0.16)] bg-[rgba(8,24,37,0.84)] px-3 py-2 text-left text-[0.78rem] font-medium text-[var(--ode-text)] transition hover:border-[rgba(95,220,255,0.28)] hover:bg-[rgba(14,38,56,0.96)]"
-                                    onMouseDown={preserveSectionEditorPanelFocus}
-                                    onClick={() => {
-                                      runSectionEditorTableAction(() => insertSectionEditorTableColumnAtSelection("right"));
-                                    }}
-                                  >
-                                    <ArrowRightGlyphSmall />
-                                    <span>Add column right</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex items-center gap-2 rounded-[11px] border border-[rgba(255,143,143,0.18)] bg-[rgba(67,24,24,0.4)] px-3 py-2 text-left text-[0.78rem] font-medium text-[#ffd5d5] transition hover:border-[rgba(255,167,167,0.28)] hover:bg-[rgba(92,31,31,0.52)]"
-                                    onMouseDown={preserveSectionEditorPanelFocus}
-                                    onClick={() => {
-                                      runSectionEditorTableAction(() => removeSectionEditorTableRowAtSelection());
-                                    }}
-                                  >
-                                    <TrashGlyphSmall />
-                                    <span>Delete row</span>
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="flex items-center gap-2 rounded-[11px] border border-[rgba(255,143,143,0.18)] bg-[rgba(67,24,24,0.4)] px-3 py-2 text-left text-[0.78rem] font-medium text-[#ffd5d5] transition hover:border-[rgba(255,167,167,0.28)] hover:bg-[rgba(92,31,31,0.52)]"
-                                    onMouseDown={preserveSectionEditorPanelFocus}
-                                    onClick={() => {
-                                      runSectionEditorTableAction(() => removeSectionEditorTableColumnAtSelection());
-                                    }}
-                                  >
-                                    <TrashGlyphSmall />
-                                    <span>Delete column</span>
-                                  </button>
+                                <div className="space-y-2">
+                                  <div className="grid grid-cols-4 gap-2">
+                                    <SectionEditorTableActionIconButton
+                                      label="Add row above"
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => insertSectionEditorTableRowAtSelection("above"));
+                                      }}
+                                    >
+                                      <TableRowAddAboveGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                    <SectionEditorTableActionIconButton
+                                      label="Add row below"
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => insertSectionEditorTableRowAtSelection("below"));
+                                      }}
+                                    >
+                                      <TableRowAddBelowGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                    <SectionEditorTableActionIconButton
+                                      label="Add column left"
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => insertSectionEditorTableColumnAtSelection("left"));
+                                      }}
+                                    >
+                                      <TableColumnAddLeftGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                    <SectionEditorTableActionIconButton
+                                      label="Add column right"
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => insertSectionEditorTableColumnAtSelection("right"));
+                                      }}
+                                    >
+                                      <TableColumnAddRightGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <SectionEditorTableActionIconButton
+                                      label="Delete row"
+                                      danger
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => removeSectionEditorTableRowAtSelection());
+                                      }}
+                                    >
+                                      <TableRowDeleteGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                    <SectionEditorTableActionIconButton
+                                      label="Delete column"
+                                      danger
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => removeSectionEditorTableColumnAtSelection());
+                                      }}
+                                    >
+                                      <TableColumnDeleteGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                    <SectionEditorTableActionIconButton
+                                      label="Delete table"
+                                      danger
+                                      onMouseDown={preserveSectionEditorPanelFocus}
+                                      onClick={() => {
+                                        runSectionEditorTableAction(() => removeSectionEditorCurrentTable());
+                                      }}
+                                    >
+                                      <TableDeleteGlyphSmall />
+                                    </SectionEditorTableActionIconButton>
+                                  </div>
                                 </div>
-                                <button
-                                  type="button"
-                                  className="flex w-full items-center justify-center gap-2 rounded-[11px] border border-[rgba(255,143,143,0.24)] bg-[rgba(88,26,26,0.5)] px-3 py-2.5 text-[0.8rem] font-semibold text-[#ffe2e2] transition hover:border-[rgba(255,167,167,0.32)] hover:bg-[rgba(110,34,34,0.64)]"
-                                  onMouseDown={preserveSectionEditorPanelFocus}
-                                  onClick={() => {
-                                    runSectionEditorTableAction(() => removeSectionEditorCurrentTable());
-                                  }}
-                                >
-                                  <TrashGlyphSmall />
-                                  <span>Delete table</span>
-                                </button>
                               </div>
                             ) : (
                               <div className="rounded-[14px] border border-[rgba(126,154,176,0.16)] bg-[rgba(7,22,34,0.82)] p-3">
@@ -13358,11 +13792,17 @@ export function ProcedureBuilderPanel({
                           ? {
                               ...current,
                               type: nextType,
+                              autoValue: resolveAutoValueByFieldType(nextType, current.autoValue),
                               optionsText: fieldTypeSupportsOptions(nextType)
                                 ? current.optionsText.trim().length > 0
                                   ? current.optionsText
-                                  : (nextType === "table" ? DEFAULT_TABLE_COLUMNS : DEFAULT_SELECT_OPTIONS).join("\n")
-                                : ""
+                                  : getFieldTypeOptionFallback(nextType).join("\n")
+                                : "",
+                              priorityOptionsText: fieldTypeUsesPrioritySettings(nextType)
+                                ? current.priorityOptionsText.trim().length > 0
+                                  ? current.priorityOptionsText
+                                  : formatPriorityOptionsText(DEFAULT_PRIORITY_OPTIONS)
+                                : current.priorityOptionsText
                             }
                           : current
                       );
@@ -13375,6 +13815,46 @@ export function ProcedureBuilderPanel({
                     ))}
                   </select>
                 </label>
+
+                {fieldTypeAllowsAutoValue(fieldEditorDraft.type) ? (
+                  <label className="block">
+                    <div className="mb-2 text-[0.82rem] text-[var(--ode-text-muted)]">Automatic Value</div>
+                    <select
+                      className="ode-input h-11 w-full rounded-[16px] px-4"
+                      value={fieldEditorDraft.autoValue}
+                      onChange={(event) =>
+                        setFieldEditorDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                autoValue: resolveAutoValueByFieldType(
+                                  current.type,
+                                  event.target.value as ProcedureFieldAutoValue
+                                )
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      {AUTO_VALUE_OPTIONS.filter((option) => {
+                        if (option.value === "current_user") return fieldEditorDraft.type === "user_ref";
+                        if (option.value === "today") return fieldEditorDraft.type === "date";
+                        if (option.value === "now") {
+                          return (
+                            fieldEditorDraft.type === "date" ||
+                            fieldEditorDraft.type === "time" ||
+                            fieldEditorDraft.type === "datetime"
+                          );
+                        }
+                        return true;
+                      }).map((option) => (
+                        <option key={`${fieldEditorDraft.type}-${option.value}`} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
 
                 <label className="block">
                   <div className="mb-2 text-[0.82rem] text-[var(--ode-text-muted)]">Placeholder</div>
@@ -13493,7 +13973,11 @@ export function ProcedureBuilderPanel({
                 {fieldTypeSupportsOptions(fieldEditorDraft.type) ? (
                   <label className="block">
                     <div className="mb-2 text-[0.82rem] text-[var(--ode-text-muted)]">
-                      {fieldEditorDraft.type === "table" ? "Columns" : "Options"}
+                      {fieldEditorDraft.type === "table"
+                        ? "Columns"
+                        : fieldEditorDraft.type === "tags"
+                          ? "Suggested Tags"
+                          : "Options"}
                     </div>
                     <textarea
                       className="ode-input min-h-[120px] w-full rounded-[18px] px-4 py-3"
@@ -13503,8 +13987,67 @@ export function ProcedureBuilderPanel({
                           current ? { ...current, optionsText: event.target.value } : current
                         )
                       }
-                    />
-                  </label>
+                      />
+                    </label>
+                ) : null}
+
+                {fieldTypeUsesPrioritySettings(fieldEditorDraft.type) ? (
+                  <div className="rounded-[22px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.42)] px-4 py-4">
+                    <div className="text-[0.82rem] text-[var(--ode-text-muted)]">Priority Settings</div>
+                    <div className="mt-4 grid gap-4">
+                      <label className="block">
+                        <div className="mb-2 text-[0.82rem] text-[var(--ode-text-muted)]">
+                          Levels
+                        </div>
+                        <textarea
+                          className="ode-input min-h-[140px] w-full rounded-[18px] px-4 py-3 font-mono text-[0.82rem]"
+                          value={fieldEditorDraft.priorityOptionsText}
+                          onChange={(event) =>
+                            setFieldEditorDraft((current) =>
+                              current ? { ...current, priorityOptionsText: event.target.value } : current
+                            )
+                          }
+                        />
+                        <div className="mt-2 text-[0.76rem] text-[var(--ode-text-muted)]">
+                          One line per level: `Label | Icon | Color | Rank | Score | Review days | Escalate | Tooltip`
+                        </div>
+                      </label>
+
+                      <label className="block">
+                        <div className="mb-2 text-[0.82rem] text-[var(--ode-text-muted)]">Default Level</div>
+                        <select
+                          className="ode-input h-11 w-full rounded-[16px] px-4"
+                          value={fieldEditorDraft.priorityDefaultValue}
+                          onChange={(event) =>
+                            setFieldEditorDraft((current) =>
+                              current ? { ...current, priorityDefaultValue: event.target.value } : current
+                            )
+                          }
+                        >
+                          <option value="">None</option>
+                          {parsePriorityOptionsText(fieldEditorDraft.priorityOptionsText).map((option) => (
+                            <option key={`priority-default-${option.value}`} value={option.value}>
+                              {option.value}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+
+                      <label className="block">
+                        <div className="mb-2 text-[0.82rem] text-[var(--ode-text-muted)]">Field Tooltip</div>
+                        <input
+                          type="text"
+                          className="ode-input h-11 w-full rounded-[16px] px-4"
+                          value={fieldEditorDraft.priorityTooltip}
+                          onChange={(event) =>
+                            setFieldEditorDraft((current) =>
+                              current ? { ...current, priorityTooltip: event.target.value } : current
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+                  </div>
                 ) : null}
 
                 {isProcedureOrganizationLinkFieldType(fieldEditorDraft.type) ? (
