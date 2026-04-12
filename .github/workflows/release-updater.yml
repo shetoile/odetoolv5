@@ -30,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref }}
 
       - name: Resolve release tag
         id: release_tag
@@ -84,6 +86,8 @@ jobs:
         run: npm run tauri:build
 
       - name: Prepare updater manifest and artifacts
+        env:
+          UPDATER_RELEASE_TAG: ${{ steps.release_tag.outputs.value }}
         run: node scripts/prepare-updater-release.mjs
 
       - name: Upload release assets

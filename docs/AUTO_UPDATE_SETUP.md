@@ -50,13 +50,14 @@ npm run tauri:build
 3. Prepare the updater manifest and upload package:
 
 ```powershell
+$env:UPDATER_RELEASE_TAG="v0.1.2"
 npm run updater:prepare
 ```
 
 4. Upload the files from `output/updater/` to a GitHub Release in `shetoile/odetoolv5`.
    - `latest.json`
-   - `ODETool Pro_<version>_x64-setup.exe`
-   - `ODETool Pro_<version>_x64-setup.exe.sig`
+   - `ODETool.Pro_<version>_x64-setup.exe`
+   - `ODETool.Pro_<version>_x64-setup.exe.sig`
 
 ## GitHub Actions Release Automation
 
@@ -69,7 +70,7 @@ A release workflow is available at:
 It can run in two modes:
 
 - Push a version tag (for example `v0.1.1`) to build/sign/upload automatically.
-- Run manually from Actions using `workflow_dispatch` and a tag name.
+- Run manually from Actions using `workflow_dispatch` and a tag name. The workflow now checks out that exact tag before building.
 
 Required repository secrets:
 
@@ -97,4 +98,5 @@ git push origin v0.1.1
 ## Notes
 
 - `src-tauri/tauri.conf.json` now enables `createUpdaterArtifacts`, which produces the signed updater installer artifacts used by `latest.json`.
+- `latest.json` should keep using the `releases/latest/download/latest.json` feed, but the installer URL inside that file should point to the specific tag release asset so the download stays stable even after newer releases are published.
 - Debug builds skip startup update checks unless `ODETOOL_ENABLE_AUTO_UPDATE_IN_DEBUG=1` is set.

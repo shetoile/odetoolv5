@@ -1,7 +1,7 @@
 {
   "name": "odetool-pro",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
+    "updater:prepare": "node scripts/prepare-updater-release.mjs",
     "icons:refresh": "python scripts/generate-brand-logo.py && python scripts/finalize-tauri-icons.py && python scripts/generate-installer-branding.py",
     "typecheck": "tsc -b --pretty false",
     "quality:catalog:check": "node scripts/check-test-catalog.mjs",

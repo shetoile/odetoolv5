@@ -37,6 +37,16 @@ function resolveRepositorySlug() {
   }
 }
 
+function resolveReleaseTag(version) {
+  const fromEnv = process.env.UPDATER_RELEASE_TAG?.trim();
+  if (fromEnv) return fromEnv;
+  return `v${version}`;
+}
+
+function toGitHubReleaseAssetName(fileName) {
+  return fileName.trim().replace(/\s+/g, ".");
+}
+
 function findInstallerFile(productName, version) {
   if (!fs.existsSync(NSIS_BUNDLE_DIR)) {
     throw new Error(`NSIS bundle directory not found: ${NSIS_BUNDLE_DIR}`);
@@ -86,10 +96,13 @@ if (!repositorySlug) {
     "Could not resolve the GitHub repository. Set UPDATER_REPOSITORY=owner/repo before running this script."
   );
 }
+const releaseTag = resolveReleaseTag(version);
 
 const installerName = findInstallerFile(productName, version);
 const installerPath = path.join(NSIS_BUNDLE_DIR, installerName);
 const signaturePath = `${installerPath}.sig`;
+const releaseInstallerName = toGitHubReleaseAssetName(installerName);
+const releaseSignatureName = `${releaseInstallerName}.sig`;
 
 if (!fs.existsSync(signaturePath)) {
   throw new Error(
@@ -99,7 +112,7 @@ if (!fs.existsSync(signaturePath)) {
 
 const signature = fs.readFileSync(signaturePath, "utf8").trim();
 const notes = process.env.UPDATER_NOTES?.trim() ?? "";
-const installerUrl = `https://github.com/${repositorySlug}/releases/latest/download/${encodeURIComponent(installerName)}`;
+const installerUrl = `https://github.com/${repositorySlug}/releases/download/${encodeURIComponent(releaseTag)}/${encodeURIComponent(releaseInstallerName)}`;
 
 const latestManifest = {
   version,
@@ -113,14 +126,16 @@ const latestManifest = {
   }
 };
 
+fs.rmSync(OUTPUT_DIR, { recursive: true, force: true });
 fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-fs.copyFileSync(installerPath, path.join(OUTPUT_DIR, installerName));
-fs.copyFileSync(signaturePath, path.join(OUTPUT_DIR, `${installerName}.sig`));
+fs.copyFileSync(installerPath, path.join(OUTPUT_DIR, releaseInstallerName));
+fs.copyFileSync(signaturePath, path.join(OUTPUT_DIR, releaseSignatureName));
 fs.writeFileSync(path.join(OUTPUT_DIR, "latest.json"), `${JSON.stringify(latestManifest, null, 2)}\n`, "utf8");
 
 console.log("Prepared updater release files:");
 console.log(`- Version: ${version}`);
-console.log(`- Installer: ${path.join("output", "updater", installerName)}`);
-console.log(`- Signature: ${path.join("output", "updater", `${installerName}.sig`)}`);
+console.log(`- Release tag: ${releaseTag}`);
+console.log(`- Installer: ${path.join("output", "updater", releaseInstallerName)}`);
+console.log(`- Signature: ${path.join("output", "updater", releaseSignatureName)}`);
 console.log(`- Manifest: ${path.join("output", "updater", "latest.json")}`);
 console.log(`- Feed URL: https://github.com/${repositorySlug}/releases/latest/download/latest.json`);
