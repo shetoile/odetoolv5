@@ -198,8 +198,8 @@ fn spawn_update_check(app: AppHandle) {
             &app,
             "installed",
             "Update installed. Restarting...",
-            None,
-            None,
+            next_version,
+            current_version,
             None,
             None,
         );

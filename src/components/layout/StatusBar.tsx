@@ -270,12 +270,12 @@ export function StatusBar({
           {onCheckForUpdates ? (
             <div className={`ode-statusbar-updater-card ode-statusbar-updater-card-${updateStatusTone}`}>
               <div className="ode-statusbar-updater-copy">
-                <span className="ode-statusbar-updater-eyebrow">Automatic updates</span>
+                <span className="ode-statusbar-updater-eyebrow">{t("updater.card_title")}</span>
                 <span className="ode-statusbar-updater-title">
-                  {updateStatusLabel ?? "Ready for the next GitHub release."}
+                  {updateStatusLabel ?? t("updater.ready_label")}
                 </span>
                 <span className="ode-statusbar-updater-message">
-                  {updateStatusMessage ?? "New versions download and install automatically when found at startup."}
+                  {updateStatusMessage ?? t("updater.ready_message")}
                 </span>
               </div>
               <button
@@ -288,7 +288,7 @@ export function StatusBar({
                 disabled={isCheckingForUpdates}
               >
                 <ArrowUpGlyphSmall />
-                <span>{isCheckingForUpdates ? "Checking updates..." : "Check for updates"}</span>
+                <span>{isCheckingForUpdates ? t("updater.checking_now") : t("updater.check_now")}</span>
               </button>
             </div>
           ) : null}

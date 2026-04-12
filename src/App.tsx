@@ -392,6 +392,7 @@ import {
   checkForAppUpdates,
   isUpdaterBusy,
   resolveUpdaterStatusLabel,
+  resolveUpdaterStatusMessage,
   resolveUpdaterStatusTone,
   type AppUpdaterStatusPayload
 } from "@/lib/appUpdater";
@@ -2446,7 +2447,6 @@ export default function App() {
     readRememberedAuthSessionToken()
   );
   const [updaterStatus, setUpdaterStatus] = useState<AppUpdaterStatusPayload | null>(null);
-  const [updaterStatusLabel, setUpdaterStatusLabel] = useState<string | null>(null);
   const [updaterToastOpen, setUpdaterToastOpen] = useState(false);
   const [manualUpdateCheckPending, setManualUpdateCheckPending] = useState(false);
   const [appVersionLabel, setAppVersionLabel] = useState(APP_DISPLAY_NAME);
@@ -2764,7 +2764,6 @@ export default function App() {
         nextStatus.stage === "error";
 
       setUpdaterStatus(nextStatus);
-      setUpdaterStatusLabel(resolveUpdaterStatusLabel(nextStatus));
 
       if (shouldShowToast) {
         setUpdaterToastOpen(true);
@@ -2819,7 +2818,6 @@ export default function App() {
         message: `Update check could not start: ${error instanceof Error ? error.message : String(error)}`
       };
       setUpdaterStatus(nextStatus);
-      setUpdaterStatusLabel(resolveUpdaterStatusLabel(nextStatus));
       setUpdaterToastOpen(true);
       setManualUpdateCheckPending(false);
     });
@@ -3080,6 +3078,8 @@ export default function App() {
     timelineGridMinWidth: TIMELINE_GRID_MIN_WIDTH
   });
   const t = (key: string, params?: TranslationParams) => translate(language, key, params);
+  const updaterStatusLabel = useMemo(() => resolveUpdaterStatusLabel(updaterStatus, t), [updaterStatus, language]);
+  const updaterStatusMessage = useMemo(() => resolveUpdaterStatusMessage(updaterStatus, t), [updaterStatus, language]);
   const authGateMode: AuthGateMode | null =
     userAccountState === null || authSessionRestorePending
       ? "loading"
@@ -28475,13 +28475,14 @@ export default function App() {
       <AppUpdateToast
         open={updaterToastOpen}
         status={updaterStatus}
+        t={t}
         onDismiss={() => setUpdaterToastOpen(false)}
       />
       <StatusBar
         version={appVersionLabel}
         updateStatusLabel={updaterStatusLabel}
         updateStatusTone={resolveUpdaterStatusTone(updaterStatus)}
-        updateStatusMessage={updaterStatus?.message ?? null}
+        updateStatusMessage={updaterStatusMessage}
         t={t}
         branchClipboard={branchClipboard}
         mirrorStatus={mirrorStatus}
