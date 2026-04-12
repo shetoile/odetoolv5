@@ -65,6 +65,9 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install Python build dependencies
+        run: python -m pip install pillow
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
