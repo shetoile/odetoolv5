@@ -1,0 +1,6 @@
+{
+  "version": "0.1.9-test.5",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  }
+}

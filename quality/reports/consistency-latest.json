@@ -1,41 +1,41 @@
 {
   "version": 1,
-  "generatedAt": "2026-04-04T14:27:23.451Z",
+  "generatedAt": "2026-04-23T19:31:19.729Z",
   "thresholds": {
     "warningLines": 1500,
     "criticalLines": 5000
   },
   "source": {
-    "fileCount": 190,
-    "totalLines": 110336,
+    "fileCount": 194,
+    "totalLines": 118327,
     "largestFiles": [
       {
         "path": "src/App.tsx",
-        "lines": 25089
+        "lines": 27677
       },
       {
         "path": "src/components/views/ProcedureBuilderPanel.tsx",
-        "lines": 13706
+        "lines": 13727
       },
       {
         "path": "src/components/views/ProcedureContentPanel.tsx",
-        "lines": 6391
+        "lines": 6384
       },
       {
         "path": "src/lib/i18n.ts",
-        "lines": 5481
-      },
-      {
-        "path": "src/components/views/DesktopContentPanel.tsx",
-        "lines": 3475
-      },
-      {
-        "path": "src/styles/globals.css",
-        "lines": 3402
+        "lines": 6216
       },
       {
         "path": "src/components/overlay/AiCommandBar.tsx",
-        "lines": 1927
+        "lines": 3791
+      },
+      {
+        "path": "src/components/views/DesktopContentPanel.tsx",
+        "lines": 3512
+      },
+      {
+        "path": "src/styles/globals.css",
+        "lines": 3462
       },
       {
         "path": "src/components/views/TimelineContentPanel.tsx",
@@ -53,31 +53,31 @@
     "warningFiles": [
       {
         "path": "src/App.tsx",
-        "lines": 25089
+        "lines": 27677
       },
       {
         "path": "src/components/views/ProcedureBuilderPanel.tsx",
-        "lines": 13706
+        "lines": 13727
       },
       {
         "path": "src/components/views/ProcedureContentPanel.tsx",
-        "lines": 6391
+        "lines": 6384
       },
       {
         "path": "src/lib/i18n.ts",
-        "lines": 5481
-      },
-      {
-        "path": "src/components/views/DesktopContentPanel.tsx",
-        "lines": 3475
-      },
-      {
-        "path": "src/styles/globals.css",
-        "lines": 3402
+        "lines": 6216
       },
       {
         "path": "src/components/overlay/AiCommandBar.tsx",
-        "lines": 1927
+        "lines": 3791
+      },
+      {
+        "path": "src/components/views/DesktopContentPanel.tsx",
+        "lines": 3512
+      },
+      {
+        "path": "src/styles/globals.css",
+        "lines": 3462
       },
       {
         "path": "src/components/views/TimelineContentPanel.tsx",
@@ -95,29 +95,29 @@
     "criticalFiles": [
       {
         "path": "src/App.tsx",
-        "lines": 25089
+        "lines": 27677
       },
       {
         "path": "src/components/views/ProcedureBuilderPanel.tsx",
-        "lines": 13706
+        "lines": 13727
       },
       {
         "path": "src/components/views/ProcedureContentPanel.tsx",
-        "lines": 6391
+        "lines": 6384
       },
       {
         "path": "src/lib/i18n.ts",
-        "lines": 5481
+        "lines": 6216
       }
     ]
   },
   "appShell": {
     "path": "src/App.tsx",
-    "lines": 25089,
-    "useStateCount": 58,
-    "useEffectCount": 117,
-    "useMemoCount": 125,
-    "useCallbackCount": 160
+    "lines": 27677,
+    "useStateCount": 62,
+    "useEffectCount": 119,
+    "useMemoCount": 138,
+    "useCallbackCount": 186
   },
   "frontendTests": {
     "hasRunnerDependency": false,
@@ -131,25 +131,25 @@
     {
       "id": "app-shell-monolith",
       "severity": "critical",
-      "summary": "src/App.tsx is 25,089 lines with 58 useState calls and 117 useEffect calls. This mixes UI composition, persistence, orchestration, and domain workflows in one file.",
+      "summary": "src/App.tsx is 27,677 lines with 62 useState calls and 119 useEffect calls. This mixes UI composition, persistence, orchestration, and domain workflows in one file.",
       "file": "src/App.tsx"
     },
     {
       "id": "procedure-builder-monolith",
       "severity": "critical",
-      "summary": "Procedure builder lives in a 13,706 line component, which makes editor behavior, layout consistency, and change review unusually hard to reason about.",
+      "summary": "Procedure builder lives in a 13,727 line component, which makes editor behavior, layout consistency, and change review unusually hard to reason about.",
       "file": "src/components/views/ProcedureBuilderPanel.tsx"
     },
     {
       "id": "procedure-content-panel-monolith",
       "severity": "high",
-      "summary": "Procedure content rendering is concentrated in 6,391 lines, so presentational changes and behavior changes are tightly coupled.",
+      "summary": "Procedure content rendering is concentrated in 6,384 lines, so presentational changes and behavior changes are tightly coupled.",
       "file": "src/components/views/ProcedureContentPanel.tsx"
     },
     {
       "id": "localization-catalog-monolith",
       "severity": "high",
-      "summary": "The translation catalog is 5,481 lines in a single TypeScript file. This slows localization review and makes string consistency harder to audit by feature.",
+      "summary": "The translation catalog is 6,216 lines in a single TypeScript file. This slows localization review and makes string consistency harder to audit by feature.",
       "file": "src/lib/i18n.ts"
     },
     {

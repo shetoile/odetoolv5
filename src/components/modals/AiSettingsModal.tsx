@@ -1,9 +1,16 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { OdeAiMark } from "@/components/OdeAiMark";
 import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
-import { AI_KEYS_STORAGE_KEY } from "@/lib/appIdentity";
 import { callNative } from "@/lib/tauriApi";
 import { translate, type LanguageCode, type TranslationParams } from "@/lib/i18n";
+import {
+  createEmptyStoredAiProviderKey,
+  detectAndNormalizeAiProviderKeys,
+  ensureAiProviderKeyDrafts,
+  readStoredAiProviderKeys,
+  writeStoredAiProviderKeys,
+  type StoredAiProviderKey
+} from "@/lib/aiProviderKeys";
 
 interface AiSettingsModalProps {
   open: boolean;
@@ -18,66 +25,86 @@ export function AiSettingsModal({
 }: AiSettingsModalProps) {
   const t = (key: string, params?: TranslationParams) => translate(language, key, params);
   const { surfaceRef, surfaceStyle, handlePointerDown } = useDraggableModalSurface({ open });
-  const [mistralKeys, setMistralKeys] = useState<string[]>([""]);
+  const [providerKeys, setProviderKeys] = useState<StoredAiProviderKey[]>([createEmptyStoredAiProviderKey()]);
   const [message, setMessage] = useState("");
   const [isTesting, setIsTesting] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isCleaning, setIsCleaning] = useState(false);
 
   useEffect(() => {
     if (!open) return;
-    const raw = localStorage.getItem(AI_KEYS_STORAGE_KEY);
-    if (!raw) return;
-    try {
-      const parsed = JSON.parse(raw) as {
-        mistralKeys?: string[];
-        groqKeys?: string[];
-        perplexityKeys?: string[];
-      };
-      if (parsed.mistralKeys && parsed.mistralKeys.length > 0) {
-        setMistralKeys(parsed.mistralKeys);
-        return;
-      }
-      const legacy = [...(parsed.groqKeys ?? []), ...(parsed.perplexityKeys ?? [])].filter(
-        (key) => key.trim().length > 0
-      );
-      if (legacy.length > 0) setMistralKeys([legacy[0]]);
-    } catch {
-      // Keep defaults if persisted data is malformed.
-    }
+    setProviderKeys(ensureAiProviderKeyDrafts(readStoredAiProviderKeys()));
+    setMessage("");
   }, [open]);
 
   if (!open) return null;
 
-  const updateList = (next: string[], setList: (next: string[]) => void) =>
-    setList(next.length > 0 ? next : [""]);
+  const updateList = (next: StoredAiProviderKey[]) => {
+    setProviderKeys(ensureAiProviderKeyDrafts(next));
+  };
+
+  const updateProviderKey = (index: number, apiKey: string) => {
+    setProviderKeys((current) =>
+      ensureAiProviderKeyDrafts(
+        current.map((entry, entryIndex) =>
+          entryIndex === index
+            ? {
+                providerId: "unknown",
+                providerLabel: apiKey.trim().length > 0 ? "Auto-detect" : "Auto-detect",
+                apiKey
+              }
+            : entry
+        )
+      )
+    );
+    setMessage("");
+  };
+
+  const formatDetectedProviderMessage = (entries: StoredAiProviderKey[]): string => {
+    const known = entries.filter((entry) => entry.providerId !== "unknown");
+    if (known.length === 0) {
+      return t("settings.msg_no_keys");
+    }
+    const labels = Array.from(new Set(known.map((entry) => entry.providerLabel)));
+    const unknownCount = entries.filter((entry) => entry.providerId === "unknown").length;
+    return unknownCount > 0
+      ? `Detected ${known.length} key(s): ${labels.join(", ")}. ${unknownCount} key(s) could not be identified.`
+      : `Detected ${known.length} key(s): ${labels.join(", ")}.`;
+  };
 
   const runTest = async () => {
     setMessage("");
     setIsTesting(true);
-    await new Promise((resolve) => setTimeout(resolve, 550));
-    const mistralConfigured = mistralKeys.some((key) => key.trim().length > 0);
-    if (mistralConfigured) {
-      setMessage(t("settings.msg_key_check_complete"));
-    } else {
+    try {
+      const detected = await detectAndNormalizeAiProviderKeys(providerKeys);
+      if (detected.length === 0) {
+        setProviderKeys([createEmptyStoredAiProviderKey()]);
+        setMessage(t("settings.msg_no_keys"));
+      } else {
+        updateList(detected);
+        setMessage(formatDetectedProviderMessage(detected));
+      }
+    } catch {
       setMessage(t("settings.msg_no_keys"));
+    } finally {
+      setIsTesting(false);
     }
-    setIsTesting(false);
   };
 
-  const save = (event?: ReactMouseEvent<HTMLButtonElement>) => {
+  const save = async (event?: ReactMouseEvent<HTMLButtonElement>) => {
     event?.preventDefault();
     event?.stopPropagation();
+    setIsSaving(true);
     try {
-      localStorage.setItem(
-        AI_KEYS_STORAGE_KEY,
-        JSON.stringify({
-          mistralKeys: mistralKeys.filter((key) => key.trim().length > 0)
-        })
-      );
+      const detected = await detectAndNormalizeAiProviderKeys(providerKeys);
+      writeStoredAiProviderKeys(detected);
+      setProviderKeys(ensureAiProviderKeyDrafts(detected));
       setMessage(t("settings.msg_saved_local"));
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       setMessage(reason);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -126,31 +153,25 @@ export function AiSettingsModal({
         <div className="space-y-8 px-8 py-8">
           <section>
             <p className="mb-3 text-sm uppercase tracking-[0.14em] text-[var(--ode-text-dim)]">
-              {t("settings.mistral_title")}
+              {t("settings.ai_provider_keys_title")}
             </p>
             <div className="space-y-3">
-              {mistralKeys.map((key, idx) => (
-                <div key={`mistral-${idx}`} className="flex items-center gap-2">
+              {providerKeys.map((entry, idx) => (
+                <div key={`provider-key-${idx}`} className="flex items-center gap-2">
+                  <span className="min-w-[9rem] rounded-xl border border-[var(--ode-border)] bg-[rgba(7,36,57,0.32)] px-3 py-3 text-center text-[0.8rem] font-medium text-[var(--ode-text-dim)]">
+                    {entry.providerLabel}
+                  </span>
                   <input
                     type="password"
-                    value={key}
-                    onChange={(event) => {
-                      const next = [...mistralKeys];
-                      next[idx] = event.target.value;
-                      setMistralKeys(next);
-                    }}
+                    value={entry.apiKey}
+                    onChange={(event) => updateProviderKey(idx, event.target.value)}
                     className="ode-input h-12 w-full rounded-xl px-4"
-                    placeholder={t("settings.mistral_placeholder", { index: idx + 1 })}
+                    placeholder={t("settings.ai_provider_placeholder", { index: idx + 1 })}
                   />
                   <button
                     type="button"
                     className="ode-icon-btn h-12 w-12"
-                    onClick={() =>
-                      updateList(
-                        mistralKeys.filter((_, itemIdx) => itemIdx !== idx),
-                        setMistralKeys
-                      )
-                    }
+                    onClick={() => updateList(providerKeys.filter((_, itemIdx) => itemIdx !== idx))}
                   >
                     -
                   </button>
@@ -159,7 +180,7 @@ export function AiSettingsModal({
               <button
                 type="button"
                 className="ode-action-btn h-12 w-full rounded-xl border border-dashed border-[var(--ode-border-accent)] text-[var(--ode-text-dim)]"
-                onClick={() => setMistralKeys((prev) => [...prev, ""])}
+                onClick={() => updateList([...providerKeys, createEmptyStoredAiProviderKey()])}
               >
                 {t("settings.add_key")}
               </button>
@@ -179,7 +200,7 @@ export function AiSettingsModal({
               type="button"
               className="ode-secondary-btn h-12 px-6"
               onClick={runTest}
-              disabled={isTesting || isCleaning}
+              disabled={isTesting || isCleaning || isSaving}
             >
               {isTesting ? t("settings.testing") : t("settings.test_keys")}
             </button>
@@ -200,8 +221,9 @@ export function AiSettingsModal({
               type="button"
               className="ode-primary-btn h-12 px-9"
               onClick={(event) => save(event)}
+              disabled={isSaving || isTesting || isCleaning}
             >
-              {t("settings.save")}
+              {isSaving ? t("settings.saving_keys") : t("settings.save")}
             </button>
           </div>
         </div>

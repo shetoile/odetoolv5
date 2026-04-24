@@ -309,7 +309,13 @@ export function useWorkspaceActions({
       if (!nextProjectId) {
         await navigateTo(null);
         setPrimarySelection(null, "tree");
+        return;
       }
+      const nextProject = projects.find((item) => item.id === nextProjectId) ?? null;
+      if (!nextProject) return;
+      await navigateTo(nextProject.rootNodeId);
+      ensureExpandedRoot(setExpandedIds, nextProject.rootNodeId);
+      setPrimarySelection(nextProject.rootNodeId, "tree");
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       setProjectError(t("project.delete_failed", { reason }));

@@ -134,6 +134,8 @@ export function NodeContextMenu({
   const showTimelineWorkareaRemove = isTimelineWorkareaMenu && contextMenuNodeWorkareaKind !== null;
   const showStructureLockAction = canToggleStructureLock;
   const showAccessPolicyAction = canEditAccessPolicy;
+  void canCreateChantier;
+  void canSaveAsOrganisationModel;
   const structureLockLabel = contextMenuNodeStructureLocked
     ? t("context.unlock_structure")
     : t("context.lock_structure");
@@ -512,19 +514,12 @@ export function NodeContextMenu({
                 <div className="ode-context-separator" />
               </>
             ) : null}
-            {showStructureLockAction || canCreateChantier ? (
+            {showStructureLockAction ? (
               <>
                 {showStructureLockAction ? (
                   <ContextMenuItem
                     label={structureLockLabel}
                     action={contextMenuNodeStructureLocked ? "unlock_structure" : "lock_structure"}
-                    onRunAction={onRunAction}
-                  />
-                ) : null}
-                {canCreateChantier ? (
-                  <ContextMenuItem
-                    label={t("context.create_chantier")}
-                    action="create_chantier"
                     onRunAction={onRunAction}
                   />
                 ) : null}
@@ -614,14 +609,7 @@ export function NodeContextMenu({
               onRunAction={onRunAction}
               shortcutLabel="Ctrl+D"
             />
-            {canSaveAsOrganisationModel || canSaveAsDatabaseTemplate ? <div className="ode-context-separator" /> : null}
-            {canSaveAsOrganisationModel ? (
-              <ContextMenuItem
-                label={t("context.save_as_organisation_model")}
-                action="save_as_organisation_model"
-                onRunAction={onRunAction}
-              />
-            ) : null}
+            {canSaveAsDatabaseTemplate ? <div className="ode-context-separator" /> : null}
             {canSaveAsDatabaseTemplate ? (
               <ContextMenuItem
                 label={t("context.save_as_database_template")}

@@ -604,15 +604,8 @@ export function SmartEmptyState({ t }: { t: (key: string) => string }) {
 export function SearchGlyph() {
   return (
     <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden>
-      <defs>
-        <linearGradient id="odeSearchGlow" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#43d3ff" />
-          <stop offset="100%" stopColor="#1f9fe0" />
-        </linearGradient>
-      </defs>
-      <circle cx="10" cy="10" r="6" fill="rgba(32,156,220,0.2)" stroke="url(#odeSearchGlow)" strokeWidth="1.8" />
-      <circle cx="8.2" cy="8" r="1.05" fill="#79e2ff" opacity="0.95" />
-      <path d="M14.6 14.6L20 20" stroke="url(#odeSearchGlow)" strokeWidth="2.1" strokeLinecap="round" />
+      <circle cx="10" cy="10" r="6" fill="currentColor" fillOpacity="0.12" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M14.6 14.6L20 20" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" />
     </svg>
   );
 }

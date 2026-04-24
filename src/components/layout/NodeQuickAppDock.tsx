@@ -15,6 +15,7 @@ interface NodeQuickAppDockProps {
   onReorderQuickApps: (quickApps: NodeQuickAppItem[]) => void;
   onManageQuickApps: () => void;
   leadingSlot?: ReactNode;
+  compact?: boolean;
 }
 
 type QuickAppDropPlacement = "before" | "after";
@@ -115,7 +116,8 @@ export function NodeQuickAppDock({
   onLaunchQuickApp,
   onReorderQuickApps,
   onManageQuickApps,
-  leadingSlot
+  leadingSlot,
+  compact = false
 }: NodeQuickAppDockProps) {
   const [orderedQuickApps, setOrderedQuickApps] = useState<NodeQuickAppItem[]>(quickApps);
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -209,14 +211,24 @@ export function NodeQuickAppDock({
   };
 
   if (!showDock) {
-    return <div className="flex min-w-0 flex-[1.15] items-center justify-start px-2" />;
+    return compact ? null : <div className="flex min-w-0 flex-[1.15] items-center justify-start px-2" />;
   }
 
   return (
-    <div className="flex min-w-0 flex-[1.15] items-center justify-start px-2">
-      <div className="flex min-w-0 max-w-[760px] items-center gap-1.5 rounded-[15px] border border-[rgba(61,146,194,0.18)] bg-[linear-gradient(180deg,rgba(7,30,47,0.68),rgba(2,15,26,0.86))] px-1.5 py-1 shadow-[0_14px_32px_rgba(0,0,0,0.22)] backdrop-blur-[10px]">
+    <div
+      className={
+        compact
+          ? "flex min-w-0 items-center justify-end"
+          : "flex min-w-0 flex-[1.15] items-center justify-start px-2"
+      }
+    >
+      <div
+        className={`flex min-w-0 items-center gap-1.5 rounded-[15px] bg-[rgba(7,30,47,0.34)] px-1.5 py-1 backdrop-blur-[10px] ${
+          compact ? "max-w-[360px]" : "max-w-[760px]"
+        }`}
+      >
         {hasLeadingSlot ? (
-          <div className="mr-1 flex shrink-0 items-center border-r border-[rgba(79,154,194,0.14)] pr-1.5">
+          <div className="mr-1 flex shrink-0 items-center pr-1.5">
             {leadingSlot}
           </div>
         ) : null}
@@ -241,7 +253,7 @@ export function NodeQuickAppDock({
         </div>
 
         {showManageButton ? (
-          <div className="ml-1 flex shrink-0 items-center border-l border-[rgba(79,154,194,0.14)] pl-1.5">
+          <div className="ml-1 flex shrink-0 items-center pl-1.5">
             <OdeTooltip label={quickApps.length > 0 ? t("quick_apps.manage") : t("quick_apps.add_new")} side="top">
               <button
                 type="button"

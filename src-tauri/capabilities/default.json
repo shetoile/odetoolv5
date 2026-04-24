@@ -1,10 +1,11 @@
 {
-  "$schema": "../gen/schemas/capability.json",
+  "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default permissions for ODETool Pro",
   "windows": ["main", "odetool-panel-*", "odetool-node-*"],
   "permissions": [
     "core:default",
+    "core:event:default",
     "core:window:default",
     "core:window:allow-create",
     "core:window:allow-close",

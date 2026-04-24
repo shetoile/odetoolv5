@@ -6,6 +6,7 @@ import {
   useState,
   type DragEvent,
   type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   type RefObject
 } from "react";
 import { NodeGlyph, UploadGlyphSmall } from "@/components/Icons";
@@ -749,6 +750,7 @@ interface DesktopContentPanelProps {
   onOpenReusableLibraryItem: (itemId: string) => Promise<void> | void;
   onOpenReusableLibraryItemContextMenu: (event: ReactMouseEvent<HTMLElement>, itemId: string) => void;
   onTriggerUpload: () => void;
+  dashboardEmbeddedContent?: ReactNode;
   onSetEditingValue: (value: string) => void;
   onOpenInlineEditContextMenu: (event: ReactMouseEvent<HTMLInputElement>) => void;
   onCommitInlineEdit: () => Promise<void> | void;
@@ -853,6 +855,7 @@ export function DesktopContentPanel({
   onOpenReusableLibraryItem,
   onOpenReusableLibraryItemContextMenu,
   onTriggerUpload,
+  dashboardEmbeddedContent,
   onSetEditingValue,
   onOpenInlineEditContextMenu,
   onCommitInlineEdit,
@@ -862,6 +865,15 @@ export function DesktopContentPanel({
   const rootInteractiveSelector =
     ".ode-grid-card, .ode-details-row, .ode-quick-mind-favorite, .ode-quick-mind-group-card, .ode-quick-mind-group-branch, .ode-mind-root-button";
   const dashboardRootChildren = currentFolderNode ? byParent.get(currentFolderNode.id) ?? [] : [];
+  const showDashboardPanel =
+    desktopViewMode === "dashboard" &&
+    Boolean(
+      currentFolderNode &&
+        !isFileLikeNode(currentFolderNode) &&
+        currentFolderNode.properties?.odeDashboardWidget !== true &&
+        (currentFolderNode.properties?.odeDashboard === true ||
+          dashboardRootChildren.some((node) => node.properties?.odeDashboardWidget === true))
+    );
   const chantierStatusCopy = useMemo(() => getChantierStatusCopy(language), [language]);
   const detailsScrollRef = useRef<HTMLDivElement | null>(null);
   const verticalBranchesRef = useRef<HTMLDivElement | null>(null);
@@ -979,10 +991,6 @@ export function DesktopContentPanel({
     quickAccessMindMapGroups.length === 0 && quickAccessMindMapDirectFavorites.length === 0;
   const nodeTreeMindMapBranchNodes = useMemo(
     () => gridNodes.filter((node) => !isFileLikeNode(node)),
-    [gridNodes]
-  );
-  const nodeTreeMindMapFileNodes = useMemo(
-    () => gridNodes.filter((node) => isFileLikeNode(node)),
     [gridNodes]
   );
   const gridBranchNodes = useMemo(
@@ -1514,7 +1522,6 @@ export function DesktopContentPanel({
     : quickAccessMindMapDirectFavorites.length;
   const nodeTreeVerticalConnectorLineVisible = nodeTreeMindMapBranchNodes.length > 1;
   const quickAccessVerticalConnectorLineVisible = quickAccessVerticalBranchCount > 1;
-  const nodeTreeShouldShowFileStrip = nodeTreeMindMapFileNodes.length > 0;
   const quickAccessGroupLevel = useMemo(
     () => Math.min(Math.max(quickAccessMindMapRootLevel + 1, 2), 4),
     [quickAccessMindMapRootLevel]
@@ -1705,35 +1712,91 @@ export function DesktopContentPanel({
   };
 
   const renderEmptyStateAction = () => {
-    if (showUploadEmptyStateAction) {
+    const canShowUploadPrompt =
+      showUploadEmptyStateAction &&
+      emptyStateMessage !== t("grid.empty_filtered") &&
+      emptyStateMessage !== t("favorites.empty_group_hint");
+    const canShowCreatePrompt =
+      showCreateFirstNodeAction &&
+      emptyStateMessage !== t("grid.empty_filtered") &&
+      emptyStateMessage !== t("favorites.empty_group_hint");
+
+    if (canShowUploadPrompt) {
       return (
-        <OdeTooltip label={t("desktop.upload")} side="bottom">
-          <button
-            type="button"
-            className="ode-text-btn mt-3 inline-flex h-9 w-9 items-center justify-center px-0 text-[0.92rem]"
-            onClick={onTriggerUpload}
-            aria-label={t("desktop.upload")}
-          >
-            <UploadGlyphSmall />
-          </button>
-        </OdeTooltip>
+        <button
+          type="button"
+          className="inline-flex h-11 items-center justify-center gap-2 rounded-[14px] border border-[rgba(92,189,232,0.34)] bg-[rgba(10,50,74,0.4)] px-5 text-[0.94rem] font-medium text-[var(--ode-text)] transition hover:-translate-y-[1px] hover:bg-[rgba(12,58,86,0.54)]"
+          onClick={onTriggerUpload}
+          aria-label={t("desktop.upload")}
+        >
+          <UploadGlyphSmall />
+          <span>{t("desktop.upload")}</span>
+        </button>
       );
     }
-    if (showCreateFirstNodeAction) {
+    if (canShowCreatePrompt) {
       return (
-        <OdeTooltip label={t("grid.add_first_node")} side="bottom">
-          <button
-            type="button"
-            className="ode-text-btn mt-3 h-9 w-9 px-0 text-[1.15rem] font-semibold"
-            onClick={onCreateFirstNode}
-            aria-label={t("grid.add_first_node")}
-          >
-            +
-          </button>
-        </OdeTooltip>
+        <button
+          type="button"
+          className="inline-flex h-11 items-center justify-center rounded-[14px] border border-[rgba(92,189,232,0.24)] bg-[rgba(7,36,57,0.24)] px-5 text-[0.94rem] font-medium text-[var(--ode-text)] transition hover:-translate-y-[1px] hover:bg-[rgba(10,50,77,0.36)]"
+          onClick={onCreateFirstNode}
+          aria-label={t("grid.add_first_node")}
+        >
+          {t("grid.add_first_node")}
+        </button>
       );
     }
     return null;
+  };
+
+  const renderEmptyStatePanel = () => {
+    const canShowUploadPrompt =
+      showUploadEmptyStateAction &&
+      emptyStateMessage !== t("grid.empty_filtered") &&
+      emptyStateMessage !== t("favorites.empty_group_hint");
+    const canShowCreatePrompt =
+      showCreateFirstNodeAction &&
+      emptyStateMessage !== t("grid.empty_filtered") &&
+      emptyStateMessage !== t("favorites.empty_group_hint");
+    const title = canShowUploadPrompt
+      ? t("desktop.empty_upload_title")
+      : canShowCreatePrompt
+        ? t("grid.empty_create_title")
+        : emptyStateMessage;
+    const hint = canShowUploadPrompt
+      ? t("desktop.empty_upload_hint")
+      : canShowCreatePrompt
+        ? t("grid.empty_create_hint")
+        : emptyStateMessage;
+
+    return (
+      <div className="mx-auto mt-12 max-w-[560px] rounded-[24px] border border-dashed border-[var(--ode-border-strong)] bg-[rgba(4,23,39,0.56)] px-8 py-10 text-center shadow-[inset_0_1px_0_rgba(120,214,255,0.04)]">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-[18px] border border-[rgba(92,189,232,0.22)] bg-[rgba(7,36,57,0.42)] text-[var(--ode-text)]">
+          <span className="scale-[1.2]">
+            {canShowUploadPrompt ? (
+              <UploadGlyphSmall />
+            ) : (
+              <span className="text-[1.55rem] font-semibold leading-none">+</span>
+            )}
+          </span>
+        </div>
+        <div className="mt-4 text-[1.08rem] font-semibold text-[var(--ode-text)]">{title}</div>
+        <div className="mt-2 text-[0.94rem] leading-6 text-[var(--ode-text-muted)]">{hint}</div>
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
+          {renderEmptyStateAction()}
+          {canShowUploadPrompt && canShowCreatePrompt ? (
+            <button
+              type="button"
+              className="inline-flex h-11 items-center justify-center rounded-[14px] border border-[rgba(92,189,232,0.18)] bg-transparent px-5 text-[0.92rem] font-medium text-[var(--ode-text-dim)] transition hover:bg-[rgba(8,44,71,0.24)] hover:text-[var(--ode-text)]"
+              onClick={onCreateFirstNode}
+              aria-label={t("grid.add_first_node")}
+            >
+              {t("grid.add_first_node")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
   };
 
   const renderChantierMeta = (node: AppNode, options?: { compact?: boolean }) => {
@@ -2924,21 +2987,6 @@ export function DesktopContentPanel({
     );
   };
 
-  const renderNodeTreeMindFileStrip = () => {
-    if (!nodeTreeShouldShowFileStrip) return null;
-
-    return (
-      <section className="ode-mind-file-section">
-        <div className="ode-mind-file-section-title">
-          {t("desktop.mindmap_files")} ({nodeTreeMindMapFileNodes.length})
-        </div>
-        <div className="ode-mind-file-grid">
-          {nodeTreeMindMapFileNodes.map((node) => renderNodeTreeMindNodeCard(node, "ode-mind-file-card"))}
-        </div>
-      </section>
-    );
-  };
-
   const renderQuickAccessDirectFavorite = (
     node: AppNode,
     side: "left" | "right" | "vertical"
@@ -3132,15 +3180,10 @@ export function DesktopContentPanel({
       </div>
     );
   }
-  if (
-    currentFolderNode &&
-    !isFileLikeNode(currentFolderNode) &&
-    currentFolderNode.properties?.odeDashboardWidget !== true &&
-    desktopViewMode === "dashboard"
-  ) {
+  if (showDashboardPanel) {
     return (
       <div
-        className="flex-1 min-h-0 overflow-auto px-5 py-6"
+        className={`flex-1 min-h-0 ${dashboardEmbeddedContent ? "flex overflow-hidden px-0 py-0" : "overflow-auto px-5 py-6"}`}
         data-ode-surface="grid"
         onMouseDownCapture={(event) => {
           const target = event.target as HTMLElement | null;
@@ -3151,16 +3194,18 @@ export function DesktopContentPanel({
         }}
         onContextMenu={onOpenSurfaceContextMenu}
       >
-        <DashboardPanel
-          rootNode={currentFolderNode}
-          childNodes={dashboardRootChildren}
-          allNodes={allNodes}
-          onCreateWidget={onCreateDashboardWidget}
-          onRenameWidget={onRenameDashboardWidget}
-          onSaveWidgetProperties={onSaveDashboardWidgetProperties}
-          onMoveWidget={onMoveDashboardWidget}
-          onDeleteWidget={onDeleteDashboardWidget}
-        />
+        {dashboardEmbeddedContent ?? (
+          <DashboardPanel
+            rootNode={currentFolderNode!}
+            childNodes={dashboardRootChildren}
+            allNodes={allNodes}
+            onCreateWidget={onCreateDashboardWidget}
+            onRenameWidget={onRenameDashboardWidget}
+            onSaveWidgetProperties={onSaveDashboardWidgetProperties}
+            onMoveWidget={onMoveDashboardWidget}
+            onDeleteWidget={onDeleteDashboardWidget}
+          />
+        )}
       </div>
     );
   }
@@ -3238,23 +3283,8 @@ export function DesktopContentPanel({
               {gridBranchNodes.map((node) => renderDesktopGridCard(node))}
             </div>
           ) : null}
-          {gridFileNodes.length > 0 ? (
-            <section className={`ode-file-trailing-section ${gridBranchNodes.length > 0 ? "ode-file-trailing-section-separated" : ""}`.trim()}>
-              <div className="ode-file-trailing-title">
-                {t("desktop.mindmap_files")} ({gridFileNodes.length})
-              </div>
-              <div
-                className="grid gap-6"
-                style={{ gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))" }}
-              >
-                {gridFileNodes.map((node) => renderDesktopGridCard(node))}
-              </div>
-            </section>
-          ) : null}
           {showEmptyState && gridNodes.length === 0 ? (
-            <div className="mt-12 rounded-2xl border border-dashed border-[var(--ode-border-strong)] bg-[rgba(4,23,39,0.5)] px-6 py-8 text-center text-[var(--ode-text-muted)]">
-              {renderEmptyStateAction()}
-            </div>
+            renderEmptyStatePanel()
           ) : null}
         </>
       ) : desktopViewMode === "mindmap" ? (
@@ -3347,11 +3377,8 @@ export function DesktopContentPanel({
                     </div>
                   </div>
                 )}
-                {renderNodeTreeMindFileStrip()}
                 {showEmptyState && gridNodes.length === 0 ? (
-                  <div className="mt-8 rounded-2xl border border-dashed border-[var(--ode-border-strong)] bg-[rgba(4,23,39,0.5)] px-6 py-8 text-center text-[var(--ode-text-muted)]">
-                    {renderEmptyStateAction()}
-                  </div>
+                  renderEmptyStatePanel()
                 ) : null}
               </>
             )}
@@ -3474,9 +3501,7 @@ export function DesktopContentPanel({
               <div style={{ height: `${virtualDetailsWindow.bottomSpacer}px` }} />
             ) : null}
             {showEmptyState && gridNodes.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-[var(--ode-border-strong)] bg-[rgba(4,23,39,0.5)] px-6 py-8 text-center text-[var(--ode-text-muted)]">
-                {renderEmptyStateAction()}
-              </div>
+              renderEmptyStatePanel()
             ) : null}
           </div>
         </div>

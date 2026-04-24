@@ -30,12 +30,28 @@ export function buildAiCommandContext(options: {
   workspaceName: string;
   view: "desktop" | "timeline";
   selectedLabel: string;
+  selectedPathLabel?: string | null;
+  documentScopeLabel?: string | null;
+  objective?: string | null;
+  scheduleStatus?: string | null;
+  documentLabels?: string[];
+  quickAppCatalogLines?: string | null;
+  groundedQuickAppEvidenceLines?: string | null;
 }): string {
   return [
     `Date: ${options.date}`,
     `Workspace: ${options.workspaceName}`,
     `View: ${options.view}`,
-    `Selected node: ${options.selectedLabel}`
+    `Selected node: ${options.selectedLabel}`,
+    `Selected path: ${options.selectedPathLabel?.trim() || "(none)"}`,
+    `Document scope: ${options.documentScopeLabel?.trim() || "node"}`,
+    `Objective: ${options.objective?.trim() || "(none)"}`,
+    `Schedule status: ${options.scheduleStatus?.trim() || "(none)"}`,
+    `Document sources: ${options.documentLabels?.join(", ") || "(none)"}`,
+    "Quick apps:",
+    options.quickAppCatalogLines?.trim() || "- none",
+    "Grounded quick-app evidence:",
+    options.groundedQuickAppEvidenceLines?.trim() || "- none"
   ].join("\n");
 }
 

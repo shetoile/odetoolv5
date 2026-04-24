@@ -181,6 +181,18 @@ export async function importFilesToNode(
   return callNative<AppNode[]>("import_files_to_node", { parentNodeId, sourcePaths });
 }
 
+export type ImportedFilePayload = {
+  name: string;
+  bytesBase64: string;
+};
+
+export async function importFilePayloadsToNode(
+  parentNodeId: string | null,
+  filePayloads: ImportedFilePayload[]
+): Promise<AppNode[]> {
+  return callNative<AppNode[]>("import_file_payloads_to_node", { parentNodeId, filePayloads });
+}
+
 export async function openNodeFile(nodeId: string): Promise<void> {
   await callNative("open_node_file", { nodeId });
 }
@@ -193,6 +205,22 @@ export async function extractDocumentText(
     filePath,
     extension: options?.extension,
     nodeId: options?.nodeId
+  });
+}
+
+export type QuickAppUrlPreview = {
+  url: string;
+  finalUrl: string;
+  title: string | null;
+  description: string | null;
+  excerpt: string | null;
+  contentType: string | null;
+  reachable: boolean;
+};
+
+export async function fetchQuickAppUrlPreview(url: string): Promise<QuickAppUrlPreview | null> {
+  return callNative<QuickAppUrlPreview | null>("fetch_quick_app_url_preview", {
+    url
   });
 }
 
@@ -223,6 +251,10 @@ export async function getWindowsInstalledFontFamilies(): Promise<string[]> {
 
 export async function setWindowsClipboardFilePaths(paths: string[]): Promise<void> {
   await callNative("set_windows_clipboard_file_paths", { paths });
+}
+
+export async function getWindowsClipboardFilePaths(): Promise<string[]> {
+  return callNative<string[]>("get_windows_clipboard_file_paths");
 }
 
 export async function pickWindowsFilesForImport(): Promise<string[]> {
@@ -351,6 +383,36 @@ export async function readLocalImageDataUrl(path: string): Promise<string | null
 
 export async function readLocalFileDataUrl(path: string): Promise<string | null> {
   return callNative<string | null>("read_local_file_data_url", { path });
+}
+
+export async function readClipboardImageDataUrl(): Promise<string | null> {
+  return callNative<string | null>("read_clipboard_image_data_url");
+}
+
+export async function extractDocumentTextFromPayload(
+  fileName: string,
+  bytesBase64: string
+): Promise<string | null> {
+  return callNative<string | null>("extract_document_text_from_payload", {
+    fileName,
+    bytesBase64
+  });
+}
+
+export async function prepareQuickAppHtmlInstance(
+  templatePath: string,
+  instanceFileName: string,
+  options?: {
+    templateBaseHref?: string | null;
+    storageNamespace?: string | null;
+  }
+): Promise<string> {
+  return callNative<string>("prepare_quick_app_html_instance", {
+    templatePath,
+    instanceFileName,
+    templateBaseHref: options?.templateBaseHref ?? null,
+    storageNamespace: options?.storageNamespace ?? null
+  });
 }
 
 export async function exportPowerPointSlides(filePath: string): Promise<string[]> {

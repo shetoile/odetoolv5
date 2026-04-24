@@ -1,6 +1,8 @@
-import { UploadGlyphSmall } from "@/components/Icons";
+import { EditGlyphSmall, PlusGlyphSmall, SparkGlyphSmall, UploadGlyphSmall } from "@/components/Icons";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
+import { QuickAppIcon } from "@/components/quick-apps/QuickAppIcon";
 import type { TranslationParams } from "@/lib/i18n";
+import type { NodeQuickAppItem } from "@/lib/nodeQuickApps";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
 
@@ -15,9 +17,15 @@ interface DesktopNodeTabBarProps {
   activeTabId: string | null;
   isSidebarCollapsed?: boolean;
   showUploadAction?: boolean;
+  showAiAction?: boolean;
+  showQuickAppsAction?: boolean;
+  activeTabQuickApps?: NodeQuickAppItem[];
   onActivateTab: (nodeId: string) => void;
   onCloseTab: (nodeId: string) => void;
   onTriggerUpload?: () => void;
+  onOpenAiForActiveTab?: () => void;
+  onLaunchQuickAppForActiveTab?: (item: NodeQuickAppItem) => void;
+  onManageQuickAppsForActiveTab?: () => void;
 }
 
 export function DesktopNodeTabBar({
@@ -26,11 +34,17 @@ export function DesktopNodeTabBar({
   activeTabId,
   isSidebarCollapsed = false,
   showUploadAction = false,
+  showAiAction = false,
+  showQuickAppsAction = false,
+  activeTabQuickApps = [],
   onActivateTab,
   onCloseTab,
-  onTriggerUpload
+  onTriggerUpload,
+  onOpenAiForActiveTab,
+  onLaunchQuickAppForActiveTab,
+  onManageQuickAppsForActiveTab
 }: DesktopNodeTabBarProps) {
-  if (tabs.length === 0 && !showUploadAction) return null;
+  if (tabs.length === 0 && !showUploadAction && !showAiAction && !showQuickAppsAction) return null;
 
   return (
     <div className={`bg-transparent py-1 ${isSidebarCollapsed ? "pl-0 pr-4" : "px-4"}`}>
@@ -39,7 +53,7 @@ export function DesktopNodeTabBar({
           <OdeTooltip label={t("desktop.upload")} side="top" align="start">
             <button
               type="button"
-              className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-[rgba(86,175,214,0.24)] bg-[linear-gradient(180deg,rgba(10,45,66,0.82),rgba(6,27,43,0.94))] text-[var(--ode-text-dim)] shadow-[inset_0_1px_0_rgba(135,220,255,0.1)] transition hover:border-[rgba(111,209,248,0.42)] hover:text-[var(--ode-text)]"
+              className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-transparent bg-[rgba(10,45,66,0.46)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(12,54,79,0.62)] hover:text-[var(--ode-text)]"
               onClick={() => {
                 onTriggerUpload?.();
               }}
@@ -48,6 +62,54 @@ export function DesktopNodeTabBar({
               <UploadGlyphSmall />
             </button>
           </OdeTooltip>
+        ) : null}
+        {showAiAction && activeTabId ? (
+          <OdeTooltip label={t("command.title")} side="top" align="start">
+            <button
+              type="button"
+              className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-transparent bg-[rgba(10,45,66,0.46)] px-0 text-[var(--ode-text-dim)] transition hover:bg-[rgba(12,54,79,0.62)] hover:text-[var(--ode-text)]"
+              onClick={() => {
+                onOpenAiForActiveTab?.();
+              }}
+              aria-label={t("command.title")}
+            >
+              <SparkGlyphSmall />
+            </button>
+          </OdeTooltip>
+        ) : null}
+        {showQuickAppsAction && activeTabId ? (
+          <>
+            {activeTabQuickApps.length > 0 ? (
+              <div className="flex max-w-[340px] items-center gap-1 overflow-x-auto rounded-[12px] bg-[rgba(10,45,66,0.34)] px-1 py-1">
+                {activeTabQuickApps.map((item) => (
+                  <OdeTooltip key={item.id} label={item.label || t("quick_apps.scope_tab")} side="top" align="start">
+                    <button
+                      type="button"
+                      className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-transparent p-0 text-[var(--ode-text-dim)] transition hover:-translate-y-[1px] hover:bg-[rgba(18,75,108,0.22)] hover:text-[var(--ode-text)]"
+                      onClick={() => {
+                        onLaunchQuickAppForActiveTab?.(item);
+                      }}
+                      aria-label={t("quick_apps.open_item", { name: item.label })}
+                    >
+                      <QuickAppIcon item={item} variant="dock" />
+                    </button>
+                  </OdeTooltip>
+                ))}
+              </div>
+            ) : null}
+            <OdeTooltip label={t("quick_apps.scope_tab")} side="top" align="start">
+              <button
+                type="button"
+                className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-transparent bg-[rgba(10,45,66,0.46)] px-0 text-[var(--ode-text-dim)] transition hover:bg-[rgba(12,54,79,0.62)] hover:text-[var(--ode-text)]"
+                onClick={() => {
+                  onManageQuickAppsForActiveTab?.();
+                }}
+                aria-label={t("quick_apps.scope_tab")}
+              >
+                {activeTabQuickApps.length > 0 ? <EditGlyphSmall /> : <PlusGlyphSmall />}
+              </button>
+            </OdeTooltip>
+          </>
         ) : null}
         {tabs.map((tab) => {
           const active = tab.nodeId === activeTabId;

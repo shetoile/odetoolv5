@@ -14,6 +14,22 @@ export function resolveSelectionSurfaceForKeyboardSurface(
   return "grid";
 }
 
+export function resolveActiveSelectionSurface(params: {
+  desktopViewMode?: DesktopViewMode;
+  keyboardSurface: KeyboardSurface;
+  selectionSurface?: SelectionSurface;
+  workspaceMode: WorkspaceMode;
+}): SelectionSurface {
+  const selectionSurface = params.selectionSurface ?? "grid";
+  if (params.desktopViewMode === "library") return "tree";
+  if (params.keyboardSurface === "tree") return "tree";
+  if (params.keyboardSurface === "timeline") return "timeline";
+  if (params.keyboardSurface === "procedure") return selectionSurface;
+  if (selectionSurface === "tree") return "tree";
+  if (selectionSurface === "timeline" && params.workspaceMode === "timeline") return "timeline";
+  return "grid";
+}
+
 export function resolveKeyboardCreationSurface(params: {
   keyboardSurface: KeyboardSurface;
   workspaceMode: WorkspaceMode;

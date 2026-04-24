@@ -1,5 +1,7 @@
 import type { AiEngine } from "@/ai/core/aiContracts";
 import { runAiPromptAnalysis } from "@/ai/core/aiOrchestrator";
+import type { AiPromptMessageContentPart } from "@/lib/aiCommandAttachments";
+import type { SupportedAiProviderId } from "@/lib/aiProviderKeys";
 
 export type StructuredAiPromptIntent =
   | "planning_deliverables"
@@ -29,9 +31,11 @@ export class StructuredAiPromptError extends Error {
 
 export interface StructuredAiPromptRequest<T> {
   apiKey: string;
+  providerId?: SupportedAiProviderId;
   intent: StructuredAiPromptIntent;
   systemPrompt: string;
   userPrompt: string;
+  userContent?: AiPromptMessageContentPart[];
   invalidJsonMessage: string;
   malformedJsonMessage: string;
   aiEngine?: AiEngine;
@@ -114,8 +118,10 @@ export async function runStructuredAiPromptWithRaw<T>(
   try {
     raw = await runAiPromptAnalysis({
       apiKey: request.apiKey,
+      providerId: request.providerId,
       systemPrompt: request.systemPrompt,
       userPrompt: request.userPrompt,
+      userContent: request.userContent,
       aiEngine: request.aiEngine ?? DEFAULT_ENGINE_BY_INTENT[request.intent]
     });
   } catch {
@@ -140,6 +146,7 @@ export async function runStructuredAiPromptWithRaw<T>(
     try {
       repairedRaw = await runAiPromptAnalysis({
         apiKey: request.apiKey,
+        providerId: request.providerId,
         systemPrompt: [
           "You repair AI answers into valid JSON.",
           "Return only one valid JSON object with no markdown or commentary.",

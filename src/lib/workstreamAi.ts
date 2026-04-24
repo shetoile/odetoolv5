@@ -1,6 +1,10 @@
 import { runStructuredAiPrompt, clampStructuredConfidence } from "@/ai/core/runStructuredPrompt";
 import { buildAiOutputLanguageInstruction } from "@/ai/planning/outputLanguage";
 import {
+  buildAiPromptInput,
+  type AiCommandAttachment
+} from "@/lib/aiCommandAttachments";
+import {
   buildAiKnowledgePack,
   buildDeliverablePlanningContext,
   buildTaskPlanningContext,
@@ -29,6 +33,7 @@ export interface GenerateWorkstreamTaskProposalInput {
   sources: ODEWorkstreamSource[];
   approvedExamplesSummary?: string;
   capabilityGuidanceSummary?: string;
+  promptAttachments?: AiCommandAttachment[];
 }
 
 export interface GenerateDeliverableProposalInput {
@@ -41,6 +46,7 @@ export interface GenerateDeliverableProposalInput {
   sources: ODEWorkstreamSource[];
   approvedExamplesSummary?: string;
   capabilityGuidanceSummary?: string;
+  promptAttachments?: AiCommandAttachment[];
 }
 
 function normalizeStatus(value: unknown): ScheduleStatus {
@@ -109,11 +115,17 @@ export async function generateDeliverableProposal(
     "- No extra keys. No markdown."
   ].join("\n");
 
+  const promptInput = buildAiPromptInput(userPrompt, input.promptAttachments, {
+    aiEngine: "cloud",
+    attachmentHeading: "Temporary prompt attachments:"
+  });
+
   return runStructuredAiPrompt({
     apiKey: input.apiKey,
     intent: "planning_deliverables",
     systemPrompt,
-    userPrompt,
+    userPrompt: promptInput.userPrompt,
+    userContent: promptInput.userContent,
     invalidJsonMessage: "AI returned an invalid deliverable proposal.",
     malformedJsonMessage: "AI returned malformed deliverable proposal JSON.",
     parse: (parsed) => {
@@ -227,11 +239,17 @@ export async function generateWorkstreamTaskProposal(
     "- No extra keys. No markdown."
   ].join("\n");
 
+  const promptInput = buildAiPromptInput(userPrompt, input.promptAttachments, {
+    aiEngine: "cloud",
+    attachmentHeading: "Temporary prompt attachments:"
+  });
+
   return runStructuredAiPrompt({
     apiKey: input.apiKey,
     intent: "planning_tasks",
     systemPrompt,
-    userPrompt,
+    userPrompt: promptInput.userPrompt,
+    userContent: promptInput.userContent,
     invalidJsonMessage: "AI returned an invalid workstream proposal.",
     malformedJsonMessage: "AI returned malformed workstream proposal JSON.",
     parse: (parsed) => {

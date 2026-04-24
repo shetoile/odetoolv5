@@ -1,8 +1,8 @@
 import { useEffect, type Dispatch, type SetStateAction } from "react";
 import {
+  resolveActiveSelectionSurface,
   isTimelineKeyboardSurfaceActive,
   resolveGridNavigationColumnCount,
-  resolveSelectionSurfaceForKeyboardSurface,
   type MindMapOrientation
 } from "@/features/workspace/keyboard";
 import type { KeyboardSurface } from "@/features/workspace/selection";
@@ -12,6 +12,7 @@ import { ROOT_PARENT_ID, type AppNode } from "@/lib/types";
 type TreeRow = {
   id: string;
   node: AppNode;
+  level: number;
 };
 
 type UseKeyboardShortcutsParams = {
@@ -153,13 +154,12 @@ export function useKeyboardShortcuts({
         return;
       }
 
-      const activeSelectionSurface: SelectionSurface =
-        desktopViewMode === "library"
-          ? "tree"
-          : resolveSelectionSurfaceForKeyboardSurface(
-              keyboardSurface,
-              selectionSurface
-            );
+      const activeSelectionSurface: SelectionSurface = resolveActiveSelectionSurface({
+        desktopViewMode,
+        keyboardSurface,
+        selectionSurface,
+        workspaceMode
+      });
       const selectedId =
         (selectedNodeId && nodeById.has(selectedNodeId) ? selectedNodeId : null) ??
         Array.from(selectedNodeIds).find((id) => nodeById.has(id)) ??
@@ -181,7 +181,10 @@ export function useKeyboardShortcuts({
             : (displayedTreeIndexById.get(selectedId) ?? -1)
           : -1;
       const selectedLinearRow = selectedLinearIndex >= 0 ? linearRows[selectedLinearIndex] : null;
-      const selectedTreeNode = selectedLinearRow?.node ?? (selectedId ? nodeById.get(selectedId) ?? null : null);
+      const selectedTreeIndex =
+        selectedId !== null ? (displayedTreeIndexById.get(selectedId) ?? -1) : -1;
+      const selectedTreeRow = selectedTreeIndex >= 0 ? displayedTreeRows[selectedTreeIndex] : null;
+      const selectedTreeNode = selectedTreeRow?.node ?? selectedLinearRow?.node ?? (selectedId ? nodeById.get(selectedId) ?? null : null);
       const selectedProcedureField =
         desktopViewMode === "procedure" &&
         Boolean(
@@ -190,8 +193,6 @@ export function useKeyboardShortcuts({
               (typeof selectedTreeNode.properties?.odeProcedureFieldType === "string" &&
                 selectedTreeNode.properties.odeProcedureFieldType.trim().length > 0))
         );
-      const selectedTreeIndex =
-        selectedId !== null ? (displayedTreeIndexById.get(selectedId) ?? -1) : -1;
       const selectedGridIndex =
         selectedId !== null ? (displayedGridIndexById.get(selectedId) ?? -1) : -1;
       const favoriteGroupShortcutIndex =
@@ -220,6 +221,28 @@ export function useKeyboardShortcuts({
         if (linearSurface !== "tree" || workspaceMode === "timeline") return;
         void onBrowseTreeNode(nodeId);
       };
+      const resolveTreeSelectAllIds = (): string[] => {
+        if (displayedTreeRows.length === 0) return [];
+
+        if (selectedTreeRow) {
+          const siblingIds = displayedTreeRows
+            .filter(
+              (row) =>
+                row.level === selectedTreeRow.level &&
+                row.node.parentId === selectedTreeRow.node.parentId
+            )
+            .map((row) => row.id);
+          if (siblingIds.length > 0) return siblingIds;
+        }
+
+        const topLevel = displayedTreeRows.reduce(
+          (lowestLevel, row) => Math.min(lowestLevel, row.level),
+          Number.POSITIVE_INFINITY
+        );
+        return displayedTreeRows
+          .filter((row) => row.level === topLevel)
+          .map((row) => row.id);
+      };
 
       const moveLinearSelectionBy = (
         delta: number,
@@ -228,7 +251,12 @@ export function useKeyboardShortcuts({
         const extendRange = options?.extendRange ?? false;
         const focusOnly = options?.focusOnly ?? false;
         if (linearRows.length === 0) return;
-        const start = selectedLinearIndex >= 0 ? selectedLinearIndex : 0;
+        const start =
+          selectedLinearIndex >= 0
+            ? selectedLinearIndex
+            : delta > 0
+              ? -1
+              : 0;
         const nextIndex = Math.min(linearRows.length - 1, Math.max(0, start + delta));
         const nextId = linearRows[nextIndex].id;
 
@@ -308,8 +336,14 @@ export function useKeyboardShortcuts({
           }
           if (activeSelectionSurface === "tree" && displayedTreeRows.length > 0) {
             event.preventDefault();
-            const allIds = new Set(displayedTreeRows.map((row) => row.id));
-            const activeId = selectedId ?? displayedTreeRows[0].id;
+            // In the organisation tree, mirror Windows' current-level behavior:
+            // select the visible sibling set instead of every expanded descendant.
+            const treeSelectAllIds = resolveTreeSelectAllIds();
+            const allIds = new Set(treeSelectAllIds);
+            const activeId =
+              (selectedId && allIds.has(selectedId) ? selectedId : null) ??
+              treeSelectAllIds[0] ??
+              displayedTreeRows[0].id;
             onSetSelectedNodeId(activeId);
             onSetSelectedNodeIds(allIds);
             onSetSelectionAnchorId(activeId);

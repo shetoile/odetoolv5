@@ -1,6 +1,6 @@
 [package]
 name = "odetool-pro"
-version = "0.1.1"
+version = "0.1.9-test.1"
 description = "ODETool Pro with Tauri + Vite + SurrealDB"
 authors = ["ODETool Pro"]
 edition = "2021"
@@ -37,6 +37,7 @@ argon2 = "0.5"
 windows = { version = "0.61.3", features = [
   "Globalization",
   "Win32_Foundation",
+  "Win32_Graphics_Dwm",
   "Win32_Globalization",
   "Win32_Graphics_Gdi",
   "Win32_UI_Input_KeyboardAndMouse",

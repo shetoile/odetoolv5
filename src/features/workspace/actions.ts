@@ -51,8 +51,11 @@ export function resolveOrderedActionSelectionIds(
       : params.surface === "timeline"
         ? params.displayedTimelineIndexById
         : params.displayedTreeIndexById;
+  const visibleSurfaceIds =
+    unique.length > 1 ? unique.filter((nodeId) => orderIndexById.has(nodeId)) : unique;
+  const orderedIds = visibleSurfaceIds.length > 0 ? visibleSurfaceIds : unique;
 
-  return unique.sort((left, right) => {
+  return orderedIds.sort((left, right) => {
     const leftIndex =
       orderIndexById.get(left) ?? params.fallbackIndexById.get(left) ?? Number.MAX_SAFE_INTEGER;
     const rightIndex =

@@ -5,6 +5,7 @@ import type {
   ODEIntegratedPlanProposalItem,
   ODEWorkstreamSource
 } from "@/lib/types";
+import type { AiCommandAttachment } from "@/lib/aiCommandAttachments";
 import type { LanguageCode } from "@/lib/i18n";
 import {
   buildApprovedIntegratedPlanExamplesSummary,
@@ -22,6 +23,7 @@ export interface GenerateIntegratedPlanProposalInput {
   objective: string;
   existingDeliverables: ODEStructuredDeliverable[];
   deliverableSources: ODEWorkstreamSource[];
+  promptAttachments?: AiCommandAttachment[];
   buildTaskSources: (deliverable: ODEDeliverableProposalItem) => ODEWorkstreamSource[];
 }
 
@@ -82,7 +84,8 @@ export async function generateIntegratedPlanProposal(
     existingDeliverables: input.existingDeliverables.map((deliverable) => deliverable.title.trim()).filter((title) => title.length > 0),
     sources: input.deliverableSources,
     approvedExamplesSummary,
-    capabilityGuidanceSummary
+    capabilityGuidanceSummary,
+    promptAttachments: input.promptAttachments
   });
 
   const deliverablePlans: ODEIntegratedPlanProposalItem[] = [];
@@ -100,6 +103,7 @@ export async function generateIntegratedPlanProposal(
       existingTasks: matchedExistingDeliverable?.tasks ?? [],
       sources: input.buildTaskSources(deliverable),
       capabilityGuidanceSummary,
+      promptAttachments: input.promptAttachments,
       approvedExamplesSummary: buildApprovedIntegratedPlanExamplesSummary(approvedExamples, {
         deliverableTitle: deliverable.title,
         maxExamples: 2,

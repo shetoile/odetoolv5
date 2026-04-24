@@ -59,7 +59,7 @@ const TREE_VIRTUAL_OVERSCAN = 10;
 const TREE_VIRTUALIZE_MIN_ROWS = 180;
 const FAVORITE_GROUP_DRAG_MIME = "application/x-odetool-favorite-group-id";
 const SIDEBAR_SURFACE_PANEL_CLASS =
-  "rounded-[24px] border border-[rgba(99,198,244,0.14)] bg-[linear-gradient(180deg,rgba(4,24,39,0.92),rgba(3,18,30,0.98))] shadow-[inset_0_1px_0_rgba(125,221,255,0.05)]";
+  "rounded-[24px] bg-[linear-gradient(180deg,rgba(4,24,39,0.92),rgba(3,18,30,0.98))]";
 const TREE_ROW_LABEL_CLAMP_STYLE = {
   display: "-webkit-box",
   WebkitBoxOrient: "vertical" as const,
@@ -169,7 +169,7 @@ interface SidebarPanelProps {
   onCreateSiblingNode: (id: string, before: boolean) => Promise<void> | void;
   onCreateChildNode: (id: string) => Promise<void> | void;
   onCreateFirstNode: () => Promise<void> | void;
-  onOpenNodeTab: (id: string) => Promise<void> | void;
+  onOpenNodeTab: (id: string, options?: { preserveTreeFocus?: boolean }) => Promise<void> | void;
   onReviewFile: (id: string) => void;
 }
 
@@ -269,12 +269,30 @@ export function SidebarPanel({
   onOpenNodeTab,
   onReviewFile
 }: SidebarPanelProps) {
+  void quickAccessScopeLabel;
+  void onToggleFavoriteTreeFilter;
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const [treeScrollTop, setTreeScrollTop] = useState(0);
   const [treeViewportHeight, setTreeViewportHeight] = useState(0);
   const [draggingFavoriteGroupId, setDraggingFavoriteGroupId] = useState<string | null>(null);
   const [favoriteGroupDropTargetId, setFavoriteGroupDropTargetId] = useState<string | null>(null);
   const draggingFavoriteGroupIdRef = useRef<string | null>(null);
+  const focusTreeKeyboardSurface = () => {
+    onActivateTreeSurface();
+    treeScrollRef.current?.focus({ preventScroll: true });
+  };
+  const activateTreeKeyboardSurface = () => {
+    focusTreeKeyboardSurface();
+  };
+  const restoreTreeKeyboardSurfaceAfterInlineEdit = () => {
+    if (typeof window !== "undefined") {
+      window.requestAnimationFrame(() => {
+        focusTreeKeyboardSurface();
+      });
+      return;
+    }
+    focusTreeKeyboardSurface();
+  };
   const hasSelectedNodes = selectedNodeIds.size > 0 || Boolean(selectedNodeId);
   const hasExpandableVisibleTreeRows = displayedTreeRows.some((row) => row.hasChildren);
   const hasCollapsedVisibleTreeRows = displayedTreeRows.some(
@@ -313,7 +331,6 @@ export function SidebarPanel({
     const label = getNodeDisplayLabel(node);
     return label === "\u00A0" ? "" : label;
   };
-  const quickAccessSurfaceLabel = quickAccessScopeLabel;
   const deleteTargetFavoriteGroupId =
     effectiveSelectedFavoriteGroupIds[effectiveSelectedFavoriteGroupIds.length - 1] ??
     (effectiveFavoriteGroups.some((group) => group.id === activeFavoriteGroupId)
@@ -552,7 +569,7 @@ export function SidebarPanel({
 
   return (
     <aside
-      className="ode-pane flex min-h-0 flex-col border-b border-[rgba(94,188,235,0.18)] bg-[linear-gradient(180deg,rgba(3,20,33,0.98),rgba(2,15,26,1))] lg:border-b-0 lg:shrink-0"
+      className="ode-pane flex min-h-0 flex-col bg-[linear-gradient(180deg,rgba(3,20,33,0.98),rgba(2,15,26,1))] lg:shrink-0"
       style={{
         width: isLargeLayout ? `${isSidebarCollapsed ? sidebarCollapsedWidth : sidebarWidth}px` : undefined
       }}
@@ -589,12 +606,12 @@ export function SidebarPanel({
         </div>
       ) : (
         <>
-          <div className="border-b border-[rgba(94,188,235,0.16)] px-3 py-3">
+          <div className="px-3 py-3">
             <div className="relative">
               {isLargeLayout ? (
                 <OdeTooltip label={t("sidebar.collapse")} side="bottom" align="end">
                   <button
-                    className="ode-sidebar-collapse-btn"
+                    className="ode-sidebar-collapse-btn ode-sidebar-search-collapse-btn"
                     onClick={() => onSetIsSidebarCollapsed(true)}
                     aria-label={t("sidebar.collapse")}
                   >
@@ -603,17 +620,8 @@ export function SidebarPanel({
                 </OdeTooltip>
               ) : null}
               <div className={`${SIDEBAR_SURFACE_PANEL_CLASS} px-3 py-3`}>
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="text-[0.68rem] uppercase tracking-[0.18em] text-[var(--ode-text-dim)]">
-                    {libraryModeActive
-                      ? t("tabs.library")
-                      : workspaceFocusMode === "data"
-                        ? t("desktop.view_database")
-                        : quickAccessScopeLabel}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 rounded-[18px] border border-[rgba(108,211,255,0.24)] bg-[rgba(4,23,38,0.84)] pl-3 pr-10 py-2.5 shadow-[inset_0_1px_0_rgba(139,226,255,0.05)]">
-                  <span className="text-[0.95rem] text-[var(--ode-text-muted)]">
+                <div className="flex items-center gap-2 rounded-[18px] py-2.5 pl-3 pr-10">
+                  <span className="ode-sidebar-search-accent text-[0.95rem]">
                     <SearchGlyph />
                   </span>
                   <input
@@ -629,7 +637,7 @@ export function SidebarPanel({
                     }}
                     onChange={(event) => onSearchQueryChange(event.target.value)}
                     onKeyDown={handleSearchKeyDown}
-                    className="ode-search-input"
+                    className="ode-search-input ode-sidebar-search-input"
                     placeholder={t("search.placeholder")}
                   />
                 </div>
@@ -677,26 +685,6 @@ export function SidebarPanel({
                       onKeyDownCapture={handleFavoriteUiKeyDownCapture}
                     >
                     <div className="flex items-center gap-2">
-                      {!libraryModeActive ? (
-                        <OdeTooltip label={quickAccessSurfaceLabel} side="bottom" align="start">
-                          <button
-                            type="button"
-                            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border text-[var(--ode-text)] transition hover:border-[var(--ode-border-accent)] ${
-                              effectiveFavoriteTreeFilterEnabled
-                                ? "border-[var(--ode-border)]"
-                                : "border-[var(--ode-border-accent)] bg-[rgba(31,129,188,0.22)]"
-                            }`}
-                            onClick={onToggleFavoriteTreeFilter}
-                            aria-label={quickAccessSurfaceLabel}
-                            aria-pressed={!effectiveFavoriteTreeFilterEnabled}
-                          >
-                            <FolderGlyph
-                              state="filled"
-                              active={!effectiveFavoriteTreeFilterEnabled}
-                            />
-                          </button>
-                        </OdeTooltip>
-                      ) : null}
                       <OdeTooltip label={treeToggleLabel} side="bottom">
                         <button
                           type="button"
@@ -944,9 +932,11 @@ export function SidebarPanel({
 
           <div
             ref={treeScrollRef}
-            className="flex-1 overflow-auto px-3 pb-4 pt-3"
+            className="flex-1 overflow-auto px-3 pb-4 pt-3 focus:outline-none"
             data-ode-surface="tree"
-            onMouseDownCapture={onActivateTreeSurface}
+            tabIndex={0}
+            onMouseDownCapture={activateTreeKeyboardSurface}
+            onFocusCapture={onActivateTreeSurface}
             onScroll={(event) => {
               if (!shouldVirtualizeTree) return;
               const next = event.currentTarget.scrollTop;
@@ -1035,6 +1025,10 @@ export function SidebarPanel({
                   }`}
                 style={{ paddingLeft: `${resolveSidebarTreeIndent(row.level)}px` }}
                 draggable={editingNodeId !== row.id}
+                onMouseDown={() => {
+                  if (editingNodeId === row.id) return;
+                  activateTreeKeyboardSurface();
+                }}
                 onClick={(event) => {
                   if (editingNodeId === row.id) return;
                   onCloseContextMenu();
@@ -1095,7 +1089,13 @@ export function SidebarPanel({
                   if (isFileNode) {
                     onReviewFile(row.id);
                   } else {
-                    void onOpenNodeTab(row.id);
+                    void (async () => {
+                      focusTreeKeyboardSurface();
+                      await onOpenNodeTab(row.id, {
+                        preserveTreeFocus: true
+                      });
+                      restoreTreeKeyboardSurfaceAfterInlineEdit();
+                    })();
                   }
                 }}
               >
@@ -1149,9 +1149,18 @@ export function SidebarPanel({
                             // Keep inline edit keyboard handling local to the input.
                             // This prevents global shortcuts from firing while renaming.
                             event.stopPropagation();
+                            const saveAndRestoreTreeSurface = () => {
+                              editActionInFlightRef.current = true;
+                              void (async () => {
+                                await onCommitInlineEdit();
+                              })().finally(() => {
+                                editActionInFlightRef.current = false;
+                                restoreTreeKeyboardSurfaceAfterInlineEdit();
+                              });
+                            };
                             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
                               event.preventDefault();
-                              void onCommitInlineEdit();
+                              saveAndRestoreTreeSurface();
                               return;
                             }
                             if (event.key === "Escape") {
@@ -1159,42 +1168,11 @@ export function SidebarPanel({
                               onCancelInlineEdit();
                               return;
                             }
-
-                            const createParent = event.key === "Enter" && (event.ctrlKey || event.metaKey);
-                            const createBefore = event.key === "Enter" && event.shiftKey;
-                            const createChild = event.key === "Tab";
-                            const shouldCreateAfterSave = createParent || createBefore || createChild;
-
-                            if (shouldCreateAfterSave) {
+                            if (event.key === "Enter" || event.key === "Tab") {
                               event.preventDefault();
-                              const sourceNodeId = row.id;
-
-                              editActionInFlightRef.current = true;
-                              void (async () => {
-                                await onCommitInlineEdit();
-                                if (createParent) {
-                                  await onCreateParentNode(sourceNodeId);
-                                } else if (createBefore) {
-                                  await onCreateSiblingNode(sourceNodeId, true);
-                                } else if (createChild) {
-                                  await onCreateChildNode(sourceNodeId);
-                                } else {
-                                  await onCreateSiblingNode(sourceNodeId, false);
-                                }
-                              })().finally(() => {
-                                editActionInFlightRef.current = false;
-                              });
-                              return;
-                            }
-
-                            if (event.key === "Enter") {
-                              event.preventDefault();
-                              editActionInFlightRef.current = true;
-                              void (async () => {
-                                await onCommitInlineEdit();
-                              })().finally(() => {
-                                editActionInFlightRef.current = false;
-                              });
+                              // Match Windows-style rename flow: save first, then let the next keypress
+                              // decide whether to create a sibling/child from the now-selected node.
+                              saveAndRestoreTreeSurface();
                             }
                           }}
                           className="ode-input h-9 w-full rounded-[12px] border-[rgba(122,224,255,0.22)] bg-[rgba(3,18,30,0.86)] px-3 text-[0.98rem]"

@@ -47,7 +47,7 @@ export function DeleteConfirmModal({
   if (!open) return null;
 
   return (
-    <div className="ode-overlay-scrim fixed inset-0 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
+    <div className="ode-overlay-scrim fixed inset-0 z-[240] flex items-center justify-center p-4 backdrop-blur-sm">
       <div
         ref={surfaceRef}
         style={surfaceStyle}

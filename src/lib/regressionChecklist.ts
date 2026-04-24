@@ -49,7 +49,14 @@ export const REGRESSION_CHECKLIST_ITEMS: RegressionChecklistItem[] = [
     id: "tree-tab-new-child",
     area: "Tree",
     title: "Tab creates a child node",
-    scenario: "Select a node and press Tab, then verify child is created under selected parent."
+    scenario: "Select a node and press Tab, then verify child is created under selected parent.",
+    aiTester: {
+      mode: "automated",
+      priority: "high",
+      automationId: "tree-tab-new-child",
+      tags: ["tree", "tab", "child node", "inline rename", "blank rename"],
+      hints: ["tab should create a child", "new child rename should start empty"]
+    }
   },
   {
     id: "tree-new-node-auto-scroll",
@@ -326,7 +333,9 @@ export const REGRESSION_CHECKLIST_ITEMS: RegressionChecklistItem[] = [
     scenario:
       "Run Ctrl+C/Ctrl+X/Ctrl+V/Ctrl+D/Delete in tree, desktop, and timeline while selection is active, and confirm the active surface keeps ownership of the action.",
     aiTester: {
+      mode: "automated",
       priority: "high",
+      automationId: "keyboard-clipboard-shortcuts",
       tags: ["keyboard", "clipboard", "copy", "paste", "duplicate", "delete"],
       hints: ["shortcuts should work on all surfaces", "selection surface should own clipboard actions"]
     }

@@ -2,6 +2,7 @@ use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use image::ImageEncoder;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -26,6 +27,7 @@ use windows::Globalization::Language;
 #[cfg(target_os = "windows")]
 use windows::Win32::{
     Foundation::{HWND, LPARAM, RECT, WPARAM},
+    Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS},
     Globalization::{
         GetUserDefaultLocaleName, GetUserDefaultUILanguage, GetUserPreferredUILanguages,
         LCIDToLocaleName, MUI_LANGUAGE_NAME,
@@ -53,6 +55,7 @@ const INTERNAL_STATE_DIR_NAME: &str = "mirror_state";
 const MIRROR_NODE_FILES_DIR_NAME: &str = "node_files";
 const MIRROR_SHARE_PACKAGES_DIR_NAME: &str = "share_packages";
 const POWERPOINT_PREVIEW_DIR_NAME: &str = "powerpoint_previews";
+const QUICK_APP_HTML_INSTANCES_DIR_NAME: &str = "quick_app_html_instances";
 const USER_ACCOUNT_STORE_FILE: &str = "user_accounts.json";
 const ODE_CONTEXT_FILE_NAME: &str = ".ode-context";
 const MIRROR_PROJECTION_INDEX_FILE: &str = ".ode_projection_index.json";
@@ -86,6 +89,27 @@ struct WindowsLanguageSnapshot {
     ui_locale: Option<String>,
     culture_locale: Option<String>,
     preferred_locales: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickAppUrlPreview {
+    url: String,
+    final_url: String,
+    title: Option<String>,
+    description: Option<String>,
+    excerpt: Option<String>,
+    content_type: Option<String>,
+    reachable: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AiPromptUserContentPart {
+    #[serde(rename = "type")]
+    part_type: String,
+    text: Option<String>,
+    image_url: Option<String>,
 }
 
 const TREE_SPREADSHEET_TREE_SHEET_NAME: &str = "Tree";
@@ -163,6 +187,15 @@ struct WindowsWindowLayoutState {
     work_area_bounds: WindowsWindowBounds,
 }
 
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, Copy, Default)]
+struct WindowsWindowFrameInsets {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct WindowsPrimaryWindowFitOptions {
@@ -236,6 +269,48 @@ fn get_windows_window_rect_bounds(hwnd: HWND) -> Result<WindowsWindowBounds, Str
 }
 
 #[cfg(target_os = "windows")]
+fn get_windows_window_visible_rect(hwnd: HWND) -> Result<RECT, String> {
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            (&mut rect as *mut RECT).cast(),
+            std::mem::size_of::<RECT>() as u32,
+        )
+    }
+    .map_err(|err| format!("failed to read primary window visible frame bounds: {err}"))?;
+    Ok(rect)
+}
+
+#[cfg(target_os = "windows")]
+fn get_windows_window_visible_bounds(hwnd: HWND) -> Result<WindowsWindowBounds, String> {
+    Ok(rect_to_windows_window_bounds(get_windows_window_visible_rect(hwnd)?))
+}
+
+#[cfg(target_os = "windows")]
+fn get_windows_window_frame_insets(hwnd: HWND) -> WindowsWindowFrameInsets {
+    let raw_rect = match {
+        let mut rect: RECT = unsafe { std::mem::zeroed() };
+        unsafe { GetWindowRect(hwnd, &mut rect) }.map(|_| rect)
+    } {
+        Ok(rect) => rect,
+        Err(_) => return WindowsWindowFrameInsets::default(),
+    };
+    let visible_rect = match get_windows_window_visible_rect(hwnd) {
+        Ok(rect) => rect,
+        Err(_) => return WindowsWindowFrameInsets::default(),
+    };
+
+    WindowsWindowFrameInsets {
+        left: (visible_rect.left - raw_rect.left).max(0),
+        top: (visible_rect.top - raw_rect.top).max(0),
+        right: (raw_rect.right - visible_rect.right).max(0),
+        bottom: (raw_rect.bottom - visible_rect.bottom).max(0),
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn get_windows_window_work_area_bounds(hwnd: HWND) -> Result<WindowsWindowBounds, String> {
     let monitor = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
     if monitor.0.is_null() {
@@ -268,7 +343,7 @@ fn get_windows_window_monitor_bounds(hwnd: HWND) -> Result<WindowsWindowBounds, 
 #[cfg(target_os = "windows")]
 fn build_windows_window_layout_state(hwnd: HWND) -> Result<WindowsWindowLayoutState, String> {
     Ok(WindowsWindowLayoutState {
-        current_bounds: get_windows_window_rect_bounds(hwnd)?,
+        current_bounds: get_windows_window_visible_bounds(hwnd)?,
         monitor_bounds: get_windows_window_monitor_bounds(hwnd)?,
         work_area_bounds: get_windows_window_work_area_bounds(hwnd)?,
     })
@@ -279,15 +354,28 @@ fn apply_windows_window_bounds(
     hwnd: HWND,
     bounds: &WindowsWindowBounds,
 ) -> Result<WindowsWindowLayoutState, String> {
-    let target_width = bounds.width.max(1).min(i32::MAX as u32) as i32;
-    let target_height = bounds.height.max(1).min(i32::MAX as u32) as i32;
+    let frame_insets = get_windows_window_frame_insets(hwnd);
+    let target_x = bounds.x.saturating_sub(frame_insets.left);
+    let target_y = bounds.y.saturating_sub(frame_insets.top);
+    let target_width = bounds
+        .width
+        .max(1)
+        .saturating_add(frame_insets.left.max(0) as u32)
+        .saturating_add(frame_insets.right.max(0) as u32)
+        .min(i32::MAX as u32) as i32;
+    let target_height = bounds
+        .height
+        .max(1)
+        .saturating_add(frame_insets.top.max(0) as u32)
+        .saturating_add(frame_insets.bottom.max(0) as u32)
+        .min(i32::MAX as u32) as i32;
     unsafe {
         let _ = ShowWindow(hwnd, SW_RESTORE);
         SetWindowPos(
             hwnd,
             None,
-            bounds.x,
-            bounds.y,
+            target_x,
+            target_y,
             target_width,
             target_height,
             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER,
@@ -1113,6 +1201,26 @@ fn save_png_from_rgba(
 fn save_clipboard_image_png(destination: &Path) -> Result<(), String> {
     let (width, height, bytes) = read_clipboard_image_payload()?;
     save_png_from_rgba(destination, width, height, bytes)
+}
+
+fn encode_png_data_url_from_rgba(
+    width: u32,
+    height: u32,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let rgba = image::RgbaImage::from_raw(width, height, bytes)
+        .ok_or_else(|| "Clipboard image format is unsupported.".to_string())?;
+    let mut encoded_png = Vec::new();
+    image::codecs::png::PngEncoder::new(&mut encoded_png)
+        .write_image(
+            rgba.as_raw(),
+            width,
+            height,
+            image::ColorType::Rgba8.into(),
+        )
+        .map_err(|err| format!("failed to encode clipboard image: {err}"))?;
+    let encoded = BASE64_STANDARD.encode(encoded_png);
+    Ok(format!("data:image/png;base64,{encoded}"))
 }
 
 fn image_mime_type_for_path(path: &Path) -> Option<&'static str> {
@@ -5322,6 +5430,126 @@ async fn import_files_to_node(
     Ok(created_nodes)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportFilePayload {
+    name: String,
+    bytes_base64: String,
+}
+
+#[tauri::command]
+async fn import_file_payloads_to_node(
+    app: tauri::AppHandle,
+    parent_node_id: Option<String>,
+    file_payloads: Vec<ImportFilePayload>,
+) -> Result<Vec<AppNode>, String> {
+    if file_payloads.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let db = get_db(&app).await?;
+    let target_parent = parent_node_id.unwrap_or_else(|| ROOT_PARENT_ID.to_string());
+    ensure_structure_mutation_allowed(&db, &[target_parent.clone()]).await?;
+
+    if target_parent != ROOT_PARENT_ID {
+        let exists = fetch_node_record(&db, &target_parent).await?.is_some();
+        if !exists {
+            return Err(format!("parent node not found: {target_parent}"));
+        }
+    }
+
+    let target_dir = ensure_node_files_dir(&app, &target_parent)?;
+    let siblings = fetch_nodes_by_parent(&db, &target_parent).await?;
+    let mut taken_node_names: HashSet<String> = siblings
+        .iter()
+        .map(|node| node.name.to_lowercase())
+        .collect();
+
+    let mut taken_file_names: HashSet<String> = HashSet::new();
+    if let Ok(entries) = fs::read_dir(&target_dir) {
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                taken_file_names.insert(name.to_lowercase());
+            }
+        }
+    }
+
+    let mut next_order = siblings.iter().map(|node| node.order).max().unwrap_or(0) + 1000;
+    let mut created_nodes: Vec<AppNode> = Vec::new();
+
+    for payload in file_payloads {
+        let original_name = payload.name.trim();
+        if original_name.is_empty() || should_ignore_external_entry_name(original_name) {
+            continue;
+        }
+
+        let bytes = BASE64_STANDARD
+            .decode(payload.bytes_base64.as_bytes())
+            .map_err(|err| format!("failed to decode uploaded file payload for {original_name}: {err}"))?;
+
+        let final_name = find_unique_import_name(original_name, &taken_node_names, &taken_file_names);
+        let lower = final_name.to_lowercase();
+        taken_node_names.insert(lower.clone());
+        taken_file_names.insert(lower);
+
+        let destination = target_dir.join(&final_name);
+        fs::write(&destination, &bytes).map_err(|err| {
+            format!(
+                "failed to write uploaded file {:?} to {:?}: {err}",
+                final_name, destination
+            )
+        })?;
+
+        let now = now_ms();
+        let record = NodeRecord {
+            node_id: uuid::Uuid::new_v4().to_string(),
+            parent_id: target_parent.clone(),
+            name: final_name.clone(),
+            node_type: "file".to_string(),
+            properties: serde_json::json!({
+                "mirrorFilePath": destination.to_string_lossy().to_string(),
+                "sizeBytes": bytes.len() as u64
+            }),
+            description: None,
+            order: next_order,
+            created_at: now,
+            updated_at: now,
+            content_type: None,
+            ai_draft: None,
+            content: None,
+        };
+        next_order += 1000;
+
+        db.query("CREATE node CONTENT $record;")
+            .bind(("record", record.clone()))
+            .await
+            .map_err(db_err)?;
+
+        let app_handle = app.clone();
+        let node_id = record.node_id.clone();
+        let file_path = destination.clone();
+        let ext = Path::new(&final_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        tokio::spawn(async move {
+            if let Ok(db) = get_db(&app_handle).await {
+                let _ = parse_and_store_node_file_content(&db, &node_id, &file_path, &ext).await;
+            }
+        });
+
+        created_nodes.push(AppNode::from(record));
+    }
+
+    if let Err(err) = sync_desktop_projection_from_db(&app, &db).await {
+        eprintln!("desktop mirror sync failed after import_file_payloads_to_node: {err}");
+    }
+
+    Ok(created_nodes)
+}
+
 async fn import_external_entries_from_source(
     app: &tauri::AppHandle,
     db: &Surreal<Db>,
@@ -6345,6 +6573,122 @@ async fn open_node_file(app: tauri::AppHandle, node_id: String) -> Result<(), St
     open_path_with_system_default(&mirror_root)
 }
 
+fn trim_preview_text(value: &str, limit: usize) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut chars = normalized.chars();
+    let truncated = chars.by_ref().take(limit).collect::<String>();
+    if chars.next().is_none() {
+        return Some(truncated);
+    }
+    Some(format!("{}...", truncated.trim_end()))
+}
+
+fn extract_html_attribute_value(tag_source: &str, attribute_name: &str) -> Option<String> {
+    let tag_lower = tag_source.to_ascii_lowercase();
+    let pattern = format!("{attribute_name}=");
+    let attr_start = tag_lower.find(&pattern)?;
+    let value_start = attr_start + pattern.len();
+    let bytes = tag_source.as_bytes();
+    if value_start >= bytes.len() {
+        return None;
+    }
+
+    let delimiter = bytes[value_start];
+    let value = if delimiter == b'"' || delimiter == b'\'' {
+        let mut cursor = value_start + 1;
+        while cursor < bytes.len() && bytes[cursor] != delimiter {
+            cursor += 1;
+        }
+        if cursor <= value_start + 1 || cursor > bytes.len() {
+            return None;
+        }
+        &tag_source[(value_start + 1)..cursor]
+    } else {
+        let mut cursor = value_start;
+        while cursor < bytes.len()
+            && !bytes[cursor].is_ascii_whitespace()
+            && bytes[cursor] != b'>'
+        {
+            cursor += 1;
+        }
+        if cursor <= value_start {
+            return None;
+        }
+        &tag_source[value_start..cursor]
+    };
+
+    trim_preview_text(value, 320)
+}
+
+fn extract_html_tag_text(raw: &str, tag_name: &str) -> Option<String> {
+    let lower = raw.to_ascii_lowercase();
+    let open_pattern = format!("<{tag_name}");
+    let open_start = lower.find(&open_pattern)?;
+    let open_end = lower[open_start..].find('>')? + open_start;
+    let close_pattern = format!("</{tag_name}>");
+    let close_start = lower[(open_end + 1)..].find(&close_pattern)? + open_end + 1;
+    trim_preview_text(&document_parser::strip_html_to_text(&raw[(open_end + 1)..close_start]), 220)
+}
+
+fn extract_html_meta_description(raw: &str) -> Option<String> {
+    let lower = raw.to_ascii_lowercase();
+    let mut search_start = 0usize;
+
+    while let Some(relative_start) = lower[search_start..].find("<meta") {
+        let tag_start = search_start + relative_start;
+        let relative_end = lower[tag_start..].find('>')?;
+        let tag_end = tag_start + relative_end + 1;
+        let tag_source = &raw[tag_start..tag_end];
+        let name_value = extract_html_attribute_value(tag_source, "name")
+            .or_else(|| extract_html_attribute_value(tag_source, "property"))
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if name_value == "description"
+            || name_value == "og:description"
+            || name_value == "twitter:description"
+        {
+            if let Some(content) = extract_html_attribute_value(tag_source, "content") {
+                return Some(content);
+            }
+        }
+
+        search_start = tag_end;
+    }
+
+    None
+}
+
+fn derive_url_preview_title(url: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let host = parsed.host_str()?.trim();
+    let path_leaf = parsed
+        .path_segments()
+        .and_then(|segments| segments.filter(|segment| !segment.trim().is_empty()).last())
+        .unwrap_or("");
+    let label = if path_leaf.is_empty() {
+        host.to_string()
+    } else {
+        format!("{host} / {path_leaf}")
+    };
+    trim_preview_text(&label, 160)
+}
+
+fn is_previewable_content_type(content_type: Option<&str>) -> bool {
+    let Some(value) = content_type else {
+        return true;
+    };
+    let normalized = value.to_ascii_lowercase();
+    normalized.starts_with("text/")
+        || normalized.contains("html")
+        || normalized.contains("xml")
+        || normalized.contains("json")
+        || normalized.contains("javascript")
+}
+
 #[tauri::command]
 async fn extract_document_text(
     app: tauri::AppHandle,
@@ -6363,10 +6707,15 @@ async fn extract_document_text(
     }
 
     let normalized_extension = extension
-        .unwrap_or_default()
+        .unwrap_or_else(|| {
+            path.extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_string()
+        })
         .trim()
         .trim_start_matches('.')
-        .to_string();
+        .to_ascii_lowercase();
 
     let extracted = document_parser::parse_file(&path, &normalized_extension).await;
     if let (Some(text), Some(node_id_value)) = (extracted.as_ref(), node_id.as_deref()) {
@@ -6375,6 +6724,109 @@ async fn extract_document_text(
     }
 
     Ok(extracted)
+}
+
+#[tauri::command]
+async fn fetch_quick_app_url_preview(url: String) -> Result<Option<QuickAppUrlPreview>, String> {
+    let trimmed_url = url.trim();
+    if trimmed_url.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed_url =
+        reqwest::Url::parse(trimmed_url).map_err(|err| format!("invalid url {trimmed_url}: {err}"))?;
+    if parsed_url.scheme() != "http" && parsed_url.scheme() != "https" {
+        return Ok(None);
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .build()
+        .map_err(|err| format!("failed to create HTTP client: {err}"))?;
+
+    let response = client
+        .get(parsed_url.clone())
+        .header(
+            reqwest::header::USER_AGENT,
+            "ODETool Pro AI Quick App Preview/1.0",
+        )
+        .send()
+        .await
+        .map_err(|err| format!("quick app preview request failed: {err}"))?;
+
+    let final_url = response.url().to_string();
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.split(';').next().unwrap_or("").trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if !status.is_success() {
+        return Ok(Some(QuickAppUrlPreview {
+            url: trimmed_url.to_string(),
+            final_url,
+            title: derive_url_preview_title(trimmed_url),
+            description: Some(format!("HTTP {}", status.as_u16())),
+            excerpt: None,
+            content_type,
+            reachable: false,
+        }));
+    }
+
+    if !is_previewable_content_type(content_type.as_deref()) {
+        return Ok(Some(QuickAppUrlPreview {
+            url: trimmed_url.to_string(),
+            final_url,
+            title: derive_url_preview_title(trimmed_url),
+            description: None,
+            excerpt: None,
+            content_type,
+            reachable: true,
+        }));
+    }
+
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("failed to read quick app preview body: {err}"))?;
+    let limited_body = body.chars().take(200_000).collect::<String>();
+    let is_html = content_type
+        .as_deref()
+        .map(|value| value.to_ascii_lowercase().contains("html"))
+        .unwrap_or_else(|| {
+            final_url.to_ascii_lowercase().ends_with(".html")
+                || final_url.to_ascii_lowercase().ends_with(".htm")
+        });
+
+    let title = if is_html {
+        extract_html_tag_text(&limited_body, "title").or_else(|| derive_url_preview_title(&final_url))
+    } else {
+        derive_url_preview_title(&final_url)
+    };
+    let description = if is_html {
+        extract_html_meta_description(&limited_body)
+    } else {
+        None
+    };
+    let excerpt_source = if is_html {
+        document_parser::strip_html_to_text(&limited_body)
+    } else {
+        limited_body
+    };
+    let excerpt = trim_preview_text(&excerpt_source, 1200);
+
+    Ok(Some(QuickAppUrlPreview {
+        url: trimmed_url.to_string(),
+        final_url,
+        title,
+        description,
+        excerpt,
+        content_type,
+        reachable: true,
+    }))
 }
 
 #[tauri::command]
@@ -8422,102 +8874,196 @@ fn get_ai_rebuild_status() -> AiRebuildStatusPayload {
     }
 }
 
-#[tauri::command]
-async fn run_mistral_tree_analysis(
-    api_key: String,
-    system_prompt: String,
-    user_prompt: String,
-    ai_engine: String,
-) -> Result<String, String> {
-    let trimmed_key = api_key.trim();
-    if ai_engine == "cloud" && trimmed_key.is_empty() {
-        return Err("Mistral API key is empty.".to_string());
-    }
-    let trimmed_user_prompt = user_prompt.trim();
-    if trimmed_user_prompt.is_empty() {
-        return Err("Prompt is empty.".to_string());
-    }
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DetectedAiProviderSource {
+    provider_id: String,
+    display_name: String,
+}
 
-    let mut messages = Vec::new();
-    if !system_prompt.trim().is_empty() {
-        messages.push(serde_json::json!({
-            "role": "system",
-            "content": system_prompt.trim()
-        }));
-    }
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": trimmed_user_prompt
-    }));
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloudAiProvider {
+    Anthropic,
+    DeepSeek,
+    Gemini,
+    Groq,
+    Mistral,
+    OpenAi,
+    XAi,
+    ZAi,
+}
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(45))
-        .build()
-        .map_err(|err| format!("failed to create HTTP client: {err}"))?;
+const CLOUD_AI_PROVIDER_DETECTION_ORDER: [CloudAiProvider; 8] = [
+    CloudAiProvider::Anthropic,
+    CloudAiProvider::Gemini,
+    CloudAiProvider::Groq,
+    CloudAiProvider::XAi,
+    CloudAiProvider::Mistral,
+    CloudAiProvider::DeepSeek,
+    CloudAiProvider::OpenAi,
+    CloudAiProvider::ZAi,
+];
 
-    let is_local = ai_engine == "local";
-    let model = if is_local {
-        "mistral-7b-v0.3.Q4_K_M.gguf"
-    } else {
-        "mistral-small-latest"
-    };
-    let endpoint = if is_local {
-        "http://127.0.0.1:11434/v1/chat/completions"
-    } else {
-        "https://api.mistral.ai/v1/chat/completions"
-    };
-
-    let payload = serde_json::json!({
-        "model": model,
-        "temperature": 0.2,
-        "max_tokens": 1400,
-        "messages": messages
-    });
-
-    let mut request_builder = client.post(endpoint);
-
-    if !is_local {
-        request_builder = request_builder.bearer_auth(trimmed_key);
+impl CloudAiProvider {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::DeepSeek => "deepseek",
+            Self::Gemini => "gemini",
+            Self::Groq => "groq",
+            Self::Mistral => "mistral",
+            Self::OpenAi => "openai",
+            Self::XAi => "xai",
+            Self::ZAi => "zai",
+        }
     }
 
-    let response = request_builder
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|err| format!("request failed: {err}"))?;
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Anthropic => "Anthropic Claude",
+            Self::DeepSeek => "DeepSeek",
+            Self::Gemini => "Google Gemini",
+            Self::Groq => "Groq",
+            Self::Mistral => "Mistral",
+            Self::OpenAi => "OpenAI",
+            Self::XAi => "xAI Grok",
+            Self::ZAi => "Z.AI",
+        }
+    }
 
-    let status = response.status();
-    let raw_text = response
-        .text()
-        .await
-        .map_err(|err| format!("failed to read response body: {err}"))?;
+    fn default_model(self) -> &'static str {
+        match self {
+            Self::Anthropic => "claude-sonnet-4-6",
+            Self::DeepSeek => "deepseek-chat",
+            Self::Gemini => "gemini-2.5-flash",
+            Self::Groq => "llama-3.3-70b-versatile",
+            Self::Mistral => "mistral-small-latest",
+            Self::OpenAi => "gpt-4o-mini",
+            Self::XAi => "grok-4.20",
+            Self::ZAi => "glm-4.7-flash",
+        }
+    }
+}
 
-    if !status.is_success() {
-        let reason = serde_json::from_str::<Value>(&raw_text)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("error")
-                    .and_then(|error| error.get("message").and_then(|msg| msg.as_str()))
-                    .map(|msg| msg.to_string())
-            })
-            .unwrap_or_else(|| {
-                let snippet: String = raw_text.chars().take(300).collect();
-                if snippet.is_empty() {
-                    "unknown error".to_string()
-                } else {
-                    snippet
+fn parse_cloud_ai_provider(value: &str) -> Option<CloudAiProvider> {
+    match value.trim().to_lowercase().as_str() {
+        "anthropic" | "claude" => Some(CloudAiProvider::Anthropic),
+        "deepseek" => Some(CloudAiProvider::DeepSeek),
+        "gemini" | "google" => Some(CloudAiProvider::Gemini),
+        "groq" => Some(CloudAiProvider::Groq),
+        "mistral" => Some(CloudAiProvider::Mistral),
+        "openai" => Some(CloudAiProvider::OpenAi),
+        "xai" | "grok" => Some(CloudAiProvider::XAi),
+        "zai" | "z.ai" | "z-ai" | "zhipu" => Some(CloudAiProvider::ZAi),
+        _ => None,
+    }
+}
+
+fn detect_cloud_ai_provider_hint(api_key: &str) -> Option<CloudAiProvider> {
+    let trimmed = api_key.trim();
+    if trimmed.starts_with("AIza") {
+        return Some(CloudAiProvider::Gemini);
+    }
+    if trimmed.starts_with("sk-ant-") {
+        return Some(CloudAiProvider::Anthropic);
+    }
+    if trimmed.starts_with("gsk_") {
+        return Some(CloudAiProvider::Groq);
+    }
+    if trimmed.starts_with("xai-") {
+        return Some(CloudAiProvider::XAi);
+    }
+    None
+}
+
+fn has_nonempty_user_prompt_content(parts: &[AiPromptUserContentPart]) -> bool {
+    parts.iter().any(|part| match part.part_type.as_str() {
+        "text" => part
+            .text
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false),
+        "image_url" => part
+            .image_url
+            .as_deref()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false),
+        _ => false,
+    })
+}
+
+fn decode_data_url_parts(value: &str) -> Option<(String, String)> {
+    let trimmed = value.trim();
+    if !trimmed.starts_with("data:") {
+        return None;
+    }
+    let payload = &trimmed[5..];
+    let (meta, data) = payload.split_once(',')?;
+    let media_type = meta.strip_suffix(";base64")?.trim();
+    if media_type.is_empty() || data.trim().is_empty() {
+        return None;
+    }
+    Some((media_type.to_string(), data.trim().to_string()))
+}
+
+fn build_text_only_user_prompt(
+    trimmed_user_prompt: &str,
+    normalized_user_content: &[AiPromptUserContentPart],
+) -> String {
+    let mut lines = Vec::new();
+    if !trimmed_user_prompt.is_empty() {
+        lines.push(trimmed_user_prompt.to_string());
+    }
+    for part in normalized_user_content {
+        match part.part_type.as_str() {
+            "text" => {
+                if let Some(text) = part.text.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                    lines.push(text.to_string());
                 }
-            });
-        return Err(format!(
-            "Mistral API returned {}: {}",
-            status.as_u16(),
-            reason
-        ));
+            }
+            "image_url" => {
+                if let Some(image_url) = part
+                    .image_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    lines.push(format!("Image attachment: {image_url}"));
+                }
+            }
+            _ => {}
+        }
     }
+    lines.join("\n\n")
+}
 
-    let parsed: Value = serde_json::from_str(&raw_text)
-        .map_err(|err| format!("invalid JSON from Mistral: {err}"))?;
+fn extract_error_message(raw_text: &str) -> String {
+    serde_json::from_str::<Value>(raw_text)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("error")
+                .and_then(|error| {
+                    error
+                        .get("message")
+                        .and_then(|msg| msg.as_str())
+                        .or_else(|| error.get("msg").and_then(|msg| msg.as_str()))
+                        .or_else(|| error.as_str())
+                })
+                .map(|message| message.to_string())
+                .or_else(|| value.get("message").and_then(|message| message.as_str()).map(str::to_string))
+        })
+        .unwrap_or_else(|| {
+            let snippet: String = raw_text.chars().take(300).collect();
+            if snippet.is_empty() {
+                "unknown error".to_string()
+            } else {
+                snippet
+            }
+        })
+}
+
+fn extract_openai_compatible_message_text(parsed: &Value) -> Option<String> {
     let message_content = parsed
         .get("choices")
         .and_then(|choices| choices.get(0))
@@ -8527,7 +9073,7 @@ async fn run_mistral_tree_analysis(
     if let Some(text) = message_content.and_then(|content| content.as_str()) {
         let trimmed = text.trim();
         if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
+            return Some(trimmed.to_string());
         }
     }
 
@@ -8539,11 +9085,631 @@ async fn run_mistral_tree_analysis(
             .join("");
         let trimmed = combined.trim();
         if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
+            return Some(trimmed.to_string());
         }
     }
 
-    Err("Mistral response did not include message content.".to_string())
+    None
+}
+
+fn extract_anthropic_message_text(parsed: &Value) -> Option<String> {
+    let content = parsed.get("content")?.as_array()?;
+    let combined = content
+        .iter()
+        .filter_map(|item| {
+            if item.get("type").and_then(|value| value.as_str()) == Some("text") {
+                item.get("text").and_then(|value| value.as_str())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    let trimmed = combined.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn extract_gemini_message_text(parsed: &Value) -> Option<String> {
+    let parts = parsed
+        .get("candidates")
+        .and_then(|candidates| candidates.get(0))
+        .and_then(|candidate| candidate.get("content"))
+        .and_then(|content| content.get("parts"))
+        .and_then(|parts| parts.as_array())?;
+    let combined = parts
+        .iter()
+        .filter_map(|item| item.get("text").and_then(|text| text.as_str()))
+        .collect::<Vec<_>>()
+        .join("");
+    let trimmed = combined.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn build_openai_compatible_messages(
+    provider: CloudAiProvider,
+    system_prompt: &str,
+    trimmed_user_prompt: &str,
+    normalized_user_content: &[AiPromptUserContentPart],
+) -> Vec<Value> {
+    let mut messages = Vec::new();
+    if !system_prompt.trim().is_empty() {
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": system_prompt.trim()
+        }));
+    }
+
+    let supports_images = matches!(
+        provider,
+        CloudAiProvider::Mistral | CloudAiProvider::OpenAi | CloudAiProvider::XAi | CloudAiProvider::ZAi
+    );
+
+    let user_content = if supports_images {
+        let mut content_items = Vec::new();
+        if !trimmed_user_prompt.is_empty() {
+            content_items.push(serde_json::json!({
+                "type": "text",
+                "text": trimmed_user_prompt
+            }));
+        }
+        for part in normalized_user_content {
+            match part.part_type.as_str() {
+                "text" => {
+                    if let Some(text) = part.text.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                        content_items.push(serde_json::json!({
+                            "type": "text",
+                            "text": text
+                        }));
+                    }
+                }
+                "image_url" => {
+                    if let Some(image_url) = part
+                        .image_url
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        content_items.push(serde_json::json!({
+                            "type": "image_url",
+                            "image_url": { "url": image_url }
+                        }));
+                    }
+                }
+                _ => {}
+            }
+        }
+        if content_items.is_empty() {
+            Value::String(trimmed_user_prompt.to_string())
+        } else {
+            Value::Array(content_items)
+        }
+    } else {
+        Value::String(build_text_only_user_prompt(
+            trimmed_user_prompt,
+            normalized_user_content,
+        ))
+    };
+
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": user_content
+    }));
+
+    messages
+}
+
+fn build_anthropic_messages(
+    trimmed_user_prompt: &str,
+    normalized_user_content: &[AiPromptUserContentPart],
+) -> Vec<Value> {
+    let mut content_items = Vec::new();
+    if !trimmed_user_prompt.is_empty() {
+        content_items.push(serde_json::json!({
+            "type": "text",
+            "text": trimmed_user_prompt
+        }));
+    }
+    for part in normalized_user_content {
+        match part.part_type.as_str() {
+            "text" => {
+                if let Some(text) = part.text.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                    content_items.push(serde_json::json!({
+                        "type": "text",
+                        "text": text
+                    }));
+                }
+            }
+            "image_url" => {
+                if let Some(image_url) = part
+                    .image_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some((media_type, data)) = decode_data_url_parts(image_url) {
+                        content_items.push(serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": data
+                            }
+                        }));
+                    } else {
+                        content_items.push(serde_json::json!({
+                            "type": "text",
+                            "text": format!("Image attachment: {image_url}")
+                        }));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if content_items.is_empty() {
+        content_items.push(serde_json::json!({
+            "type": "text",
+            "text": trimmed_user_prompt
+        }));
+    }
+    vec![serde_json::json!({
+        "role": "user",
+        "content": content_items
+    })]
+}
+
+fn build_gemini_contents(
+    trimmed_user_prompt: &str,
+    normalized_user_content: &[AiPromptUserContentPart],
+) -> Vec<Value> {
+    let mut parts = Vec::new();
+    if !trimmed_user_prompt.is_empty() {
+        parts.push(serde_json::json!({
+            "text": trimmed_user_prompt
+        }));
+    }
+    for part in normalized_user_content {
+        match part.part_type.as_str() {
+            "text" => {
+                if let Some(text) = part.text.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+                    parts.push(serde_json::json!({
+                        "text": text
+                    }));
+                }
+            }
+            "image_url" => {
+                if let Some(image_url) = part
+                    .image_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some((mime_type, data)) = decode_data_url_parts(image_url) {
+                        parts.push(serde_json::json!({
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": data
+                            }
+                        }));
+                    } else {
+                        parts.push(serde_json::json!({
+                            "text": format!("Image attachment: {image_url}")
+                        }));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if parts.is_empty() {
+        parts.push(serde_json::json!({
+            "text": trimmed_user_prompt
+        }));
+    }
+    vec![serde_json::json!({
+        "role": "user",
+        "parts": parts
+    })]
+}
+
+async fn probe_cloud_ai_provider(
+    client: &reqwest::Client,
+    provider: CloudAiProvider,
+    api_key: &str,
+) -> bool {
+    let result = match provider {
+        CloudAiProvider::Anthropic => client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&serde_json::json!({
+                "model": provider.default_model(),
+                "max_tokens": 1,
+                "messages": [{ "role": "user", "content": "Ping" }]
+            }))
+            .send()
+            .await,
+        CloudAiProvider::Gemini => client
+            .post(format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                provider.default_model()
+            ))
+            .header("x-goog-api-key", api_key)
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "contents": [{
+                    "parts": [{ "text": "Ping" }]
+                }],
+                "generationConfig": {
+                    "maxOutputTokens": 1
+                }
+            }))
+            .send()
+            .await,
+        CloudAiProvider::Groq => client
+            .get("https://api.groq.com/openai/v1/models")
+            .bearer_auth(api_key)
+            .send()
+            .await,
+        CloudAiProvider::Mistral => client
+            .get("https://api.mistral.ai/v1/models")
+            .bearer_auth(api_key)
+            .send()
+            .await,
+        CloudAiProvider::OpenAi => client
+            .get("https://api.openai.com/v1/models")
+            .bearer_auth(api_key)
+            .send()
+            .await,
+        CloudAiProvider::XAi => client
+            .get("https://api.x.ai/v1/models")
+            .bearer_auth(api_key)
+            .send()
+            .await,
+        CloudAiProvider::DeepSeek => client
+            .post("https://api.deepseek.com/chat/completions")
+            .bearer_auth(api_key)
+            .json(&serde_json::json!({
+                "model": provider.default_model(),
+                "messages": [{ "role": "user", "content": "Ping" }],
+                "max_tokens": 1,
+                "stream": false
+            }))
+            .send()
+            .await,
+        CloudAiProvider::ZAi => client
+            .post("https://api.z.ai/api/paas/v4/chat/completions")
+            .bearer_auth(api_key)
+            .header("Accept-Language", "en-US,en")
+            .json(&serde_json::json!({
+                "model": provider.default_model(),
+                "messages": [{ "role": "user", "content": "Ping" }],
+                "max_tokens": 1,
+                "stream": false
+            }))
+            .send()
+            .await,
+    };
+
+    match result {
+        Ok(response) => response.status().is_success(),
+        Err(_) => false,
+    }
+}
+
+async fn detect_cloud_ai_provider(
+    client: &reqwest::Client,
+    api_key: &str,
+) -> Result<CloudAiProvider, String> {
+    if let Some(provider) = detect_cloud_ai_provider_hint(api_key) {
+        return Ok(provider);
+    }
+    for provider in CLOUD_AI_PROVIDER_DETECTION_ORDER {
+        if probe_cloud_ai_provider(client, provider, api_key).await {
+            return Ok(provider);
+        }
+    }
+    Err("Could not identify the API provider from this key.".to_string())
+}
+
+async fn send_cloud_ai_prompt(
+    client: &reqwest::Client,
+    provider: CloudAiProvider,
+    api_key: &str,
+    system_prompt: &str,
+    trimmed_user_prompt: &str,
+    normalized_user_content: &[AiPromptUserContentPart],
+) -> Result<String, String> {
+    let response = match provider {
+        CloudAiProvider::Anthropic => {
+            client
+                .post("https://api.anthropic.com/v1/messages")
+                .header("x-api-key", api_key)
+                .header("anthropic-version", "2023-06-01")
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "max_tokens": 1400,
+                    "temperature": 0.2,
+                    "system": system_prompt.trim(),
+                    "messages": build_anthropic_messages(trimmed_user_prompt, normalized_user_content)
+                }))
+                .send()
+                .await
+        }
+        CloudAiProvider::Gemini => {
+            let mut payload = serde_json::json!({
+                "contents": build_gemini_contents(trimmed_user_prompt, normalized_user_content),
+                "generationConfig": {
+                    "temperature": 0.2,
+                    "maxOutputTokens": 1400
+                }
+            });
+            if !system_prompt.trim().is_empty() {
+                payload["system_instruction"] = serde_json::json!({
+                    "parts": [{ "text": system_prompt.trim() }]
+                });
+            }
+            client
+                .post(format!(
+                    "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent",
+                    provider.default_model()
+                ))
+                .header("x-goog-api-key", api_key)
+                .header("Content-Type", "application/json")
+                .json(&payload)
+                .send()
+                .await
+        }
+        CloudAiProvider::Groq => {
+            client
+                .post("https://api.groq.com/openai/v1/chat/completions")
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "temperature": 0.2,
+                    "max_tokens": 1400,
+                    "messages": build_openai_compatible_messages(
+                        provider,
+                        system_prompt,
+                        trimmed_user_prompt,
+                        normalized_user_content,
+                    )
+                }))
+                .send()
+                .await
+        }
+        CloudAiProvider::Mistral => {
+            client
+                .post("https://api.mistral.ai/v1/chat/completions")
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "temperature": 0.2,
+                    "max_tokens": 1400,
+                    "messages": build_openai_compatible_messages(
+                        provider,
+                        system_prompt,
+                        trimmed_user_prompt,
+                        normalized_user_content,
+                    )
+                }))
+                .send()
+                .await
+        }
+        CloudAiProvider::OpenAi => {
+            client
+                .post("https://api.openai.com/v1/chat/completions")
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "temperature": 0.2,
+                    "max_tokens": 1400,
+                    "messages": build_openai_compatible_messages(
+                        provider,
+                        system_prompt,
+                        trimmed_user_prompt,
+                        normalized_user_content,
+                    )
+                }))
+                .send()
+                .await
+        }
+        CloudAiProvider::XAi => {
+            client
+                .post("https://api.x.ai/v1/chat/completions")
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "temperature": 0.2,
+                    "max_tokens": 1400,
+                    "messages": build_openai_compatible_messages(
+                        provider,
+                        system_prompt,
+                        trimmed_user_prompt,
+                        normalized_user_content,
+                    )
+                }))
+                .send()
+                .await
+        }
+        CloudAiProvider::DeepSeek => {
+            client
+                .post("https://api.deepseek.com/chat/completions")
+                .bearer_auth(api_key)
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "temperature": 0.2,
+                    "max_tokens": 1400,
+                    "messages": build_openai_compatible_messages(
+                        provider,
+                        system_prompt,
+                        trimmed_user_prompt,
+                        normalized_user_content,
+                    )
+                }))
+                .send()
+                .await
+        }
+        CloudAiProvider::ZAi => {
+            client
+                .post("https://api.z.ai/api/paas/v4/chat/completions")
+                .bearer_auth(api_key)
+                .header("Accept-Language", "en-US,en")
+                .json(&serde_json::json!({
+                    "model": provider.default_model(),
+                    "temperature": 0.2,
+                    "max_tokens": 1400,
+                    "messages": build_openai_compatible_messages(
+                        provider,
+                        system_prompt,
+                        trimmed_user_prompt,
+                        normalized_user_content,
+                    )
+                }))
+                .send()
+                .await
+        }
+    }
+    .map_err(|err| format!("request failed: {err}"))?;
+
+    let status = response.status();
+    let raw_text = response
+        .text()
+        .await
+        .map_err(|err| format!("failed to read response body: {err}"))?;
+
+    if !status.is_success() {
+        return Err(format!(
+            "{} API returned {}: {}",
+            provider.display_name(),
+            status.as_u16(),
+            extract_error_message(&raw_text)
+        ));
+    }
+
+    let parsed: Value = serde_json::from_str(&raw_text)
+        .map_err(|err| format!("invalid JSON from {}: {err}", provider.display_name()))?;
+
+    let extracted = match provider {
+        CloudAiProvider::Anthropic => extract_anthropic_message_text(&parsed),
+        CloudAiProvider::Gemini => extract_gemini_message_text(&parsed),
+        CloudAiProvider::DeepSeek
+        | CloudAiProvider::Groq
+        | CloudAiProvider::Mistral
+        | CloudAiProvider::OpenAi
+        | CloudAiProvider::XAi
+        | CloudAiProvider::ZAi => extract_openai_compatible_message_text(&parsed),
+    };
+
+    extracted.ok_or_else(|| {
+        format!(
+            "{} response did not include message content.",
+            provider.display_name()
+        )
+    })
+}
+
+#[tauri::command]
+async fn detect_ai_api_source(api_key: String) -> Result<DetectedAiProviderSource, String> {
+    let trimmed_key = api_key.trim();
+    if trimmed_key.is_empty() {
+        return Err("API key is empty.".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .build()
+        .map_err(|err| format!("failed to create HTTP client: {err}"))?;
+
+    let provider = detect_cloud_ai_provider(&client, trimmed_key).await?;
+    Ok(DetectedAiProviderSource {
+        provider_id: provider.id().to_string(),
+        display_name: provider.display_name().to_string(),
+    })
+}
+
+#[tauri::command]
+async fn run_ai_tree_analysis(
+    api_key: String,
+    provider_id: Option<String>,
+    system_prompt: String,
+    user_prompt: String,
+    user_content: Option<Vec<AiPromptUserContentPart>>,
+    ai_engine: String,
+) -> Result<String, String> {
+    let trimmed_key = api_key.trim();
+    if ai_engine == "cloud" && trimmed_key.is_empty() {
+        return Err("AI API key is empty.".to_string());
+    }
+    let trimmed_user_prompt = user_prompt.trim();
+    let normalized_user_content = user_content.unwrap_or_default();
+    if trimmed_user_prompt.is_empty() && !has_nonempty_user_prompt_content(&normalized_user_content) {
+        return Err("Prompt is empty.".to_string());
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|err| format!("failed to create HTTP client: {err}"))?;
+
+    if ai_engine == "local" {
+        let payload = serde_json::json!({
+            "model": "mistral-7b-v0.3.Q4_K_M.gguf",
+            "temperature": 0.2,
+            "max_tokens": 1400,
+            "messages": [{
+                "role": "user",
+                "content": build_text_only_user_prompt(trimmed_user_prompt, &normalized_user_content)
+            }]
+        });
+
+        let response = client
+            .post("http://127.0.0.1:11434/v1/chat/completions")
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|err| format!("request failed: {err}"))?;
+        let status = response.status();
+        let raw_text = response
+            .text()
+            .await
+            .map_err(|err| format!("failed to read response body: {err}"))?;
+        if !status.is_success() {
+            return Err(format!(
+                "Local AI returned {}: {}",
+                status.as_u16(),
+                extract_error_message(&raw_text)
+            ));
+        }
+        let parsed: Value = serde_json::from_str(&raw_text)
+            .map_err(|err| format!("invalid JSON from local AI: {err}"))?;
+        return extract_openai_compatible_message_text(&parsed)
+            .ok_or_else(|| "Local AI response did not include message content.".to_string());
+    }
+
+    let provider = if let Some(provider_value) = provider_id.as_deref() {
+        parse_cloud_ai_provider(provider_value).ok_or_else(|| format!("Unsupported AI provider: {provider_value}"))?
+    } else {
+        detect_cloud_ai_provider(&client, trimmed_key).await?
+    };
+
+    send_cloud_ai_prompt(
+        &client,
+        provider,
+        trimmed_key,
+        &system_prompt,
+        trimmed_user_prompt,
+        &normalized_user_content,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -8853,6 +10019,264 @@ Start-Process -FilePath $target | Out-Null
     open_path_with_system_default(&target)
 }
 
+fn escape_html_attribute(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn sanitize_quick_app_instance_file_name(file_name: &str, fallback_ext: &str) -> String {
+    let raw = Path::new(file_name.trim())
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("quick-app");
+    let sanitized: String = raw
+        .chars()
+        .map(|ch| match ch {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            _ => ch,
+        })
+        .collect();
+    let trimmed = sanitized.trim().trim_matches('.').trim();
+    if trimmed.is_empty() {
+        return format!("quick-app.{fallback_ext}");
+    }
+
+    let parsed_path = Path::new(trimmed);
+    let ext = parsed_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext == "html" || ext == "htm" {
+        trimmed.to_string()
+    } else {
+        format!("{trimmed}.{fallback_ext}")
+    }
+}
+
+fn sanitize_quick_app_instance_dir_name(file_name: &str) -> String {
+    let stem = Path::new(file_name)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("quick-app");
+    let sanitized: String = stem
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+        .collect();
+    let collapsed = sanitized
+        .split('-')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if collapsed.is_empty() {
+        "quick-app".to_string()
+    } else {
+        collapsed
+    }
+}
+
+fn inject_quick_app_html_base_href(raw: &str, template_base_href: Option<&str>) -> String {
+    let Some(base_href) = template_base_href.map(str::trim).filter(|value| !value.is_empty()) else {
+        return raw.to_string();
+    };
+
+    let lowered = raw.to_ascii_lowercase();
+    if lowered.contains("<base ") || lowered.contains("<base>") {
+        return raw.to_string();
+    }
+
+    let injection = format!(r#"<base href="{}" />"#, escape_html_attribute(base_href));
+    if let Some(index) = lowered.find("</head>") {
+        let mut output = String::with_capacity(raw.len() + injection.len() + 1);
+        output.push_str(&raw[..index]);
+        output.push_str(&injection);
+        output.push('\n');
+        output.push_str(&raw[index..]);
+        return output;
+    }
+
+    if let Some(index) = lowered.find("<body") {
+        let mut output = String::with_capacity(raw.len() + injection.len() + 16);
+        output.push_str(&raw[..index]);
+        output.push_str("<head>\n");
+        output.push_str(&injection);
+        output.push_str("\n</head>\n");
+        output.push_str(&raw[index..]);
+        return output;
+    }
+
+    format!("<head>\n{injection}\n</head>\n{raw}")
+}
+
+fn inject_quick_app_html_scoped_storage(raw: &str, storage_namespace: Option<&str>) -> String {
+    let Some(namespace) = storage_namespace.map(str::trim).filter(|value| !value.is_empty()) else {
+        return raw.to_string();
+    };
+    let Ok(namespace_json) = serde_json::to_string(namespace) else {
+        return raw.to_string();
+    };
+
+    let injection = format!(
+        r#"<script>
+(function() {{
+  const namespace = {namespace_json};
+  if (!namespace) return;
+  const prefix = namespace + "::";
+  const storageRef = window.localStorage;
+  if (!storageRef) return;
+  const storageProto = Object.getPrototypeOf(storageRef);
+  if (!storageProto) return;
+  if (window.__ODE_QUICK_APP_SCOPED_STORAGE__ === namespace) return;
+  window.__ODE_QUICK_APP_SCOPED_STORAGE__ = namespace;
+
+  const originalGetItem = storageProto.getItem;
+  const originalSetItem = storageProto.setItem;
+  const originalRemoveItem = storageProto.removeItem;
+  const originalClear = storageProto.clear;
+  const originalKey = storageProto.key;
+  const originalLengthDescriptor = Object.getOwnPropertyDescriptor(storageProto, "length");
+  const mapKey = (key) => prefix + String(key ?? "");
+  const isLocalStorage = (target) => target === storageRef;
+  const collectScopedKeys = () => {{
+    if (!originalLengthDescriptor || typeof originalLengthDescriptor.get !== "function") return [];
+    const totalLength = Number(originalLengthDescriptor.get.call(storageRef)) || 0;
+    const keys = [];
+    for (let index = 0; index < totalLength; index += 1) {{
+      const rawKey = originalKey.call(storageRef, index);
+      if (typeof rawKey === "string" && rawKey.startsWith(prefix)) {{
+        keys.push(rawKey);
+      }}
+    }}
+    return keys;
+  }};
+
+  storageProto.getItem = function(key) {{
+    if (!isLocalStorage(this)) return originalGetItem.call(this, key);
+    return originalGetItem.call(this, mapKey(key));
+  }};
+  storageProto.setItem = function(key, value) {{
+    if (!isLocalStorage(this)) return originalSetItem.call(this, key, value);
+    return originalSetItem.call(this, mapKey(key), value);
+  }};
+  storageProto.removeItem = function(key) {{
+    if (!isLocalStorage(this)) return originalRemoveItem.call(this, key);
+    return originalRemoveItem.call(this, mapKey(key));
+  }};
+  storageProto.clear = function() {{
+    if (!isLocalStorage(this)) return originalClear.call(this);
+    collectScopedKeys().forEach((key) => originalRemoveItem.call(storageRef, key));
+  }};
+  storageProto.key = function(index) {{
+    if (!isLocalStorage(this)) return originalKey.call(this, index);
+    const scopedKeys = collectScopedKeys();
+    const scopedKey = scopedKeys[index];
+    return typeof scopedKey === "string" ? scopedKey.slice(prefix.length) : null;
+  }};
+  if (originalLengthDescriptor && typeof originalLengthDescriptor.get === "function") {{
+    try {{
+      Object.defineProperty(storageProto, "length", {{
+        configurable: true,
+        enumerable: true,
+        get() {{
+          if (!isLocalStorage(this)) return originalLengthDescriptor.get.call(this);
+          return collectScopedKeys().length;
+        }}
+      }});
+    }} catch (_error) {{
+      // Ignore environments that disallow overriding Storage.length.
+    }}
+  }}
+}})();
+</script>"#
+    );
+
+    let lowered = raw.to_ascii_lowercase();
+    if let Some(index) = lowered.find("</head>") {
+        let mut output = String::with_capacity(raw.len() + injection.len() + 1);
+        output.push_str(&raw[..index]);
+        output.push_str(&injection);
+        output.push('\n');
+        output.push_str(&raw[index..]);
+        return output;
+    }
+
+    if let Some(index) = lowered.find("<body") {
+        let mut output = String::with_capacity(raw.len() + injection.len() + 16);
+        output.push_str(&raw[..index]);
+        output.push_str("<head>\n");
+        output.push_str(&injection);
+        output.push_str("\n</head>\n");
+        output.push_str(&raw[index..]);
+        return output;
+    }
+
+    format!("<head>\n{injection}\n</head>\n{raw}")
+}
+
+#[tauri::command]
+fn prepare_quick_app_html_instance(
+    app: tauri::AppHandle,
+    template_path: String,
+    instance_file_name: String,
+    template_base_href: Option<String>,
+    storage_namespace: Option<String>,
+) -> Result<String, String> {
+    let trimmed = template_path.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err("empty template path".to_string());
+    }
+
+    let template = PathBuf::from(trimmed);
+    if !template.exists() || !template.is_file() {
+        return Err(format!("html template does not exist: {:?}", template));
+    }
+
+    let template_ext = template
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .unwrap_or_default();
+    if template_ext != "html" && template_ext != "htm" {
+        return Err(format!("html template is not an .html/.htm file: {:?}", template));
+    }
+
+    let fallback_ext = if template_ext == "htm" { "htm" } else { "html" };
+    let sanitized_file_name = sanitize_quick_app_instance_file_name(&instance_file_name, fallback_ext);
+    let parent_dir = template
+        .parent()
+        .ok_or_else(|| format!("html template has no parent folder: {:?}", template))?;
+
+    let raw_html =
+        fs::read_to_string(&template).map_err(|err| format!("failed to read html template {:?}: {err}", template))?;
+    let with_base_href = inject_quick_app_html_base_href(&raw_html, template_base_href.as_deref());
+    let materialized_html = inject_quick_app_html_scoped_storage(&with_base_href, storage_namespace.as_deref());
+    let sibling_instance = parent_dir.join(&sanitized_file_name);
+
+    if sibling_instance != template {
+        if fs::write(&sibling_instance, &materialized_html).is_ok() {
+            return Ok(sibling_instance.to_string_lossy().to_string());
+        }
+    }
+
+    let fallback_root = ensure_internal_state_root_exists(&app)?.join(QUICK_APP_HTML_INSTANCES_DIR_NAME);
+    fs::create_dir_all(&fallback_root)
+        .map_err(|err| format!("failed to create quick app html dir {:?}: {err}", fallback_root))?;
+    let instance_dir = fallback_root.join(sanitize_quick_app_instance_dir_name(&sanitized_file_name));
+    fs::create_dir_all(&instance_dir)
+        .map_err(|err| format!("failed to create quick app html instance dir {:?}: {err}", instance_dir))?;
+    let fallback_instance = instance_dir.join(&sanitized_file_name);
+    fs::write(&fallback_instance, materialized_html).map_err(|err| {
+        format!(
+            "failed to write quick app html instance {:?}: {err}",
+            fallback_instance
+        )
+    })?;
+    Ok(fallback_instance.to_string_lossy().to_string())
+}
+
 #[tauri::command]
 fn read_local_image_data_url(path: String) -> Result<Option<String>, String> {
     let trimmed = path.trim().trim_matches('"');
@@ -8889,6 +10313,58 @@ fn read_local_file_data_url(path: String) -> Result<Option<String>, String> {
         .map_err(|err| format!("failed to read local file {:?}: {err}", file_path))?;
     let encoded = BASE64_STANDARD.encode(bytes);
     Ok(Some(format!("data:{mime};base64,{encoded}")))
+}
+
+async fn extract_document_text_from_bytes(
+    file_name: &str,
+    bytes_base64: &str,
+) -> Result<Option<String>, String> {
+    let trimmed_name = file_name.trim();
+    let trimmed_base64 = bytes_base64.trim();
+    if trimmed_name.is_empty() || trimmed_base64.is_empty() {
+        return Ok(None);
+    }
+
+    let extension = Path::new(trimmed_name)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.trim().trim_start_matches('.').to_ascii_lowercase())
+        .unwrap_or_default();
+    if extension.is_empty() {
+        return Ok(None);
+    }
+
+    let bytes = BASE64_STANDARD
+        .decode(trimmed_base64)
+        .map_err(|err| format!("failed to decode attachment bytes: {err}"))?;
+    let temp_dir = std::env::temp_dir().join(format!("odetool_ai_attach_{}", uuid::Uuid::new_v4().simple()));
+    fs::create_dir_all(&temp_dir)
+        .map_err(|err| format!("failed to create temp attachment dir {:?}: {err}", temp_dir))?;
+    let temp_path = temp_dir.join(trimmed_name);
+    fs::write(&temp_path, bytes)
+        .map_err(|err| format!("failed to materialize temp attachment {:?}: {err}", temp_path))?;
+
+    let parsed = document_parser::parse_file(&temp_path, &extension).await;
+    let _ = fs::remove_file(&temp_path);
+    let _ = fs::remove_dir_all(&temp_dir);
+    Ok(parsed)
+}
+
+#[tauri::command]
+fn read_clipboard_image_data_url() -> Result<Option<String>, String> {
+    match read_clipboard_image_payload() {
+        Ok((width, height, bytes)) => encode_png_data_url_from_rgba(width, height, bytes).map(Some),
+        Err(message) if message.contains("Clipboard has no image") => Ok(None),
+        Err(message) => Err(message),
+    }
+}
+
+#[tauri::command]
+async fn extract_document_text_from_payload(
+    file_name: String,
+    bytes_base64: String,
+) -> Result<Option<String>, String> {
+    extract_document_text_from_bytes(&file_name, &bytes_base64).await
 }
 
 #[tauri::command]
@@ -9153,10 +10629,12 @@ pub fn run() {
             get_task_ids_for_node,
             get_task_metadata,
             import_files_to_node,
+            import_file_payloads_to_node,
             export_node_package,
             import_node_package,
             open_node_file,
             extract_document_text,
+            fetch_quick_app_url_preview,
             reparse_node_document_content,
             open_node_file_with,
             open_node_file_location,
@@ -9175,6 +10653,7 @@ pub fn run() {
             pick_qa_evidence_files,
             get_windows_language_snapshot,
             open_local_path,
+            prepare_quick_app_html_instance,
             export_tree_structure_excel,
             export_procedure_table_excel,
             pick_windows_tree_spreadsheet_file,
@@ -9184,6 +10663,8 @@ pub fn run() {
             save_export_file,
             read_local_image_data_url,
             read_local_file_data_url,
+            read_clipboard_image_data_url,
+            extract_document_text_from_payload,
             export_powerpoint_slides,
             pick_windows_node_package_file,
             pick_windows_project_folder,
@@ -9206,7 +10687,8 @@ pub fn run() {
             revoke_user_account_session,
             delete_user_account,
             get_ai_rebuild_status,
-            run_mistral_tree_analysis,
+            detect_ai_api_source,
+            run_ai_tree_analysis,
             analyze_ticket,
             generate_ticket_reply,
             open_external_url,

@@ -22,7 +22,9 @@ const DICTIONARY_ASSET_URLS: Record<SupportedLanguageCode, { aff: string; dic: s
   EN: { aff: enAffUrl, dic: enDicUrl },
   DE: { aff: deAffUrl, dic: deDicUrl },
   ES: { aff: esAffUrl, dic: esDicUrl },
-  FR: { aff: frAffUrl, dic: frDicUrl }
+  FR: { aff: frAffUrl, dic: frDicUrl },
+  // Farsi UI translations are supported; spellcheck currently falls back to English assets.
+  FA: { aff: enAffUrl, dic: enDicUrl }
 };
 
 const spellCheckerByLanguage = new Map<SupportedLanguageCode, Promise<SpellChecker>>();

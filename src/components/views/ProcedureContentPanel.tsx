@@ -24,11 +24,11 @@ import { AiWorkspaceModal } from "@/components/modals/AiWorkspaceModal";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { TextEditContextMenu, type TextEditContextMenuState } from "@/components/overlay/TextEditContextMenu";
 import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
-import { AI_KEYS_STORAGE_KEY } from "@/lib/appIdentity";
 import { type LanguageCode, type TranslationParams } from "@/lib/i18n";
 import { getMindMapTheme } from "@/lib/mindMapTheme";
 import { getNodeDisplayName, shouldHideNodeFromGenericUi } from "@/lib/nodeDisplay";
 import { getODENodeMetadata } from "@/lib/odePolicy";
+import { encodeAiAccessToken, getPrimaryStoredAiProviderKey } from "@/lib/aiProviderKeys";
 import {
   ROOT_PARENT_ID,
   type AppNode,
@@ -1049,15 +1049,8 @@ function buildIndexedProcedureTitle(baseLabel: string, existingTitles: Iterable<
 }
 
 function getSavedMistralApiKey(): string | null {
-  try {
-    const raw = localStorage.getItem(AI_KEYS_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { mistralKeys?: string[] };
-    if (!parsed.mistralKeys || parsed.mistralKeys.length === 0) return null;
-    return parsed.mistralKeys.find((item) => item.trim().length > 0)?.trim() ?? null;
-  } catch {
-    return null;
-  }
+  const credential = getPrimaryStoredAiProviderKey();
+  return credential ? encodeAiAccessToken(credential) : null;
 }
 
 function trimExcerpt(value: string, limit = 420): string {

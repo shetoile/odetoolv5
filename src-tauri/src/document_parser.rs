@@ -57,9 +57,155 @@ pub async fn parse_file(path: &Path, extension: &str) -> Option<String> {
         "pdf" => parse_pdf(path).await,
         "docx" => parse_docx(path).await,
         "xlsx" | "xls" => parse_excel(path).await,
-        "txt" | "md" | "csv" => fs::read_to_string(path).ok(),
+        "html" | "htm" => parse_html(path).await,
+        "txt" | "md" | "csv" => parse_plain_text(path).await,
         _ => None,
     }
+}
+
+fn decode_text_bytes_lossy(bytes: &[u8]) -> String {
+    let utf8_bom = [0xEF, 0xBB, 0xBF];
+    let utf16_le_bom = [0xFF, 0xFE];
+    let utf16_be_bom = [0xFE, 0xFF];
+
+    if bytes.starts_with(&utf16_le_bom) {
+        let units = bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return String::from_utf16_lossy(&units);
+    }
+
+    if bytes.starts_with(&utf16_be_bom) {
+        let units = bytes[2..]
+            .chunks_exact(2)
+            .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+            .collect::<Vec<_>>();
+        return String::from_utf16_lossy(&units);
+    }
+
+    let payload = if bytes.starts_with(&utf8_bom) {
+        &bytes[utf8_bom.len()..]
+    } else {
+        bytes
+    };
+    String::from_utf8_lossy(payload).into_owned()
+}
+
+pub fn strip_html_to_text(input: &str) -> String {
+    let mut text = String::with_capacity(input.len());
+    let mut inside_tag = false;
+    let mut previous_was_space = false;
+    let mut previous_was_newline = false;
+    let mut tag_buffer = String::new();
+    let mut skip_until_tag: Option<&'static str> = None;
+
+    for ch in input.chars() {
+        if inside_tag {
+            if ch == '>' {
+                let tag = tag_buffer.trim().to_ascii_lowercase();
+                let tag_name = tag
+                    .trim_start_matches('/')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+
+                if let Some(skip_tag) = skip_until_tag {
+                    if tag.starts_with('/') && tag_name == skip_tag {
+                        skip_until_tag = None;
+                    }
+                } else if tag_name == "script" || tag_name == "style" {
+                    if !tag.starts_with('/') {
+                        skip_until_tag = Some(if tag_name == "script" { "script" } else { "style" });
+                    }
+                } else if matches!(
+                    tag_name,
+                    "p" | "div" | "section" | "article" | "li" | "tr" | "td" | "th" | "br" | "h1"
+                        | "h2" | "h3" | "h4" | "h5" | "h6"
+                ) {
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                        previous_was_newline = true;
+                        previous_was_space = false;
+                    }
+                }
+                tag_buffer.clear();
+                inside_tag = false;
+            } else {
+                tag_buffer.push(ch);
+            }
+            continue;
+        }
+
+        if ch == '<' {
+            inside_tag = true;
+            tag_buffer.clear();
+            continue;
+        }
+
+        if skip_until_tag.is_some() {
+            continue;
+        }
+
+        let normalized = match ch {
+            '\r' => continue,
+            '\n' | '\t' => ' ',
+            _ => ch,
+        };
+
+        if normalized.is_whitespace() {
+            if previous_was_space || previous_was_newline {
+                continue;
+            }
+            text.push(' ');
+            previous_was_space = true;
+            continue;
+        }
+
+        text.push(normalized);
+        previous_was_space = false;
+        previous_was_newline = false;
+    }
+
+    text.split('\n')
+        .map(|line| {
+            line.replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
+async fn parse_html(path: &Path) -> Option<String> {
+    tokio::task::spawn_blocking({
+        let p = path.to_path_buf();
+        move || {
+            fs::read(p)
+                .ok()
+                .map(|bytes| strip_html_to_text(&decode_text_bytes_lossy(&bytes)))
+        }
+    })
+    .await
+    .unwrap_or(None)
+}
+
+async fn parse_plain_text(path: &Path) -> Option<String> {
+    tokio::task::spawn_blocking({
+        let p = path.to_path_buf();
+        move || fs::read(p).ok().map(|bytes| decode_text_bytes_lossy(&bytes))
+    })
+    .await
+    .unwrap_or(None)
 }
 
 async fn parse_pdf(path: &Path) -> Option<String> {
@@ -275,5 +421,21 @@ mod tests {
             .expect("empty txt content");
         fs::remove_file(&path).ok();
         assert_eq!(parsed, "");
+    }
+
+    #[test]
+    fn parse_file_reads_html_files_as_text() {
+        let path = build_temp_path("page.html");
+        fs::write(
+            &path,
+            "<html><body><h1>Project Sheet</h1><p>Hello <strong>team</strong></p><script>ignored()</script></body></html>",
+        )
+        .expect("write html");
+        let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
+        let parsed = runtime
+            .block_on(parse_file(&path, "html"))
+            .expect("html content");
+        fs::remove_file(&path).ok();
+        assert_eq!(parsed, "Project Sheet\nHello team");
     }
 }

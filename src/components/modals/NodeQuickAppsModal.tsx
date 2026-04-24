@@ -1,15 +1,22 @@
-import { useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import {
   ArrowDownGlyphSmall,
   ArrowUpGlyphSmall,
   ImageGlyphSmall,
   PlusGlyphSmall,
+  SearchGlyphSmall,
   TrashGlyphSmall,
   UploadGlyphSmall
 } from "@/components/Icons";
-import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
+import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { QuickAppIcon } from "@/components/quick-apps/QuickAppIcon";
-import type { NodeQuickAppItem } from "@/lib/nodeQuickApps";
+import {
+  resolveQuickAppItemType,
+  shouldOpenQuickAppInsideOdeBrowser,
+  type NodeQuickAppItem,
+  type QuickAppLibraryItem,
+  type NodeQuickAppType
+} from "@/lib/nodeQuickApps";
 import type { TranslationParams } from "@/lib/i18n";
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
@@ -17,10 +24,14 @@ type TranslateFn = (key: string, params?: TranslationParams) => string;
 interface NodeQuickAppsModalProps {
   t: TranslateFn;
   open: boolean;
-  nodeLabel: string;
+  nodeLabel?: string | null;
+  title?: string | null;
+  emptyMessage?: string | null;
+  libraryItems: QuickAppLibraryItem[];
   items: NodeQuickAppItem[];
   saving?: boolean;
   onAdd: () => void;
+  onAddFromLibrary: (libraryItemId: string) => void;
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onChange: (id: string, patch: Partial<NodeQuickAppItem>) => void;
@@ -81,24 +92,63 @@ async function createQuickAppCustomIconDataUrl(file: File): Promise<string> {
 export function NodeQuickAppsModal({
   t,
   open,
-  nodeLabel,
+  nodeLabel = "",
+  title = null,
+  emptyMessage = null,
+  libraryItems,
   items,
   saving = false,
   onAdd,
+  onAddFromLibrary,
   onRemove,
   onMove,
   onChange,
   onClose,
   onSave
 }: NodeQuickAppsModalProps) {
-  const { surfaceRef, surfaceStyle, handlePointerDown } = useDraggableModalSurface({ open });
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const libraryPickerRef = useRef<HTMLDivElement | null>(null);
+
+  const normalizedLibraryQuery = libraryQuery.trim().toLowerCase();
+  const visibleLibraryItems = normalizedLibraryQuery
+    ? libraryItems.filter((item) => {
+        const haystack = `${item.label} ${item.target} ${item.type ?? ""}`.toLowerCase();
+        return haystack.includes(normalizedLibraryQuery);
+      })
+    : libraryItems;
+
+  useEffect(() => {
+    if (open) return;
+    setLibraryPickerOpen(false);
+    setLibraryQuery("");
+  }, [open]);
+
+  useEffect(() => {
+    if (!libraryPickerOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!libraryPickerRef.current?.contains(event.target as Node)) {
+        setLibraryPickerOpen(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+    };
+  }, [libraryPickerOpen]);
 
   if (!open) return null;
 
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
+      if (libraryPickerOpen) {
+        setLibraryPickerOpen(false);
+        return;
+      }
       if (!saving) onClose();
       return;
     }
@@ -107,6 +157,12 @@ export function NodeQuickAppsModal({
       event.preventDefault();
       if (!saving) void onSave();
     }
+  };
+
+  const handleLibraryUse = (libraryItemId: string) => {
+    onAddFromLibrary(libraryItemId);
+    setLibraryPickerOpen(false);
+    setLibraryQuery("");
   };
 
   const handleIconFileChange = async (itemId: string, event: ChangeEvent<HTMLInputElement>) => {
@@ -125,63 +181,171 @@ export function NodeQuickAppsModal({
     }
   };
 
+  const handleTypeChange = (itemId: string, item: NodeQuickAppItem, nextType: NodeQuickAppType) => {
+    onChange(itemId, {
+      type: nextType,
+      kind: nextType === "link" ? "url" : "local_path",
+      openInOdeBrowser: nextType === "html" ? true : nextType === "link" ? Boolean(item.openInOdeBrowser) : false
+    });
+  };
+
   return (
-    <div
-      className="ode-overlay-scrim fixed inset-0 z-[125] flex items-center justify-center p-4 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (event.target !== event.currentTarget || saving) return;
-        onClose();
-      }}
-    >
+    <div className="ode-overlay-scrim fixed inset-0 z-[125] backdrop-blur-sm">
       <div
-        ref={surfaceRef}
-        style={surfaceStyle}
-        className="ode-modal w-full max-w-4xl overflow-hidden rounded-[22px] border border-[var(--ode-border-strong)]"
+        className="ode-modal ode-quick-apps-shell flex h-full w-full flex-col overflow-hidden"
         onKeyDown={handleKeyDown}
       >
-        <div
-          className="ode-modal-drag-handle flex items-center justify-between border-b border-[var(--ode-border)] px-6 py-5"
-          onPointerDown={handlePointerDown}
-        >
+        <div className="flex shrink-0 items-start justify-between gap-6 px-6 py-6 md:px-10 md:py-8">
           <div className="min-w-0">
-            <h2 className="text-[1.35rem] font-semibold tracking-tight text-[var(--ode-accent)]">
-              {t("quick_apps.modal_title")}
+            <h2 className="text-[1.55rem] font-semibold tracking-tight text-[var(--ode-accent)]">
+              {title || t("quick_apps.modal_title")}
             </h2>
-            <p className="mt-1 truncate text-[0.9rem] text-[var(--ode-text-dim)]">{nodeLabel}</p>
+            {nodeLabel ? (
+              <p className="mt-2 truncate text-[1rem] text-[var(--ode-text-dim)]">{nodeLabel}</p>
+            ) : null}
           </div>
-          <button
-            type="button"
-            className="ode-icon-btn h-10 w-10"
-            onClick={onClose}
-            disabled={saving}
-            aria-label={t("delete.modal_cancel")}
-          >
-            x
-          </button>
-        </div>
-
-        <div className="max-h-[68vh] overflow-auto px-6 py-5">
-          <div className="mb-4 flex items-center justify-end gap-3">
-            <button type="button" className="ode-text-btn inline-flex h-10 items-center gap-2 px-4" onClick={onAdd}>
+          <div className="flex shrink-0 items-center gap-3">
+            <button
+              type="button"
+              className="ode-text-btn inline-flex h-11 items-center gap-2 px-4"
+              onClick={onAdd}
+              disabled={saving}
+            >
               <PlusGlyphSmall />
               <span>{t("quick_apps.add")}</span>
             </button>
+            <button
+              type="button"
+              className="ode-icon-btn h-11 w-11"
+              onClick={onClose}
+              disabled={saving}
+              aria-label={t("delete.modal_cancel")}
+            >
+              x
+            </button>
           </div>
+        </div>
 
-          {items.length === 0 ? (
-            <div className="rounded-[18px] border border-dashed border-[var(--ode-border)] bg-[rgba(4,24,40,0.35)] px-5 py-6 text-[0.92rem] text-[var(--ode-text-dim)]">
-              {t("quick_apps.modal_empty")}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {items.map((item, index) => (
-                <div
-                  key={item.id}
-                  className="rounded-[18px] border border-[var(--ode-border)] bg-[rgba(5,27,44,0.42)] p-4"
+        <div className="min-h-0 flex-1 overflow-auto px-6 pb-6 md:px-10 md:pb-8">
+          <div className="space-y-6 pb-3">
+            <section className="relative z-20 rounded-[28px] border border-[rgba(76,152,194,0.2)] bg-[rgba(5,27,44,0.34)] px-5 py-5 shadow-[inset_0_1px_0_rgba(121,219,255,0.03)] md:px-6">
+              <div ref={libraryPickerRef} className="relative space-y-3">
+                <label className="flex h-11 items-center gap-2 rounded-[16px] border border-[rgba(71,145,185,0.22)] bg-[rgba(8,35,54,0.52)] px-4 text-[var(--ode-text-dim)]">
+                  <SearchGlyphSmall />
+                  <input
+                    className="h-full min-w-0 flex-1 bg-transparent text-[0.94rem] text-[var(--ode-text)] outline-none placeholder:text-[var(--ode-text-muted)]"
+                    value={libraryQuery}
+                    placeholder={t("quick_apps.library_search_placeholder")}
+                    onFocus={() => {
+                      if (libraryItems.length > 0) {
+                        setLibraryPickerOpen(true);
+                      }
+                    }}
+                    onChange={(event) => {
+                      setLibraryQuery(event.target.value);
+                      if (libraryItems.length > 0) {
+                        setLibraryPickerOpen(true);
+                      }
+                    }}
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  className="flex h-11 w-full items-center justify-between rounded-[16px] border border-[rgba(71,145,185,0.22)] bg-[rgba(8,35,54,0.52)] px-4 text-left text-[0.94rem] font-medium text-[var(--ode-text)] transition hover:border-[rgba(96,186,228,0.34)] disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => setLibraryPickerOpen((current) => !current)}
+                  disabled={saving || libraryItems.length === 0}
+                  aria-expanded={libraryPickerOpen}
+                  aria-haspopup="listbox"
                 >
-                  <div className="flex items-start gap-4">
+                  <span>{t("quick_apps.library_all_items")}</span>
+                  <span className={`transition ${libraryPickerOpen ? "rotate-180" : ""}`}>
+                    <ArrowDownGlyphSmall />
+                  </span>
+                </button>
+
+                {libraryItems.length === 0 ? (
+                  <div className="rounded-[20px] border border-dashed border-[rgba(76,152,194,0.24)] bg-[rgba(5,24,39,0.34)] px-5 py-4 text-[0.94rem] text-[var(--ode-text-dim)]">
+                    {t("quick_apps.library_empty")}
+                  </div>
+                ) : null}
+
+                {libraryPickerOpen && libraryItems.length > 0 ? (
+                  <div className="absolute left-0 right-0 top-full mt-2 overflow-hidden rounded-[22px] border border-[rgba(76,152,194,0.24)] bg-[rgba(3,20,33,0.97)] shadow-[0_18px_44px_rgba(0,0,0,0.34)]">
+                    {visibleLibraryItems.length === 0 ? (
+                      <div className="px-5 py-5 text-[0.94rem] text-[var(--ode-text-dim)]">
+                        {t("quick_apps.library_empty_search")}
+                      </div>
+                    ) : (
+                      <div className="max-h-[320px] space-y-2 overflow-auto p-3" role="listbox" aria-label={t("quick_apps.library_all_items")}>
+                        {visibleLibraryItems.map((libraryItem) => {
+                          const displayLabel =
+                            libraryItem.label.trim().length > 0
+                              ? libraryItem.label
+                              : libraryItem.target.trim().length > 0
+                                ? libraryItem.target
+                                : t("quick_apps.item_untitled");
+
+                          return (
+                            <div
+                              key={libraryItem.id}
+                              className="flex min-w-0 items-center gap-3 rounded-[18px] border border-[rgba(71,142,186,0.18)] bg-[rgba(6,28,44,0.78)] px-3 py-3"
+                              title={libraryItem.target}
+                            >
+                              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[linear-gradient(180deg,rgba(10,43,66,0.72),rgba(4,19,31,0.78))]">
+                                <QuickAppIcon item={libraryItem} variant="editor" />
+                              </div>
+                              <div className="min-w-0 flex-1">
+                                <span className="block truncate text-[0.94rem] font-medium text-[var(--ode-text)]">
+                                  {displayLabel}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                className="ode-text-btn inline-flex h-9 shrink-0 items-center px-4 text-[0.82rem] font-medium text-[var(--ode-accent)]"
+                                onClick={() => handleLibraryUse(libraryItem.id)}
+                                disabled={saving}
+                              >
+                                {t("quick_apps.use_saved")}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            </section>
+
+            {items.length === 0 ? (
+              <div className="rounded-[30px] bg-[rgba(5,27,44,0.28)] px-6 py-8 text-center text-[1rem] text-[var(--ode-text-dim)] shadow-[inset_0_1px_0_rgba(121,219,255,0.03)]">
+                {emptyMessage || t("quick_apps.modal_empty")}
+              </div>
+            ) : (
+              <div className="space-y-4">
+              {items.map((item, index) => (
+                (() => {
+                  const itemType = resolveQuickAppItemType(item);
+                  const opensInsideOde = shouldOpenQuickAppInsideOdeBrowser(item);
+                  const canOpenInsideOdeBrowser = itemType !== "local_app";
+                  const odeBrowserChecked = itemType === "html" ? true : opensInsideOde;
+                  const odeBrowserDisabled = itemType !== "link";
+                  const targetPlaceholder =
+                    itemType === "link"
+                      ? t("quick_apps.target_placeholder_url")
+                      : itemType === "html"
+                        ? t("quick_apps.target_placeholder_html")
+                        : t("quick_apps.target_placeholder_local_app");
+
+                  return (
                     <div
-                      className={`flex h-[72px] w-[72px] shrink-0 items-center justify-center rounded-[18px] border border-[rgba(74,156,205,0.24)] bg-[linear-gradient(180deg,rgba(10,43,66,0.82),rgba(4,19,31,0.9))] ${
+                      key={item.id}
+                      className="rounded-[30px] bg-[linear-gradient(180deg,rgba(5,27,44,0.42),rgba(4,20,33,0.52))] px-5 py-5 shadow-[inset_0_1px_0_rgba(121,219,255,0.03)] md:px-6"
+                    >
+                      <div className="grid gap-5 xl:grid-cols-[96px_minmax(0,1fr)]">
+                    <div
+                      className={`flex h-24 w-24 shrink-0 items-center justify-center rounded-[26px] bg-[linear-gradient(180deg,rgba(10,43,66,0.72),rgba(4,19,31,0.78))] shadow-[inset_0_1px_0_rgba(121,219,255,0.04)] ${
                         uploadingItemId === item.id ? "opacity-70" : ""
                       }`}
                     >
@@ -189,31 +353,36 @@ export function NodeQuickAppsModal({
                     </div>
 
                     <div className="min-w-0 flex-1 space-y-3">
-                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_180px_auto]">
+                      <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_230px_auto]">
                         <input
-                          className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
+                          className="ode-input h-12 w-full rounded-[18px] px-4 text-[0.98rem]"
                           value={item.label}
                           placeholder={t("quick_apps.label_placeholder")}
                           onChange={(event) => onChange(item.id, { label: event.target.value })}
                         />
 
                         <select
-                          className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
-                          value={item.kind}
-                          onChange={(event) =>
-                            onChange(item.id, {
-                              kind: event.target.value === "local_path" ? "local_path" : "url"
-                            })
-                          }
+                          className="ode-input h-12 w-full rounded-[18px] px-4 text-[0.98rem]"
+                          value={itemType}
+                          onChange={(event) => {
+                            const nextType =
+                              event.target.value === "html"
+                                ? "html"
+                                : event.target.value === "local_app"
+                                  ? "local_app"
+                                  : "link";
+                            handleTypeChange(item.id, item, nextType);
+                          }}
                         >
-                          <option value="url">{t("quick_apps.kind_url")}</option>
-                          <option value="local_path">{t("quick_apps.kind_local_path")}</option>
+                          <option value="link">{t("quick_apps.kind_link")}</option>
+                          <option value="local_app">{t("quick_apps.kind_local_app")}</option>
+                          <option value="html">{t("quick_apps.kind_html")}</option>
                         </select>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           <button
                             type="button"
-                            className="ode-icon-btn inline-flex h-11 w-11 items-center justify-center"
+                            className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                             onClick={() => onMove(item.id, "up")}
                             aria-label={t("quick_apps.move_up")}
                             title={t("quick_apps.move_up")}
@@ -223,7 +392,7 @@ export function NodeQuickAppsModal({
                           </button>
                           <button
                             type="button"
-                            className="ode-icon-btn inline-flex h-11 w-11 items-center justify-center"
+                            className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                             onClick={() => onMove(item.id, "down")}
                             aria-label={t("quick_apps.move_down")}
                             title={t("quick_apps.move_down")}
@@ -233,7 +402,7 @@ export function NodeQuickAppsModal({
                           </button>
                           <button
                             type="button"
-                            className="ode-icon-btn inline-flex h-11 w-11 items-center justify-center"
+                            className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                             onClick={() => onRemove(item.id)}
                             aria-label={t("quick_apps.remove")}
                             disabled={saving}
@@ -244,18 +413,35 @@ export function NodeQuickAppsModal({
                       </div>
 
                       <input
-                        className="ode-input h-11 w-full rounded-lg px-3 text-[0.92rem]"
+                        className="ode-input h-12 w-full rounded-[18px] px-4 text-[0.98rem]"
                         value={item.target}
-                        placeholder={
-                          item.kind === "local_path"
-                            ? t("quick_apps.target_placeholder_path")
-                            : t("quick_apps.target_placeholder_url")
-                        }
+                        placeholder={targetPlaceholder}
                         onChange={(event) => onChange(item.id, { target: event.target.value })}
                       />
 
+                      <div className="min-h-10 flex items-center">
+                        <OdeTooltip label={t("quick_apps.open_inside_ode_browser")} side="top" align="start">
+                          <label
+                            className={`inline-flex items-center gap-3 rounded-[14px] px-1 py-1 text-[0.92rem] ${
+                              canOpenInsideOdeBrowser
+                                ? "text-[var(--ode-text)]"
+                                : "cursor-default text-[var(--ode-text-dim)] opacity-50"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-[var(--ode-accent)]"
+                              checked={odeBrowserChecked}
+                              disabled={odeBrowserDisabled}
+                              onChange={(event) => onChange(item.id, { openInOdeBrowser: event.target.checked })}
+                            />
+                            <span className="font-medium">{t("quick_apps.open_inside_ode_browser")}</span>
+                          </label>
+                        </OdeTooltip>
+                      </div>
+
                       <div className="flex flex-wrap items-center gap-2">
-                        <label className="ode-text-btn inline-flex h-9 cursor-pointer items-center gap-2 px-3">
+                        <label className="ode-text-btn inline-flex h-10 cursor-pointer items-center gap-2 px-4">
                           <UploadGlyphSmall />
                           <span>{t("quick_apps.upload_icon")}</span>
                           <input
@@ -271,7 +457,7 @@ export function NodeQuickAppsModal({
                         {item.customIconDataUrl ? (
                           <button
                             type="button"
-                            className="ode-text-btn inline-flex h-9 items-center gap-2 px-3"
+                            className="ode-text-btn inline-flex h-10 items-center gap-2 px-4"
                             onClick={() => onChange(item.id, { customIconDataUrl: null })}
                           >
                             <ImageGlyphSmall />
@@ -281,13 +467,16 @@ export function NodeQuickAppsModal({
                       </div>
                     </div>
                   </div>
-                </div>
+                    </div>
+                  );
+                })()
               ))}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </div>
 
-        <div className="flex items-center justify-end gap-3 border-t border-[var(--ode-border)] px-6 py-4">
+        <div className="flex shrink-0 items-center justify-end gap-3 px-6 py-5 md:px-10 md:py-6">
           <button className="ode-text-btn h-11 px-5" onClick={onClose} disabled={saving}>
             {t("delete.modal_cancel")}
           </button>

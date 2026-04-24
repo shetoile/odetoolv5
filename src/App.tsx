@@ -10,7 +10,7 @@ import {
   useState
 } from "react";
 import { flushSync } from "react-dom";
-import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
+import { isTauri } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getAllWindows, getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -236,6 +236,7 @@ import {
   buildWorkspaceCreateInlineSubmitSuccessState,
   buildWorkspaceSettingsCloseState,
   buildWorkspaceSettingsToggleState,
+  rememberWorkspaceOpened,
   resolveWorkspaceDefaultProjectName,
   resolveWorkspaceOpenFolderPath
 } from "@/features/workspace/manage";
@@ -313,8 +314,7 @@ import {
   resolveVisibleSelectionForSurface
 } from "@/features/workspace/creation";
 import {
-  resolveKeyboardCreationSurface,
-  resolveSelectionSurfaceForKeyboardSurface
+  resolveActiveSelectionSurface,
 } from "@/features/workspace/keyboard";
 import {
   removeProvisionalInlineCreateState,
@@ -341,12 +341,12 @@ import {
   filterDocumentTreeProposalNodes
 } from "@/lib/documentTreeProposal";
 import {
-  AI_KEYS_STORAGE_KEY,
   APP_DISPLAY_NAME,
   APP_MIRROR_FOLDER_NAME,
   APP_SOURCE_ID,
   buildAppStorageKey
 } from "@/lib/appIdentity";
+import { encodeAiAccessToken, getPrimaryStoredAiProviderKey } from "@/lib/aiProviderKeys";
 import {
   PROCEDURE_RECORDS_PROPERTY_KEY,
   buildProcedureDatabaseModel,
@@ -386,15 +386,22 @@ import {
   type MetaCapability
 } from "@/lib/metaEngine";
 import { detectDocumentLanguage, type DocumentLanguageCode } from "@/lib/documentLanguage";
+import {
+  buildAiPromptInput,
+  getReadyAiCommandAttachments,
+  type AiCommandAttachment
+} from "@/lib/aiCommandAttachments";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TopBar } from "@/components/layout/TopBar";
 import { NodeContextMenu } from "@/components/overlay/NodeContextMenu";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { TextEditContextMenu, type TextEditContextMenuState } from "@/components/overlay/TextEditContextMenu";
+import { AiCommandBar } from "@/components/overlay/AiCommandBar";
 import type {
   AiActivityItem,
   AiCommandPlan,
   AiCommandRequestOptions,
+  AiQuickAppScopeSummary,
   AiNodeContext,
   AiNodeResponse
 } from "@/components/overlay/AiCommandBar";
@@ -454,6 +461,7 @@ import {
   extractDocumentText,
   exportNodePackage,
   exportTreeStructureExcel,
+  fetchQuickAppUrlPreview,
   getAllNodes,
   getChildren,
   getProjects,
@@ -462,6 +470,7 @@ import {
   pickWindowsTreeSpreadsheetFile,
   getWindowsFileIcon,
   importNodePackage,
+  importFilePayloadsToNode,
   importFilesToNode,
   getNode,
   moveNode,
@@ -470,6 +479,7 @@ import {
   openNodeFile,
   openNodeFileLocation,
   openNodeFileWith,
+  prepareQuickAppHtmlInstance,
   renameNode,
   runQualityGateCommand,
   exportPowerPointSlides,
@@ -477,19 +487,41 @@ import {
   readTreeStructureExcel,
   probeSingleInstanceRelaunch,
   saveExportFile,
+  type ImportedFilePayload,
+  type QuickAppUrlPreview,
   type QualityGateResult,
   updateNodeContent,
   updateNodeDescription,
   updateNodeProperties
 } from "@/lib/nodeService";
 import {
+  applyQuickAppItemPatch,
+  buildFunctionQuickAppsProperties,
   buildNodeQuickAppsProperties,
+  buildQuickAppHtmlInstanceFileName,
   createNodeQuickAppItem,
+  createQuickAppItemFromLibraryItem,
+  getFunctionQuickApps,
   getQuickAppTargetLeafName,
   getNodeQuickApps,
+  isQuickAppHtmlLocalPath,
+  isQuickAppHtmlItem,
   normalizeNodeQuickApps,
+  readStoredGeneralQuickApps,
+  readStoredQuickAppLibrary,
+  resolveQuickAppLocalPath,
   resolveQuickAppLaunchTarget,
-  type NodeQuickAppItem
+  shouldOpenQuickAppInsideOdeBrowser,
+  touchQuickAppLibraryItem,
+  upsertQuickAppLibraryItems,
+  writeStoredGeneralQuickApps,
+  writeStoredQuickAppLibrary,
+  type QuickAppLaunchContext,
+  type QuickAppLibraryItem,
+  type NodeQuickAppItem,
+  type QuickAppScope,
+  type ScopedQuickAppCollection,
+  type ScopedQuickAppRecord
 } from "@/lib/nodeQuickApps";
 import { createNodeNumberingLevelState, resolveNodeTreeNumbering } from "@/lib/nodeNumbering";
 import {
@@ -932,7 +964,7 @@ const TIMELINE_GRID_MIN_WIDTH = 280;
 const TIMELINE_DAY_COLUMN_WIDTH = 24;
 const TIMELINE_HEADER_HEIGHT = 78;
 const TIMELINE_ROW_HEIGHT = 38;
-const LANGUAGE_CODES: LanguageCode[] = ["FR", "EN", "DE", "ES"];
+const LANGUAGE_CODES: LanguageCode[] = ["FR", "EN", "DE", "ES", "FA"];
 const FOLDER_NODE_STATE_ORDER: FolderNodeState[] = ["empty", "task_only", "data_only", "filled"];
 const QA_FILE_OUTPUTS_ENABLED = false;
 const DESKTOP_WINDOW_WORKAREA_MARGIN_PX = 10;
@@ -1064,6 +1096,8 @@ const FAVORITE_GROUP_TREE_FILTER_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("
 const WORKSPACE_ROOT_NUMBERING_STORAGE_KEY = buildAppStorageKey("workspaceRootNumbering.v1");
 const NODE_TOOLTIP_VISIBILITY_STORAGE_KEY = buildAppStorageKey("nodeTooltips.visible.v1");
 const WORKSPACE_NODE_TABS_STORAGE_KEY = buildAppStorageKey("workspaceNodeTabs.v1");
+const TAB_AI_HISTORY_STORAGE_KEY_PREFIX = buildAppStorageKey("ai.tabHistory.v1");
+const NODE_HOME_AI_HISTORY_STORAGE_KEY_PREFIX = buildAppStorageKey("ai.nodeHomeHistory.v1");
 const NODE_STATE_FILTER_PARENTS_STORAGE_KEY = buildAppStorageKey("nodeStateFilter.parents.v1");
 const TIMELINE_FILTER_PARENTS_STORAGE_KEY = buildAppStorageKey("timelineFilter.parents.v1");
 const ACTIVE_ACCESS_ROLE_STORAGE_KEY = buildAppStorageKey("accessRole.active.v1");
@@ -1436,9 +1470,12 @@ function resolveNearestProcedureDisplayNode(
   return null;
 }
 
+type WorkspaceNodeTabMode = "content" | "ai";
+
 type WorkspaceNodeTabEntry = {
   nodeId: string;
   lastSelectedNodeId: string | null;
+  mode?: WorkspaceNodeTabMode;
 };
 
 type WorkspaceNodeTabSession = {
@@ -1448,16 +1485,56 @@ type WorkspaceNodeTabSession = {
 
 type WorkspaceNodeTabSessions = Record<string, WorkspaceNodeTabSession>;
 
+function normalizeWorkspaceNodeTabMode(mode?: WorkspaceNodeTabMode | null): WorkspaceNodeTabMode {
+  return mode === "content" ? "content" : "ai";
+}
+
 function readWorkspaceNodeTabSessions(): WorkspaceNodeTabSessions {
   try {
     const raw = localStorage.getItem(WORKSPACE_NODE_TABS_STORAGE_KEY);
     if (!raw) return {};
-    const parsed = JSON.parse(raw) as WorkspaceNodeTabSessions;
+    const parsed = JSON.parse(raw) as Record<string, Partial<WorkspaceNodeTabSession>>;
     if (!parsed || typeof parsed !== "object") return {};
-    return parsed;
+    const normalized: WorkspaceNodeTabSessions = {};
+    for (const [workspaceRootId, session] of Object.entries(parsed)) {
+      if (!session || typeof session !== "object") continue;
+      const openTabs = Array.isArray(session.openTabs)
+        ? session.openTabs
+            .filter((entry) => Boolean(entry && typeof entry === "object"))
+            .map((entry) => ({
+              nodeId:
+                typeof (entry as Partial<WorkspaceNodeTabEntry>).nodeId === "string"
+                  ? (entry as Partial<WorkspaceNodeTabEntry>).nodeId!
+                  : "",
+              lastSelectedNodeId:
+                typeof (entry as Partial<WorkspaceNodeTabEntry>).lastSelectedNodeId === "string"
+                  ? (entry as Partial<WorkspaceNodeTabEntry>).lastSelectedNodeId!
+                  : null,
+              mode: normalizeWorkspaceNodeTabMode(
+                (entry as Partial<WorkspaceNodeTabEntry>).mode as WorkspaceNodeTabMode | undefined
+              )
+            }))
+            .filter((entry) => entry.nodeId.length > 0)
+        : [];
+      const activeTabId = typeof session.activeTabId === "string" ? session.activeTabId : null;
+      if (openTabs.length === 0 && !activeTabId) continue;
+      normalized[workspaceRootId] = {
+        openTabs,
+        activeTabId
+      };
+    }
+    return normalized;
   } catch {
     return {};
   }
+}
+
+function buildTabAiHistoryStorageKey(workspaceRootId: string, tabNodeId: string): string {
+  return `${TAB_AI_HISTORY_STORAGE_KEY_PREFIX}:${workspaceRootId}:${tabNodeId}`;
+}
+
+function buildNodeHomeAiHistoryStorageKey(workspaceRootId: string, nodeId: string): string {
+  return `${NODE_HOME_AI_HISTORY_STORAGE_KEY_PREFIX}:${workspaceRootId}:${nodeId}`;
 }
 
 function getPathFileName(path: string): string {
@@ -1465,6 +1542,184 @@ function getPathFileName(path: string): string {
   if (!normalized) return "";
   const parts = normalized.split("/");
   return parts[parts.length - 1] ?? normalized;
+}
+
+function sanitizeQuickAppWindowToken(value: string | null | undefined, fallback: string): string {
+  const normalized = (value ?? "")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return normalized || fallback;
+}
+
+function buildFileUrlFromLocalPath(path: string): string {
+  const trimmed = path.trim().replace(/^"+|"+$/g, "");
+  if (!trimmed) return "";
+  if (/^file:/i.test(trimmed)) return trimmed;
+  const normalized = trimmed.replace(/\\/g, "/");
+  if (normalized.startsWith("//")) {
+    return encodeURI(`file:${normalized}`);
+  }
+  if (normalized.startsWith("/")) {
+    return encodeURI(`file://${normalized}`);
+  }
+  return encodeURI(`file:///${normalized}`);
+}
+
+function getQuickAppParentPath(path: string): string | null {
+  const normalized = path.trim().replace(/^"+|"+$/g, "").replace(/[\\/]+$/, "");
+  if (!normalized) return null;
+  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  if (separatorIndex <= 0) return null;
+  return normalized.slice(0, separatorIndex);
+}
+
+function buildQuickAppHtmlTemplateBaseHref(templatePath: string): string | null {
+  const parentPath = getQuickAppParentPath(templatePath);
+  if (!parentPath) return null;
+  const separator = parentPath.includes("\\") ? "\\" : "/";
+  return buildFileUrlFromLocalPath(`${parentPath}${separator}`);
+}
+
+function resolveQuickAppContextScopeToken(context?: QuickAppLaunchContext | null): "general" | "workspace" | "node" {
+  if (context?.scope === "function") return "workspace";
+  if (context?.scope === "tab") return "node";
+  return "general";
+}
+
+function resolveQuickAppContextDisplayLabel(context?: QuickAppLaunchContext | null): string | null {
+  const ownerLabel = context?.ownerLabel?.trim();
+  if (ownerLabel) return ownerLabel;
+  if (context?.scope === "function") return "Workspace";
+  if (context?.scope === "tab") return "Node";
+  if (context?.scope === "general") return "General";
+  return null;
+}
+
+function buildQuickAppWindowTitle(
+  item: NodeQuickAppItem,
+  browserUrl: string,
+  context?: QuickAppLaunchContext | null,
+  explicitTitle?: string | null
+): string {
+  const baseTitle = explicitTitle?.trim() || resolveQuickAppBrowserWindowTitle(item, browserUrl);
+  const contextLabel = resolveQuickAppContextDisplayLabel(context);
+  if (!contextLabel) return baseTitle;
+  return `(${contextLabel}) ${baseTitle}`;
+}
+
+function buildQuickAppHtmlStorageNamespace(
+  item: Pick<NodeQuickAppItem, "id" | "label" | "target">,
+  context?: QuickAppLaunchContext | null
+): string {
+  const scopeToken = resolveQuickAppContextScopeToken(context);
+  const ownerToken = sanitizeQuickAppWindowToken(context?.ownerId ?? context?.ownerLabel, "shared");
+  const itemToken = sanitizeQuickAppWindowToken(item.id || item.label || getQuickAppTargetLeafName(item.target), "app");
+  return `odetool.quick-app.html.${scopeToken}.${ownerToken}.${itemToken}`;
+}
+
+function buildQuickAppHtmlLaunchUrl(
+  instancePath: string,
+  item: Pick<NodeQuickAppItem, "id" | "label" | "target">,
+  context?: QuickAppLaunchContext | null
+): string {
+  const htmlUrl = buildFileUrlFromLocalPath(instancePath);
+  if (!htmlUrl) {
+    throw new Error("The HTML quick app instance could not be opened.");
+  }
+  const url = new URL(htmlUrl);
+  const scopeToken = resolveQuickAppContextScopeToken(context);
+  const contextLabel = resolveQuickAppContextDisplayLabel(context);
+  if (contextLabel && !url.searchParams.has("chantier")) {
+    url.searchParams.set("chantier", contextLabel);
+  }
+  url.searchParams.set("ode_scope", scopeToken);
+  if (contextLabel) {
+    url.searchParams.set("ode_scope_label", contextLabel);
+  }
+  if (context?.ownerId?.trim()) {
+    url.searchParams.set("ode_owner_id", context.ownerId.trim());
+  }
+  if (context?.ownerLabel?.trim()) {
+    url.searchParams.set("ode_owner_label", context.ownerLabel.trim());
+  }
+  if (item.id.trim()) {
+    url.searchParams.set("ode_quick_app_id", item.id.trim());
+  }
+  return url.toString();
+}
+
+function buildQuickAppBrowserWindowLabel(item: NodeQuickAppItem, context?: QuickAppLaunchContext | null): string {
+  const scopeToken =
+    context?.scope === "function" ? "workspace" : context?.scope === "tab" ? "chantier" : "general";
+  const ownerToken = sanitizeQuickAppWindowToken(context?.ownerId ?? context?.ownerLabel, "shared");
+  const itemToken = sanitizeQuickAppWindowToken(item.id || item.label || getQuickAppTargetLeafName(item.target), "app");
+  return `odetool-panel-browser-${scopeToken}-${ownerToken}-${itemToken}`.slice(0, 180);
+}
+
+function buildQuickAppHtmlWindowLabel(item: NodeQuickAppItem, context?: QuickAppLaunchContext | null): string {
+  const scopeToken =
+    context?.scope === "function" ? "workspace" : context?.scope === "tab" ? "chantier" : "general";
+  const ownerToken = sanitizeQuickAppWindowToken(context?.ownerId ?? context?.ownerLabel, "shared");
+  const itemToken = sanitizeQuickAppWindowToken(item.id || item.label || getQuickAppTargetLeafName(item.target), "app");
+  return `odetool-panel-html-${scopeToken}-${ownerToken}-${itemToken}`.slice(0, 180);
+}
+
+function resolveQuickAppBrowserWindowTitle(item: NodeQuickAppItem, browserUrl: string): string {
+  const explicitLabel = item.label.trim();
+  if (explicitLabel) return explicitLabel;
+  try {
+    const parsed = new URL(browserUrl);
+    return parsed.hostname.replace(/^www\./i, "") || parsed.href;
+  } catch {
+    return getPathFileName(browserUrl) || browserUrl;
+  }
+}
+
+const QUICK_APP_READABLE_EXTENSIONS = new Set([
+  "csv",
+  "docx",
+  "htm",
+  "html",
+  "md",
+  "pdf",
+  "txt",
+  "xls",
+  "xlsx"
+]);
+
+type GroundedQuickAppSource = {
+  record: ScopedQuickAppRecord;
+  text: string;
+  sourceKind: "local_file" | "url_preview";
+  previewTitle: string | null;
+  previewDetail: string | null;
+};
+
+type AssistantEvidenceScope = "node" | "workspace" | "application";
+
+function trimAiEvidenceText(value: string, limit = 1400): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= limit) return normalized;
+  return `${normalized.slice(0, limit).trim()}...`;
+}
+
+function buildQuickAppPreviewCacheKey(record: Pick<ScopedQuickAppRecord, "scope" | "ownerId" | "launchTarget">): string {
+  return `${record.scope}|${record.ownerId ?? "shared"}|${record.launchTarget.trim().toLowerCase()}`;
+}
+
+function getQuickAppReadabilityStatus(
+  item: Pick<NodeQuickAppItem, "kind" | "target">
+): ScopedQuickAppRecord["readabilityStatus"] {
+  if (item.kind === "url") return "previewable_url";
+  const localPath = resolveQuickAppLocalPath(item.target);
+  if (!localPath) return "metadata_only";
+  const fileName = getPathFileName(localPath);
+  const extension = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() ?? "" : "";
+  return QUICK_APP_READABLE_EXTENSIONS.has(extension) ? "readable_local_file" : "unreadable_local_target";
 }
 
 function toAssistantActivityItems(events: AiTelemetryEvent[]): AiActivityItem[] {
@@ -1961,6 +2216,7 @@ export default function App() {
     toAssistantActivityItems(readAiTelemetryEvents(10))
   );
   const [commandBarOpen, setCommandBarOpen] = useState(false);
+  const [embeddedAiFocusRequestKey, setEmbeddedAiFocusRequestKey] = useState(0);
   const [assistantDeliverableProposalState, setAssistantDeliverableProposalState] = useState<{
     targetNodeId: string;
     nodeTitle: string;
@@ -2004,6 +2260,7 @@ export default function App() {
     readRememberPasswordPreference()
   );
   const [authSessionRestorePending, setAuthSessionRestorePending] = useState(true);
+  const [showAuthLoadingGate, setShowAuthLoadingGate] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [userAccountsModalOpen, setUserAccountsModalOpen] = useState(false);
@@ -2395,6 +2652,15 @@ export default function App() {
   const [tooltipEditorNodeId, setTooltipEditorNodeId] = useState<string | null>(null);
   const [tooltipEditorValue, setTooltipEditorValue] = useState("");
   const [tooltipEditorSaving, setTooltipEditorSaving] = useState(false);
+  const [generalQuickApps, setGeneralQuickApps] = useState<NodeQuickAppItem[]>(() => readStoredGeneralQuickApps());
+  const [quickAppLibrary, setQuickAppLibrary] = useState<QuickAppLibraryItem[]>(() => readStoredQuickAppLibrary());
+  const [quickAppsStudioOpen, setQuickAppsStudioOpen] = useState(false);
+  const [quickAppsStudioFocusedScope, setQuickAppsStudioFocusedScope] = useState<QuickAppScope>("general");
+  const [quickAppsStudioFunctionOwnerId, setQuickAppsStudioFunctionOwnerId] = useState<string | null>(null);
+  const [quickAppsStudioTabOwnerId, setQuickAppsStudioTabOwnerId] = useState<string | null>(null);
+  const [generalQuickAppsDraft, setGeneralQuickAppsDraft] = useState<NodeQuickAppItem[]>([]);
+  const [functionQuickAppsDraft, setFunctionQuickAppsDraft] = useState<NodeQuickAppItem[]>([]);
+  const [tabQuickAppsDraft, setTabQuickAppsDraft] = useState<NodeQuickAppItem[]>([]);
   const [quickAppsModalNodeId, setQuickAppsModalNodeId] = useState<string | null>(null);
   const [quickAppsDraftItems, setQuickAppsDraftItems] = useState<NodeQuickAppItem[]>([]);
   const [quickAppsSaving, setQuickAppsSaving] = useState(false);
@@ -2454,8 +2720,10 @@ export default function App() {
   >(async () => false);
   const activeProjectIdRef = useRef<string | null>(activeProjectId);
   const activeProjectRootIdRef = useRef<string | null>(null);
+  const quickAppUrlPreviewCacheRef = useRef<Map<string, QuickAppUrlPreview | null>>(new Map());
   const currentFolderIdRef = useRef<string | null>(store.currentFolderId);
   const selectedNodeIdRef = useRef<string | null>(store.selectedNodeId);
+  const selectedNodeIdsRef = useRef<Set<string>>(new Set(selectedNodeIds));
   const favoriteGroupAssignmentSignatureRef = useRef<string | null>(null);
   const favoriteGroupAssignmentConsumedSignatureRef = useRef<string | null>(null);
   const workspaceModeRef = useRef<WorkspaceMode>(workspaceMode);
@@ -2521,6 +2789,21 @@ export default function App() {
           : "sign_in"
         : "bootstrap";
   const authGateOpen = authGateMode !== null;
+  const authGateVisible = authGateMode !== null && (authGateMode !== "loading" || showAuthLoadingGate);
+  useEffect(() => {
+    if (authGateMode !== "loading") {
+      setShowAuthLoadingGate(false);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowAuthLoadingGate(true);
+    }, 200);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [authGateMode]);
   const hasBlockingOverlayOpen =
     authGateOpen ||
     settingsOpen ||
@@ -3507,6 +3790,183 @@ export default function App() {
     }
   };
 
+  const runQaTreeTabNewChildAutomation = async () => {
+    const itemId = "tree-tab-new-child";
+    if (!activeProjectRootId || !activeProject) {
+      throw new Error("Select a workspace before running Tab-create automation.");
+    }
+
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const previousFolderId = store.currentFolderId;
+    const previousSelectedId = store.selectedNodeId;
+    const previousSelectionSurface = selectionSurface;
+    const previousWorkspaceMode = workspaceMode;
+    const previousDesktopViewMode = desktopViewMode;
+    let qaRoot: AppNode | null = null;
+    let anchorNode: AppNode | null = null;
+    let createdNode: AppNode | null = null;
+
+    try {
+      qaAutomationLearningSkipRef.current.add(itemId);
+      setProjectError(null);
+      setProjectNotice("QA automation: checking Tab child-create flow and blank inline rename...");
+      setContextMenu(null);
+      setCommandBarOpen(false);
+      cancelInlineEdit();
+      setWorkspaceMode("grid");
+      setDesktopViewMode("grid");
+
+      await store.navigateTo(activeProjectRootId);
+      qaRoot = await createNode(activeProjectRootId, `QA Tab Auto ${Date.now()}`, "folder");
+      anchorNode = await createNode(qaRoot.id, "Tab Anchor", "folder");
+      if (!qaRoot || !anchorNode) {
+        throw new Error("QA Tab automation could not create its temporary branch.");
+      }
+      const resolvedQaRoot = qaRoot;
+      const resolvedAnchorNode = anchorNode;
+      await refreshTreeAndKeepContext(resolvedAnchorNode.id, [activeProjectRootId, resolvedQaRoot.id], "tree");
+      setPrimarySelection(resolvedAnchorNode.id, "tree");
+      setSelectionSurface("tree");
+
+      const selectionReady = await waitForQaCondition(
+        () => selectedNodeIdRef.current === resolvedAnchorNode.id && selectionSurfaceRef.current === "tree",
+        2200,
+        80
+      );
+      if (!selectionReady) {
+        throw new Error("The QA anchor node did not become the active tree selection before Tab automation.");
+      }
+
+      const beforeChildren = await getChildren(resolvedAnchorNode.id);
+      const beforeIds = new Set(beforeChildren.map((child) => child.id));
+      dispatchQaKeyDown("Tab", { code: "Tab" });
+
+      const createdReady = await waitForQaCondition(async () => {
+        const children = await getChildren(resolvedAnchorNode.id);
+        createdNode = children.find((child) => !beforeIds.has(child.id)) ?? null;
+        return Boolean(createdNode && editingNodeIdRef.current === createdNode.id && selectionSurfaceRef.current === "tree");
+      }, 3400, 90);
+      if (!createdReady) {
+        throw new Error("Pressing Tab did not create a new child node in tree automation.");
+      }
+
+      const afterChildren = await getChildren(resolvedAnchorNode.id);
+      const resolvedCreatedNode = afterChildren.find((child) => !beforeIds.has(child.id)) ?? null;
+      createdNode = resolvedCreatedNode;
+      if (!resolvedCreatedNode) {
+        throw new Error("The created child node could not be resolved after Tab automation completed.");
+      }
+      if (resolvedCreatedNode.parentId !== resolvedAnchorNode.id) {
+        throw new Error(`Tab created the node under ${resolvedCreatedNode.parentId} instead of ${resolvedAnchorNode.id}.`);
+      }
+      if (editingValueRef.current !== "") {
+        throw new Error(`Inline rename started with "${editingValueRef.current}" instead of an empty field.`);
+      }
+
+      const proofLines = [
+        "ODETool QA Automation Proof",
+        `Scenario: ${itemId}`,
+        `Started: ${startedAt}`,
+        `Finished: ${new Date().toISOString()}`,
+        `Workspace: ${activeProject.name}`,
+        `Workspace Root Node: ${activeProjectRootId}`,
+        `QA Branch: ${resolvedQaRoot.id} / ${resolvedQaRoot.name}`,
+        `Anchor Node: ${resolvedAnchorNode.id} / ${resolvedAnchorNode.name}`,
+        `Created Node: ${resolvedCreatedNode.id} / ${resolvedCreatedNode.name}`,
+        `Created Parent: ${resolvedCreatedNode.parentId}`,
+        `Inline Edit Node: ${editingNodeIdRef.current ?? "(none)"}`,
+        `Inline Edit Value Length: ${editingValueRef.current.length}`,
+        "RESULT: PASS"
+      ];
+      setQaChecklistFailureReason(itemId, "");
+      setQaChecklistStatus(itemId, "passed");
+      const proofPath = await writeQaAutomationProof(itemId, "passed", proofLines);
+      addQaChecklistAttachments(itemId, [proofPath], "file");
+      recordAiQaLearningEvent({
+        itemId,
+        status: "passed",
+        source: "automation",
+        workspace: activeProject.name,
+        releaseIds: getQaReleaseIds(),
+        attachmentsCount: 1,
+        failureReasonProvided: false,
+        latencyMs: Date.now() - startedAtMs,
+        automationId: itemId
+      });
+      setProjectNotice("QA automation passed: Tab created a child node and inline rename started empty.");
+      return "Tree Tab-create QA passed. Proof file attached.";
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const failureScreenshotPath = await captureQaAutomationFailureEvidence();
+      const proofLines = [
+        "ODETool QA Automation Proof",
+        `Scenario: ${itemId}`,
+        `Started: ${startedAt}`,
+        `Finished: ${new Date().toISOString()}`,
+        `Workspace: ${activeProject.name}`,
+        `QA Branch: ${qaRoot ? `${qaRoot.id} / ${qaRoot.name}` : "(not created)"}`,
+        `Anchor Node: ${anchorNode ? `${anchorNode.id} / ${anchorNode.name}` : "(not created)"}`,
+        `Created Node: ${createdNode ? `${createdNode.id} / ${createdNode.name}` : "(missing)"}`,
+        `Inline Edit Node: ${editingNodeIdRef.current ?? "(none)"}`,
+        `Inline Edit Value: ${editingValueRef.current || "(empty)"}`,
+        "RESULT: FAIL",
+        `Reason: ${reason}`,
+        failureScreenshotPath ? `Screenshot: ${failureScreenshotPath}` : "Screenshot: automatic capture not available"
+      ];
+      let attachedCount = 0;
+      try {
+        const proofPath = await writeQaAutomationProof(itemId, "failed", proofLines);
+        addQaChecklistAttachments(itemId, [proofPath], "file");
+        attachedCount += 1;
+      } catch {
+        // Preserve checklist failure even if proof write fails.
+      }
+      if (failureScreenshotPath) {
+        addQaChecklistAttachments(itemId, [failureScreenshotPath], "screenshot");
+        attachedCount += 1;
+      }
+      setQaChecklistFailureReason(itemId, reason);
+      setQaChecklistStatus(itemId, "failed");
+      recordAiQaLearningEvent({
+        itemId,
+        status: "failed",
+        source: "automation",
+        workspace: activeProject.name,
+        releaseIds: getQaReleaseIds(),
+        attachmentsCount: attachedCount,
+        failureReasonProvided: true,
+        latencyMs: Date.now() - startedAtMs,
+        automationId: itemId
+      });
+      setProjectNotice(null);
+      setProjectError(reason);
+      throw new Error(reason);
+    } finally {
+      qaAutomationLearningSkipRef.current.delete(itemId);
+      cancelInlineEdit();
+      try {
+        if (qaRoot) {
+          await deleteNode(qaRoot.id, true);
+        }
+      } catch {
+        // Cleanup is best-effort only.
+      }
+      try {
+        await store.refreshTree();
+        await restoreQaAutomationViewState(
+          previousFolderId,
+          previousSelectedId,
+          previousSelectionSurface,
+          previousWorkspaceMode,
+          previousDesktopViewMode
+        );
+      } catch {
+        // View restoration is best-effort only.
+      }
+    }
+  };
+
   const runQaTreeF2RenameAutomation = async () => {
     const itemId = "tree-f2-rename";
     if (!activeProjectRootId || !activeProject) {
@@ -4201,6 +4661,262 @@ export default function App() {
         `Duplicated Node: ${duplicatedNode ? `${(duplicatedNode as AppNode).id} / ${(duplicatedNode as AppNode).name}` : "(missing)"}`,
         `Pasted Node: ${pastedNode ? `${(pastedNode as AppNode).id} / ${(pastedNode as AppNode).name}` : "(missing)"}`,
         `Editing Node: ${editingNodeIdRef.current ?? "(none)"}`,
+        "RESULT: FAIL",
+        `Reason: ${reason}`,
+        failureScreenshotPath ? `Screenshot: ${failureScreenshotPath}` : "Screenshot: automatic capture not available"
+      ];
+      let attachedCount = 0;
+      try {
+        const proofPath = await writeQaAutomationProof(itemId, "failed", proofLines);
+        addQaChecklistAttachments(itemId, [proofPath], "file");
+        attachedCount += 1;
+      } catch {
+        // Preserve checklist failure even if proof write fails.
+      }
+      if (failureScreenshotPath) {
+        addQaChecklistAttachments(itemId, [failureScreenshotPath], "screenshot");
+        attachedCount += 1;
+      }
+      setQaChecklistFailureReason(itemId, reason);
+      setQaChecklistStatus(itemId, "failed");
+      recordAiQaLearningEvent({
+        itemId,
+        status: "failed",
+        source: "automation",
+        workspace: activeProject.name,
+        releaseIds: getQaReleaseIds(),
+        attachmentsCount: attachedCount,
+        failureReasonProvided: true,
+        latencyMs: Date.now() - startedAtMs,
+        automationId: itemId
+      });
+      setProjectNotice(null);
+      setProjectError(reason);
+      throw new Error(reason);
+    } finally {
+      qaAutomationLearningSkipRef.current.delete(itemId);
+      cancelInlineEdit();
+      setBranchClipboard(previousBranchClipboard);
+      try {
+        if (qaRoot) {
+          await deleteNode(qaRoot.id, true);
+        }
+      } catch {
+        // Cleanup is best-effort only.
+      }
+      try {
+        await store.refreshTree();
+        await restoreQaAutomationViewState(
+          previousFolderId,
+          previousSelectedId,
+          previousSelectionSurface,
+          previousWorkspaceMode,
+          previousDesktopViewMode
+        );
+      } catch {
+        // View restoration is best-effort only.
+      }
+    }
+  };
+
+  const runQaKeyboardClipboardShortcutsAutomation = async () => {
+    const itemId = "keyboard-clipboard-shortcuts";
+    if (!activeProjectRootId || !activeProject) {
+      throw new Error("Select a workspace before running tree keyboard shortcut automation.");
+    }
+
+    const startedAtMs = Date.now();
+    const startedAt = new Date(startedAtMs).toISOString();
+    const previousFolderId = store.currentFolderId;
+    const previousSelectedId = store.selectedNodeId;
+    const previousSelectionSurface = selectionSurface;
+    const previousWorkspaceMode = workspaceMode;
+    const previousDesktopViewMode = desktopViewMode;
+    const previousBranchClipboard = branchClipboard;
+    let qaRoot: AppNode | null = null;
+    let siblingA: AppNode | null = null;
+    let siblingB: AppNode | null = null;
+    let hiddenChild: AppNode | null = null;
+    let duplicatedNode: AppNode | null = null;
+    let duplicatedNodeLabel = "(missing)";
+    let deletedNodeId: string | null = null;
+    let copiedSourceIds: string[] = [];
+    let cutSourceIds: string[] = [];
+    let pastedNodeIds: string[] = [];
+
+    try {
+      qaAutomationLearningSkipRef.current.add(itemId);
+      setProjectError(null);
+      setProjectNotice("QA automation: checking tree clipboard shortcuts and Windows-like current-level selection...");
+      setContextMenu(null);
+      setCommandBarOpen(false);
+      cancelInlineEdit();
+      setWorkspaceMode("grid");
+      setDesktopViewMode("grid");
+
+      await store.navigateTo(activeProjectRootId);
+      qaRoot = await createNode(activeProjectRootId, `QA Tree Keys ${Date.now()}`, "folder");
+      siblingA = await createNode(qaRoot.id, "Tree Shortcut A", "folder");
+      siblingB = await createNode(qaRoot.id, "Tree Shortcut B", "folder");
+      hiddenChild = await createNode(siblingA.id, "Tree Hidden Child", "folder");
+      if (!qaRoot || !siblingA || !siblingB || !hiddenChild) {
+        throw new Error("QA tree keyboard automation could not create its temporary branch.");
+      }
+
+      await refreshTreeAndKeepContext(siblingA.id, [activeProjectRootId, qaRoot.id, siblingA.id], "tree");
+      setPrimarySelection(siblingA.id, "tree");
+      setSelectionSurface("tree");
+      const selectionReady = await waitForQaCondition(
+        () => selectedNodeIdRef.current === siblingA?.id && selectionSurfaceRef.current === "tree",
+        2200,
+        80
+      );
+      if (!selectionReady) {
+        throw new Error("Tree shortcut anchor did not become the active selection before automation.");
+      }
+
+      dispatchQaKeyDown("a", { code: "KeyA", ctrlKey: true });
+      const selectAllReady = await waitForQaCondition(() => {
+        const ids = selectedNodeIdsRef.current;
+        return ids.size === 2 && ids.has(siblingA!.id) && ids.has(siblingB!.id) && !ids.has(hiddenChild!.id);
+      }, 2200, 70);
+      if (!selectAllReady) {
+        const ids = Array.from(selectedNodeIdsRef.current);
+        throw new Error(`Ctrl+A in tree selected the wrong nodes: ${ids.join(", ") || "(none)"}.`);
+      }
+
+      dispatchQaKeyDown("c", { code: "KeyC", ctrlKey: true });
+      const copyReady = await waitForQaCondition(() => {
+        const clipboard = branchClipboardRef.current;
+        if (!clipboard || clipboard.mode !== "copy") return false;
+        copiedSourceIds = clipboard.sourceNodeIds.length > 0 ? [...clipboard.sourceNodeIds] : [clipboard.sourceNodeId];
+        const sourceIdSet = new Set(copiedSourceIds);
+        return (
+          selectionSurfaceRef.current === "tree" &&
+          sourceIdSet.size === 2 &&
+          sourceIdSet.has(siblingA!.id) &&
+          sourceIdSet.has(siblingB!.id) &&
+          !sourceIdSet.has(hiddenChild!.id)
+        );
+      }, 2200, 70);
+      if (!copyReady) {
+        throw new Error("Ctrl+C in tree did not keep ownership of the visible sibling selection.");
+      }
+
+      setPrimarySelection(qaRoot.id, "tree");
+      setSelectionSurface("tree");
+      const beforePasteChildren = await getChildren(qaRoot.id);
+      const beforePasteIds = new Set(beforePasteChildren.map((child) => child.id));
+      dispatchQaKeyDown("v", { code: "KeyV", ctrlKey: true });
+      const pasteReady = await waitForQaCondition(async () => {
+        const children = await getChildren(qaRoot!.id);
+        pastedNodeIds = children.filter((child) => !beforePasteIds.has(child.id)).map((child) => child.id);
+        return pastedNodeIds.length === 2 && selectionSurfaceRef.current === "tree";
+      }, 3600, 90);
+      if (!pasteReady) {
+        throw new Error("Ctrl+V in tree did not paste both copied siblings into the selected tree parent.");
+      }
+
+      setPrimarySelection(siblingB.id, "tree");
+      setSelectionSurface("tree");
+      dispatchQaKeyDown("x", { code: "KeyX", ctrlKey: true });
+      const cutReady = await waitForQaCondition(() => {
+        const clipboard = branchClipboardRef.current;
+        if (!clipboard || clipboard.mode !== "cut") return false;
+        cutSourceIds = clipboard.sourceNodeIds.length > 0 ? [...clipboard.sourceNodeIds] : [clipboard.sourceNodeId];
+        return cutSourceIds.length === 1 && cutSourceIds[0] === siblingB!.id && selectionSurfaceRef.current === "tree";
+      }, 2200, 70);
+      if (!cutReady) {
+        throw new Error("Ctrl+X in tree did not populate the clipboard with the active tree node.");
+      }
+
+      setPrimarySelection(siblingB.id, "tree");
+      setSelectionSurface("tree");
+      const beforeDuplicateChildren = await getChildren(qaRoot.id);
+      const beforeDuplicateIds = new Set(beforeDuplicateChildren.map((child) => child.id));
+      dispatchQaKeyDown("d", { code: "KeyD", ctrlKey: true });
+      const duplicateReady = await waitForQaCondition(async () => {
+        const children = await getChildren(qaRoot!.id);
+        duplicatedNode = children.find((child) => !beforeDuplicateIds.has(child.id)) ?? null;
+        return Boolean(duplicatedNode && editingNodeIdRef.current === duplicatedNode.id && selectionSurfaceRef.current === "tree");
+      }, 3400, 90);
+      if (!duplicateReady) {
+        throw new Error("Ctrl+D in tree did not create a duplicated sibling with inline rename.");
+      }
+      const afterDuplicateChildren = await getChildren(qaRoot.id);
+      const resolvedDuplicatedNode = afterDuplicateChildren.find((child) => !beforeDuplicateIds.has(child.id)) ?? null;
+      duplicatedNode = resolvedDuplicatedNode;
+      if (!resolvedDuplicatedNode) {
+        throw new Error("The duplicated tree node could not be resolved after Ctrl+D automation completed.");
+      }
+      duplicatedNodeLabel = `${resolvedDuplicatedNode.id} / ${resolvedDuplicatedNode.name}`;
+      cancelInlineEdit();
+
+      deletedNodeId = resolvedDuplicatedNode.id;
+      setPrimarySelection(deletedNodeId, "tree");
+      setSelectionSurface("tree");
+      dispatchQaKeyDown("Delete", { code: "Delete", shiftKey: true });
+      const deleteReady = await waitForQaCondition(async () => {
+        const deletedNode = await getNode(deletedNodeId!);
+        return !deletedNode && selectionSurfaceRef.current === "tree";
+      }, 3200, 90);
+      if (!deleteReady) {
+        throw new Error("Delete in tree did not remove the selected node while keeping tree ownership.");
+      }
+
+      const proofLines = [
+        "ODETool QA Automation Proof",
+        `Scenario: ${itemId}`,
+        `Started: ${startedAt}`,
+        `Finished: ${new Date().toISOString()}`,
+        `Workspace: ${activeProject.name}`,
+        `Workspace Root Node: ${activeProjectRootId}`,
+        `QA Branch: ${qaRoot.id} / ${qaRoot.name}`,
+        `Ctrl+A Selection: ${Array.from(selectedNodeIdsRef.current).join(", ")}`,
+        `Copied Source IDs: ${copiedSourceIds.join(", ") || "(none)"}`,
+        `Cut Source IDs: ${cutSourceIds.join(", ") || "(none)"}`,
+        `Pasted Node Count: ${pastedNodeIds.length}`,
+        `Duplicated Node: ${duplicatedNodeLabel}`,
+        `Deleted Node: ${deletedNodeId}`,
+        "RESULT: PASS"
+      ];
+      setQaChecklistFailureReason(itemId, "");
+      setQaChecklistStatus(itemId, "passed");
+      const proofPath = await writeQaAutomationProof(itemId, "passed", proofLines);
+      addQaChecklistAttachments(itemId, [proofPath], "file");
+      recordAiQaLearningEvent({
+        itemId,
+        status: "passed",
+        source: "automation",
+        workspace: activeProject.name,
+        releaseIds: getQaReleaseIds(),
+        attachmentsCount: 1,
+        failureReasonProvided: false,
+        latencyMs: Date.now() - startedAtMs,
+        automationId: itemId
+      });
+      setProjectNotice("QA automation passed: tree copy/cut/paste/duplicate/delete kept Windows-like current-level ownership.");
+      return "Tree keyboard shortcut QA passed. Proof file attached.";
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const failureScreenshotPath = await captureQaAutomationFailureEvidence();
+      const proofLines = [
+        "ODETool QA Automation Proof",
+        `Scenario: ${itemId}`,
+        `Started: ${startedAt}`,
+        `Finished: ${new Date().toISOString()}`,
+        `Workspace: ${activeProject.name}`,
+        `QA Branch: ${qaRoot ? `${qaRoot.id} / ${qaRoot.name}` : "(not created)"}`,
+        `Sibling A: ${siblingA ? `${siblingA.id} / ${siblingA.name}` : "(not created)"}`,
+        `Sibling B: ${siblingB ? `${siblingB.id} / ${siblingB.name}` : "(not created)"}`,
+        `Hidden Child: ${hiddenChild ? `${hiddenChild.id} / ${hiddenChild.name}` : "(not created)"}`,
+        `Selected IDs: ${Array.from(selectedNodeIdsRef.current).join(", ") || "(none)"}`,
+        `Clipboard Mode: ${branchClipboardRef.current?.mode ?? "(none)"}`,
+        `Copied Source IDs: ${copiedSourceIds.join(", ") || "(none)"}`,
+        `Cut Source IDs: ${cutSourceIds.join(", ") || "(none)"}`,
+        `Pasted Node IDs: ${pastedNodeIds.join(", ") || "(none)"}`,
+        `Duplicated Node: ${duplicatedNodeLabel}`,
+        `Deleted Node: ${deletedNodeId ?? "(missing)"}`,
         "RESULT: FAIL",
         `Reason: ${reason}`,
         failureScreenshotPath ? `Screenshot: ${failureScreenshotPath}` : "Screenshot: automatic capture not available"
@@ -5164,11 +5880,17 @@ export default function App() {
     if (itemId === "tree-enter-new-node") {
       return runQaTreeEnterNewNodeAutomation();
     }
+    if (itemId === "tree-tab-new-child") {
+      return runQaTreeTabNewChildAutomation();
+    }
     if (itemId === "desktop-inline-rename-stays-on-surface") {
       return runQaDesktopInlineRenameSurfaceAutomation();
     }
     if (itemId === "desktop-procedure-selection-and-autosave") {
       return runQaProcedureSelectionAndAutosaveAutomation();
+    }
+    if (itemId === "keyboard-clipboard-shortcuts") {
+      return runQaKeyboardClipboardShortcutsAutomation();
     }
     if (itemId === "keyboard-backspace-navigate-up") {
       return runQaKeyboardBackspaceNavigateUpAutomation();
@@ -5342,7 +6064,7 @@ export default function App() {
       const nextActive =
         preferred && list.some((project) => project.id === preferred)
           ? preferred
-          : resolvedDefault ?? (preferredProjectId === undefined ? (list[0]?.id ?? null) : null);
+          : resolvedDefault ?? (list[0]?.id ?? null);
       setActiveProjectId(nextActive);
       return nextActive;
     } catch (error) {
@@ -5476,6 +6198,7 @@ export default function App() {
     if (isDedicatedLinkedNodeWindow || isDedicatedFieldOrderWindow) return;
     if (activeProjectId) {
       localStorage.setItem(ACTIVE_PROJECT_STORAGE_KEY, activeProjectId);
+      rememberWorkspaceOpened(activeProjectId);
     } else {
       localStorage.removeItem(ACTIVE_PROJECT_STORAGE_KEY);
     }
@@ -5633,6 +6356,10 @@ export default function App() {
   }, [store.selectedNodeId]);
 
   useEffect(() => {
+    selectedNodeIdsRef.current = new Set(selectedNodeIds);
+  }, [selectedNodeIds]);
+
+  useEffect(() => {
     workspaceModeRef.current = workspaceMode;
   }, [workspaceMode]);
 
@@ -5750,6 +6477,15 @@ export default function App() {
         ? workspaceNodeTabSessions[activeProjectRootId] ?? { openTabs: [], activeTabId: null }
         : { openTabs: [], activeTabId: null },
     [activeProjectRootId, workspaceNodeTabSessions]
+  );
+  const activeWorkspaceNodeTabEntry = useMemo(
+    () =>
+      activeWorkspaceNodeTabSession.activeTabId
+        ? activeWorkspaceNodeTabSession.openTabs.find(
+            (entry) => entry.nodeId === activeWorkspaceNodeTabSession.activeTabId
+          ) ?? null
+        : null,
+    [activeWorkspaceNodeTabSession.activeTabId, activeWorkspaceNodeTabSession.openTabs]
   );
   useEffect(() => {
     setAiRebuildWorkspaceOverview(null);
@@ -6588,21 +7324,28 @@ export default function App() {
       desktopBrowseViewModeRef.current = desktopViewMode;
     }
   }, [desktopViewMode]);
+  const canDisplayDashboardForNode = useCallback(
+    (node: AppNode | null | undefined) => {
+      if (!node || isFileLikeNode(node) || node.properties?.odeDashboardWidget === true) {
+        return false;
+      }
+      if (node.properties?.odeDashboard === true) {
+        return true;
+      }
+      return (byParent.get(node.id) ?? []).some((child) => isDashboardWidgetNode(child));
+    },
+    [byParent]
+  );
   useEffect(() => {
     if (desktopViewMode !== "dashboard") return;
     if (workspaceMode !== "grid") {
       setDesktopViewMode("grid");
       return;
     }
-    const currentFolderNode = store.currentNode;
-    if (
-      !currentFolderNode ||
-      isFileLikeNode(currentFolderNode) ||
-      currentFolderNode.properties?.odeDashboardWidget === true
-    ) {
+    if (!canDisplayDashboardForNode(store.currentNode)) {
       setDesktopViewMode("grid");
     }
-  }, [desktopViewMode, store.currentNode, workspaceMode]);
+  }, [canDisplayDashboardForNode, desktopViewMode, store.currentNode, workspaceMode]);
   useEffect(() => {
     const nextWorkspaceFocusMode = deriveWorkspaceFocusMode(activeNodeStateFilters);
     if (
@@ -6613,16 +7356,18 @@ export default function App() {
       return;
     }
     if (desktopViewMode === "dashboard" || desktopViewMode === "library" || desktopViewMode === "procedure") return;
-    const currentFolderNode = store.currentNode;
-    if (
-      !currentFolderNode ||
-      isFileLikeNode(currentFolderNode) ||
-      currentFolderNode.properties?.odeDashboardWidget === true
-    ) {
+    if (!canDisplayDashboardForNode(store.currentNode)) {
       return;
     }
     setDesktopViewMode("dashboard");
-  }, [activeNodeStateFilters, desktopViewMode, documentationModeActive, store.currentNode, workspaceMode]);
+  }, [
+    activeNodeStateFilters,
+    canDisplayDashboardForNode,
+    desktopViewMode,
+    documentationModeActive,
+    store.currentNode,
+    workspaceMode
+  ]);
   useEffect(() => {
     procedureRootNodeIdRef.current = procedureRootNode?.id ?? null;
   }, [procedureRootNode?.id]);
@@ -6728,16 +7473,8 @@ export default function App() {
   }, [desktopViewMode, selectionSurface, workspaceMode]);
 
   const getSavedMistralApiKey = (): string | null => {
-    try {
-      const raw = localStorage.getItem(AI_KEYS_STORAGE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as { mistralKeys?: string[] };
-      if (!parsed.mistralKeys || parsed.mistralKeys.length === 0) return null;
-      const key = parsed.mistralKeys.find((item) => item.trim().length > 0)?.trim();
-      return key ?? null;
-    } catch {
-      return null;
-    }
+    const credential = getPrimaryStoredAiProviderKey();
+    return credential ? encodeAiAccessToken(credential) : null;
   };
 
   const nodeById = useMemo(() => {
@@ -6747,6 +7484,27 @@ export default function App() {
     }
     return map;
   }, [store.allNodes]);
+  const activeWorkspaceRootNode = useMemo(
+    () => (activeWorkspaceRootId ? nodeById.get(activeWorkspaceRootId) ?? null : null),
+    [activeWorkspaceRootId, nodeById]
+  );
+  const activeWorkspaceTabNode = useMemo(
+    () =>
+      activeWorkspaceNodeTabEntry?.nodeId
+        ? nodeById.get(activeWorkspaceNodeTabEntry.nodeId) ?? null
+        : null,
+    [activeWorkspaceNodeTabEntry?.nodeId, nodeById]
+  );
+  const contextualTabQuickAppOwnerNode = useMemo(() => {
+    if (activeWorkspaceTabNode) return activeWorkspaceTabNode;
+    const currentFolderNode =
+      store.currentFolderId && store.currentFolderId !== ROOT_PARENT_ID
+        ? nodeById.get(store.currentFolderId) ?? null
+        : null;
+    const preferredNode = selectedNode && !isFileLikeNode(selectedNode) ? selectedNode : currentFolderNode;
+    if (!preferredNode || preferredNode.id === activeWorkspaceRootId) return null;
+    return preferredNode;
+  }, [activeWorkspaceRootId, activeWorkspaceTabNode, nodeById, selectedNode, store.currentFolderId]);
   const shouldHideDocumentationNodeInOrganizationView = useCallback(
     (node: AppNode | null | undefined) =>
       Boolean(
@@ -6970,20 +7728,155 @@ export default function App() {
       ),
     [byParent, dashboardLibraryTargetNode, nodeById]
   );
-  const footerQuickAppTargetNode = useMemo(() => {
-    const currentFolderNode =
-      store.currentFolderId && store.currentFolderId !== ROOT_PARENT_ID
-        ? nodeById.get(store.currentFolderId) ?? null
-        : null;
-    if (selectedNode) return selectedNode;
-    if (currentFolderNode) return currentFolderNode;
-    if (activeProjectRootId) return nodeById.get(activeProjectRootId) ?? null;
-    return null;
-  }, [activeProjectRootId, nodeById, selectedNode, store.currentFolderId]);
-  const footerQuickApps = useMemo(
-    () => getNodeQuickApps(footerQuickAppTargetNode),
-    [footerQuickAppTargetNode]
+  const quickAppsStudioFunctionOwnerNode = useMemo(
+    () =>
+      quickAppsStudioFunctionOwnerId
+        ? nodeById.get(quickAppsStudioFunctionOwnerId) ?? null
+        : activeWorkspaceRootNode,
+    [activeWorkspaceRootNode, nodeById, quickAppsStudioFunctionOwnerId]
   );
+  const quickAppsStudioTabOwnerNode = useMemo(
+    () =>
+      quickAppsStudioTabOwnerId
+        ? nodeById.get(quickAppsStudioTabOwnerId) ?? null
+        : activeWorkspaceTabNode,
+    [activeWorkspaceTabNode, nodeById, quickAppsStudioTabOwnerId]
+  );
+  const scopedQuickAppsModalTitle = useMemo(() => {
+    const scopeTitle = t(`quick_apps.scope_${quickAppsStudioFocusedScope}`);
+    if (quickAppsStudioFocusedScope === "function") {
+      const ownerLabel = quickAppsStudioFunctionOwnerNode?.name?.trim() ?? "";
+      return ownerLabel ? `(${ownerLabel}) ${scopeTitle}` : scopeTitle;
+    }
+    if (quickAppsStudioFocusedScope === "tab") {
+      const ownerLabel = quickAppsStudioTabOwnerNode?.name?.trim() ?? "";
+      return ownerLabel ? `(${ownerLabel}) ${scopeTitle}` : scopeTitle;
+    }
+    return scopeTitle;
+  }, [quickAppsStudioFocusedScope, quickAppsStudioFunctionOwnerNode?.name, quickAppsStudioTabOwnerNode?.name, t]);
+  const scopedQuickAppsModalSubtitle = useMemo(() => {
+    if (quickAppsStudioFocusedScope === "function") {
+      return null;
+    }
+    if (quickAppsStudioFocusedScope === "tab") {
+      return null;
+    }
+    return null;
+  }, [quickAppsStudioFocusedScope]);
+  const scopedQuickAppsModalItems =
+    quickAppsStudioFocusedScope === "general"
+      ? generalQuickAppsDraft
+      : quickAppsStudioFocusedScope === "function"
+        ? functionQuickAppsDraft
+        : tabQuickAppsDraft;
+  const functionQuickApps = useMemo(
+    () => getFunctionQuickApps(activeWorkspaceRootNode),
+    [activeWorkspaceRootNode]
+  );
+  const tabQuickApps = useMemo(
+    () => getNodeQuickApps(contextualTabQuickAppOwnerNode),
+    [contextualTabQuickAppOwnerNode]
+  );
+  const footerQuickApps = generalQuickApps;
+  const activeScopedQuickApps = useMemo<ScopedQuickAppCollection>(() => {
+    const buildScopedRecords = (
+      scope: QuickAppScope,
+      items: NodeQuickAppItem[],
+      ownerNode: AppNode | null,
+      fallbackOwnerLabel: string
+    ): ScopedQuickAppRecord[] =>
+      items.map((item) => {
+        const launchTarget = resolveQuickAppLaunchTarget(item);
+        return {
+          ...item,
+          scope,
+          ownerId: ownerNode?.id ?? null,
+          ownerLabel: ownerNode?.name ?? fallbackOwnerLabel,
+          launchTarget,
+          readabilityStatus: getQuickAppReadabilityStatus({
+            kind: item.kind,
+            target: launchTarget
+          })
+        };
+      });
+
+    const tabRecords = buildScopedRecords("tab", tabQuickApps, contextualTabQuickAppOwnerNode, t("quick_apps.scope_tab"));
+    const functionRecords = buildScopedRecords(
+      "function",
+      functionQuickApps,
+      activeWorkspaceRootNode,
+      t("quick_apps.scope_function")
+    );
+    const generalRecords = buildScopedRecords("general", generalQuickApps, null, t("quick_apps.scope_general"));
+
+    const ordered: ScopedQuickAppRecord[] = [];
+    const seenTargets = new Set<string>();
+    for (const record of [...tabRecords, ...functionRecords, ...generalRecords]) {
+      const dedupeKey = `${record.scope}|${record.ownerId ?? "shared"}|${record.id}|${record.launchTarget.trim().toLowerCase()}`;
+      if (!dedupeKey || seenTargets.has(dedupeKey)) continue;
+      seenTargets.add(dedupeKey);
+      ordered.push(record);
+    }
+
+    return {
+      general: generalRecords,
+      function: functionRecords,
+      tab: tabRecords,
+      ordered
+    };
+  }, [
+    activeWorkspaceRootNode,
+    contextualTabQuickAppOwnerNode,
+    functionQuickApps,
+    generalQuickApps,
+    t,
+    tabQuickApps
+  ]);
+  const activeQuickAppScopeSummaries = useMemo<AiQuickAppScopeSummary[]>(
+    () =>
+      (["tab", "function", "general"] as QuickAppScope[]).map((scope) => {
+        const items = activeScopedQuickApps[scope];
+        const readableCount = items.filter((item) => item.readabilityStatus === "readable_local_file").length;
+        const previewableCount = items.filter((item) => item.readabilityStatus === "previewable_url").length;
+        const groundedCount = readableCount + previewableCount;
+        return {
+          scope,
+          label: t(`quick_apps.scope_${scope}`),
+          ownerLabel:
+            items[0]?.ownerLabel ??
+            (scope === "tab"
+              ? contextualTabQuickAppOwnerNode?.name ?? t("quick_apps.scope_owner_missing")
+              : scope === "function"
+                ? activeWorkspaceRootNode?.name ?? t("quick_apps.scope_owner_missing")
+                : t("quick_apps.scope_general")),
+          itemCount: items.length,
+          readableCount,
+          previewableCount,
+          groundedCount,
+          metadataOnlyCount: Math.max(0, items.length - groundedCount),
+          itemLabels: items.map((item) => item.label).filter((label) => label.trim().length > 0)
+        };
+      }),
+    [activeScopedQuickApps, activeWorkspaceRootNode, contextualTabQuickAppOwnerNode, t]
+  );
+  const activeTabIsAiMode = activeWorkspaceNodeTabEntry?.mode === "ai";
+  const activeTabAiHistoryStorageKey = useMemo(
+    () =>
+      activeProjectRootId && activeWorkspaceTabNode
+        ? buildTabAiHistoryStorageKey(activeProjectRootId, activeWorkspaceTabNode.id)
+        : null,
+    [activeProjectRootId, activeWorkspaceTabNode]
+  );
+  const dashboardAiHistoryStorageKey = useMemo(
+    () =>
+      activeProjectRootId && store.currentNode
+        ? buildNodeHomeAiHistoryStorageKey(activeProjectRootId, store.currentNode.id)
+        : null,
+    [activeProjectRootId, store.currentNode]
+  );
+  const embeddedAiHistoryStorageKey = activeTabAiHistoryStorageKey ?? dashboardAiHistoryStorageKey;
+  const embeddedAiUploadTargetNodeId =
+    activeWorkspaceNodeTabEntry?.nodeId ?? activeWorkspaceTabNode?.id ?? store.currentNode?.id ?? null;
   const resolveNodeForAccess = useCallback(
     (nodeId: string | null | undefined) =>
       nodeId
@@ -7059,39 +7952,16 @@ export default function App() {
   }, [canReadNodeForActiveRole, mindMapReviewNodeId]);
   const reorderFooterQuickApps = useCallback(
     async (nextQuickApps: NodeQuickAppItem[]) => {
-      const node = footerQuickAppTargetNode;
-      if (!node) return;
-      if (!ensureNodeAccessAllowed([node.id], "write")) return;
-
       const normalizedQuickApps = normalizeNodeQuickApps(nextQuickApps);
-      const currentQuickApps = getNodeQuickApps(node);
+      const currentQuickApps = normalizeNodeQuickApps(generalQuickApps);
       const currentOrder = currentQuickApps.map((item) => item.id).join("|");
       const nextOrder = normalizedQuickApps.map((item) => item.id).join("|");
       if (currentOrder === nextOrder) return;
 
-      const previousProperties = node.properties;
-      const nextProperties = buildNodeQuickAppsProperties(previousProperties, normalizedQuickApps);
-      store.patchNode(node.id, {
-        properties: nextProperties,
-        updatedAt: Date.now()
-      });
-
-      try {
-        await updateNodeProperties(node.id, nextProperties);
-      } catch (error) {
-        store.patchNode(node.id, {
-          properties: previousProperties,
-          updatedAt: Date.now()
-        });
-        setProjectError(
-          t("quick_apps.launch_failed", {
-            name: node.name,
-            reason: error instanceof Error ? error.message : String(error)
-          })
-        );
-      }
+      setGeneralQuickApps(normalizedQuickApps);
+      writeStoredGeneralQuickApps(normalizedQuickApps);
     },
-    [footerQuickAppTargetNode, store, t]
+    [generalQuickApps]
   );
   const workspaceStructureLocked = Boolean(
     activeProjectRootId && isNodeStructureLockOwner(nodeById.get(activeProjectRootId) ?? null)
@@ -7190,6 +8060,28 @@ export default function App() {
       setProjectError(null);
     },
     [canOpenAccessPolicyForCurrentUser, nodeById, resolveNodeForAccess]
+  );
+  const reorderTabQuickApps = useCallback(
+    async (ownerNodeId: string | null, nextQuickApps: NodeQuickAppItem[]) => {
+      if (!ownerNodeId) return;
+      const ownerNode = nodeById.get(ownerNodeId) ?? null;
+      if (!ownerNode) return;
+      if (!ensureNodeAccessAllowed([ownerNodeId], "write")) return;
+
+      const normalizedQuickApps = normalizeNodeQuickApps(nextQuickApps);
+      const currentQuickApps = normalizeNodeQuickApps(getNodeQuickApps(ownerNode));
+      const currentOrder = currentQuickApps.map((item) => item.id).join("|");
+      const nextOrder = normalizedQuickApps.map((item) => item.id).join("|");
+      if (currentOrder === nextOrder) return;
+
+      const nextProperties = buildNodeQuickAppsProperties(ownerNode.properties, normalizedQuickApps);
+      await updateNodeProperties(ownerNodeId, nextProperties);
+      store.patchNode(ownerNodeId, {
+        properties: nextProperties,
+        updatedAt: Date.now()
+      });
+    },
+    [ensureNodeAccessAllowed, nodeById, store]
   );
   const closeNodeAccessPolicyEditor = useCallback(() => {
     if (accessPolicySaving) return;
@@ -7490,9 +8382,7 @@ export default function App() {
       setQuickAppsModalNodeId(node.id);
       setQuickAppsDraftItems(
         nextQuickApps.length > 0
-          ? nextQuickApps.map((item) => ({
-              ...item
-            }))
+          ? nextQuickApps.map((item) => applyQuickAppItemPatch(item, { target: item.target }))
           : [createNodeQuickAppItem()]
       );
     },
@@ -8932,7 +9822,7 @@ export default function App() {
       ? displayedTreeRows.some((row) => row.hasChildren && expandedIds.has(row.id))
       : !hasActiveFavoriteGroupTreeFiltering &&
         !treeUsesNodeStateFiltering &&
-        expandedIds.size > 0;
+        displayedTreeRows.some((row) => row.hasChildren && expandedIds.has(row.id));
   const displayedTimelineRows = useMemo(() => {
     const matchedTimelineSearchNodeIds = hasTimelineTaskSearch
       ? new Set(timelineSearchResults.map((result) => result.node.id))
@@ -9330,6 +10220,10 @@ export default function App() {
       (node) => !isFileLikeNode(node) && isChantierNode(node) && readChantierProfile(node).status === activeChantierStatusFilter
     );
   }, [activeChantierStatusFilter, desktopBaseGridNodes]);
+  const mainPaneDirectFileNodes = useMemo(
+    () => gridNodes.filter((node) => isFileLikeNode(node)),
+    [gridNodes]
+  );
   const desktopGridEmptyStateMessage = hasActiveFavoriteGroupTreeFiltering
     ? t("favorites.empty_group_hint")
     : desktopEmptyStateMessage;
@@ -9566,11 +10460,34 @@ export default function App() {
     []
   );
 
+  const setDesktopTabMode = useCallback(
+    (workspaceRootId: string | null, nodeId: string, mode: WorkspaceNodeTabMode) => {
+      updateWorkspaceNodeTabSession(workspaceRootId, (current) => {
+        const hasEntry = current.openTabs.some((entry) => entry.nodeId === nodeId);
+        if (!hasEntry) return current;
+        return {
+          ...current,
+          activeTabId: nodeId,
+          openTabs: current.openTabs.map((entry) =>
+            entry.nodeId === nodeId
+              ? {
+                  ...entry,
+                  mode
+                }
+              : entry
+          )
+        };
+      });
+    },
+    [updateWorkspaceNodeTabSession]
+  );
+
   const openNodeInDesktopTab = useCallback(
     async (
       nodeId: string,
       options?: {
         selectedNodeId?: string | null;
+        preserveTreeFocus?: boolean;
       }
     ) => {
       const node = nodeById.get(nodeId) ?? store.allNodes.find((candidate) => candidate.id === nodeId) ?? null;
@@ -9583,12 +10500,16 @@ export default function App() {
 
       updateWorkspaceNodeTabSession(activeProjectRootId, (current) => {
         const existingEntry = current.openTabs.find((entry) => entry.nodeId === node.id) ?? null;
+        const nextTabMode: WorkspaceNodeTabMode = activeTabIsAiMode
+          ? "ai"
+          : normalizeWorkspaceNodeTabMode(existingEntry?.mode);
         const nextOpenTabs = existingEntry
           ? current.openTabs.map((entry) =>
               entry.nodeId === node.id
                 ? {
                     ...entry,
-                    lastSelectedNodeId: resolvedSelectedNodeId
+                    lastSelectedNodeId: resolvedSelectedNodeId,
+                    mode: activeTabIsAiMode ? "ai" : normalizeWorkspaceNodeTabMode(entry.mode)
                   }
                 : entry
             )
@@ -9596,7 +10517,8 @@ export default function App() {
               ...current.openTabs,
               {
                 nodeId: node.id,
-                lastSelectedNodeId: resolvedSelectedNodeId
+                lastSelectedNodeId: resolvedSelectedNodeId,
+                mode: nextTabMode
               }
             ];
         return {
@@ -9611,11 +10533,13 @@ export default function App() {
             ? "grid"
             : desktopBrowseViewModeRef.current
           : desktopViewModeRef.current;
+      const nextSelectionSurface: SelectionSurface = options?.preserveTreeFocus ? "tree" : "grid";
+      const nextKeyboardSurface: KeyboardSurface = options?.preserveTreeFocus ? "tree" : "grid";
 
       setWorkspaceMode("grid");
       setDesktopViewMode(nextDesktopViewMode);
-      setSelectionSurface("grid");
-      setKeyboardSurface("grid");
+      setSelectionSurface(nextSelectionSurface);
+      setKeyboardSurface(nextKeyboardSurface);
       await store.navigateTo(node.id);
       updateExpandedIdsForContext("organization", (prev) => {
         const next = new Set(prev);
@@ -9625,10 +10549,11 @@ export default function App() {
         }
         return next;
       });
-      setPrimarySelection(resolvedSelectedNodeId, "grid");
+      setPrimarySelection(resolvedSelectedNodeId, nextSelectionSurface);
     },
     [
       activeProjectRootId,
+      activeTabIsAiMode,
       isNodeWithinTabScope,
       nodeById,
       store,
@@ -9636,6 +10561,212 @@ export default function App() {
       updateWorkspaceNodeTabSession
     ]
   );
+
+  const resolveCurrentAiTabOwnerNode = useCallback((): AppNode | null => {
+    return contextualTabQuickAppOwnerNode ?? activeWorkspaceRootNode;
+  }, [activeWorkspaceRootNode, contextualTabQuickAppOwnerNode]);
+
+  const openAiWorkspaceForCurrentContext = useCallback(async () => {
+    const tabOwnerNode = resolveCurrentAiTabOwnerNode();
+    if (!tabOwnerNode) return;
+    await openNodeInDesktopTab(tabOwnerNode.id, {
+      selectedNodeId:
+        activeWorkspaceNodeTabEntry?.nodeId === tabOwnerNode.id
+          ? activeWorkspaceNodeTabEntry.lastSelectedNodeId
+          : selectedNode?.id ?? tabOwnerNode.id
+    });
+    setDesktopTabMode(activeProjectRootId, tabOwnerNode.id, "ai");
+    setEmbeddedAiFocusRequestKey((current) => current + 1);
+  }, [
+    activeProjectRootId,
+    activeWorkspaceNodeTabEntry,
+    openNodeInDesktopTab,
+    resolveCurrentAiTabOwnerNode,
+    selectedNode,
+    setDesktopTabMode
+  ]);
+
+  const closeAiWorkspaceForActiveTab = useCallback(() => {
+    if (!activeWorkspaceNodeTabEntry?.nodeId) return;
+    setDesktopTabMode(activeProjectRootId, activeWorkspaceNodeTabEntry.nodeId, "content");
+  }, [activeProjectRootId, activeWorkspaceNodeTabEntry?.nodeId, setDesktopTabMode]);
+
+  const openQuickAppsStudioForScope = useCallback(
+    async (scope: QuickAppScope) => {
+      let tabOwnerNode = activeWorkspaceTabNode;
+      if (scope === "tab" && !tabOwnerNode) {
+        tabOwnerNode = resolveCurrentAiTabOwnerNode();
+        if (!tabOwnerNode) return;
+      }
+
+      setQuickAppsStudioFocusedScope(scope);
+      setQuickAppsStudioFunctionOwnerId(activeWorkspaceRootNode?.id ?? null);
+      setQuickAppsStudioTabOwnerId(tabOwnerNode?.id ?? null);
+      setGeneralQuickAppsDraft(
+        normalizeNodeQuickApps(generalQuickApps).map((item) =>
+          applyQuickAppItemPatch(item, { target: item.target })
+        )
+      );
+      setFunctionQuickAppsDraft(
+        getFunctionQuickApps(activeWorkspaceRootNode).map((item) =>
+          applyQuickAppItemPatch(item, { target: item.target })
+        )
+      );
+      setTabQuickAppsDraft(
+        getNodeQuickApps(tabOwnerNode).map((item) =>
+          applyQuickAppItemPatch(item, { target: item.target })
+        )
+      );
+      setQuickAppsStudioOpen(true);
+    },
+    [
+      activeWorkspaceRootNode,
+      activeWorkspaceTabNode,
+      generalQuickApps,
+      resolveCurrentAiTabOwnerNode,
+    ]
+  );
+
+  const closeQuickAppsStudio = useCallback(() => {
+    if (quickAppsSaving) return;
+    setQuickAppsStudioOpen(false);
+  }, [quickAppsSaving]);
+
+  const updateScopedQuickAppsDraft = useCallback(
+    (scope: QuickAppScope, updater: (current: NodeQuickAppItem[]) => NodeQuickAppItem[]) => {
+      if (scope === "general") {
+        setGeneralQuickAppsDraft((current) => updater(current));
+        return;
+      }
+      if (scope === "function") {
+        setFunctionQuickAppsDraft((current) => updater(current));
+        return;
+      }
+      setTabQuickAppsDraft((current) => updater(current));
+    },
+    []
+  );
+
+  const persistQuickAppLibrary = useCallback(
+    (updater: (current: QuickAppLibraryItem[]) => QuickAppLibraryItem[]) => {
+      setQuickAppLibrary((current) => {
+        const next = updater(current);
+        writeStoredQuickAppLibrary(next);
+        return next;
+      });
+    },
+    []
+  );
+
+  const addQuickAppsStudioItem = useCallback((scope: QuickAppScope) => {
+    updateScopedQuickAppsDraft(scope, (current) => [...current, createNodeQuickAppItem()]);
+  }, [updateScopedQuickAppsDraft]);
+
+  const addQuickAppsStudioItemFromLibrary = useCallback(
+    (scope: QuickAppScope, libraryItemId: string) => {
+      const libraryItem = quickAppLibrary.find((item) => item.id === libraryItemId) ?? null;
+      if (!libraryItem) return;
+      updateScopedQuickAppsDraft(scope, (current) => [...current, createQuickAppItemFromLibraryItem(libraryItem)]);
+      persistQuickAppLibrary((current) => touchQuickAppLibraryItem(current, libraryItemId));
+    },
+    [persistQuickAppLibrary, quickAppLibrary, updateScopedQuickAppsDraft]
+  );
+
+  const updateQuickAppsStudioItem = useCallback(
+    (scope: QuickAppScope, itemId: string, patch: Partial<NodeQuickAppItem>) => {
+      updateScopedQuickAppsDraft(scope, (current) =>
+        current.map((item) =>
+          item.id === itemId ? applyQuickAppItemPatch(item, patch) : item
+        )
+      );
+    },
+    [updateScopedQuickAppsDraft]
+  );
+
+  const moveQuickAppsStudioItem = useCallback(
+    (scope: QuickAppScope, itemId: string, direction: "up" | "down") => {
+      updateScopedQuickAppsDraft(scope, (current) => {
+        const index = current.findIndex((item) => item.id === itemId);
+        if (index < 0) return current;
+        const targetIndex = direction === "up" ? index - 1 : index + 1;
+        if (targetIndex < 0 || targetIndex >= current.length) return current;
+        const nextItems = [...current];
+        const [moved] = nextItems.splice(index, 1);
+        nextItems.splice(targetIndex, 0, moved);
+        return nextItems;
+      });
+    },
+    [updateScopedQuickAppsDraft]
+  );
+
+  const removeQuickAppsStudioItem = useCallback(
+    (scope: QuickAppScope, itemId: string) => {
+      updateScopedQuickAppsDraft(scope, (current) => current.filter((item) => item.id !== itemId));
+    },
+    [updateScopedQuickAppsDraft]
+  );
+
+  const saveQuickAppsStudio = useCallback(async () => {
+    setQuickAppsSaving(true);
+    try {
+      if (quickAppsStudioFocusedScope === "general") {
+        const nextGeneralQuickApps = normalizeNodeQuickApps(generalQuickAppsDraft);
+        setGeneralQuickApps(nextGeneralQuickApps);
+        writeStoredGeneralQuickApps(nextGeneralQuickApps);
+        persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextGeneralQuickApps));
+        setQuickAppsStudioOpen(false);
+        return;
+      }
+
+      if (quickAppsStudioFocusedScope === "function") {
+        if (quickAppsStudioFunctionOwnerNode) {
+          if (!ensureNodeAccessAllowed([quickAppsStudioFunctionOwnerNode.id], "write")) return;
+          const nextFunctionQuickApps = normalizeNodeQuickApps(functionQuickAppsDraft);
+          const nextProperties = buildFunctionQuickAppsProperties(
+            quickAppsStudioFunctionOwnerNode.properties,
+            nextFunctionQuickApps
+          );
+          await updateNodeProperties(quickAppsStudioFunctionOwnerNode.id, nextProperties);
+          store.patchNode(quickAppsStudioFunctionOwnerNode.id, {
+            properties: nextProperties,
+            updatedAt: Date.now()
+          });
+          persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextFunctionQuickApps));
+        }
+        setQuickAppsStudioOpen(false);
+        return;
+      }
+
+      if (quickAppsStudioTabOwnerNode) {
+        if (!ensureNodeAccessAllowed([quickAppsStudioTabOwnerNode.id], "write")) return;
+        const nextTabQuickApps = normalizeNodeQuickApps(tabQuickAppsDraft);
+        const nextProperties = buildNodeQuickAppsProperties(
+          quickAppsStudioTabOwnerNode.properties,
+          nextTabQuickApps
+        );
+        await updateNodeProperties(quickAppsStudioTabOwnerNode.id, nextProperties);
+        store.patchNode(quickAppsStudioTabOwnerNode.id, {
+          properties: nextProperties,
+          updatedAt: Date.now()
+        });
+        persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextTabQuickApps));
+      }
+
+      setQuickAppsStudioOpen(false);
+    } finally {
+      setQuickAppsSaving(false);
+    }
+  }, [
+    ensureNodeAccessAllowed,
+    functionQuickAppsDraft,
+    generalQuickAppsDraft,
+    persistQuickAppLibrary,
+    quickAppsStudioFocusedScope,
+    quickAppsStudioFunctionOwnerNode,
+    quickAppsStudioTabOwnerNode,
+    store,
+    tabQuickAppsDraft
+  ]);
 
   const getDedicatedNodeWindowByNodeId = async (nodeId: string): Promise<WebviewWindow | null> =>
     WebviewWindow.getByLabel(getDedicatedNodeWindowLabel(nodeId));
@@ -9843,11 +10974,36 @@ export default function App() {
         return;
       }
 
-      setDesktopViewMode(desktopBrowseViewModeRef.current === "procedure" ? "grid" : desktopBrowseViewModeRef.current);
+      const workspaceRootNode =
+        nodeById.get(activeProjectRootId) ??
+        store.allNodes.find((candidate) => candidate.id === activeProjectRootId) ??
+        null;
+      if (!workspaceRootNode || !ensureNodeAccessAllowed([workspaceRootNode.id], "read")) {
+        setDesktopViewMode(desktopBrowseViewModeRef.current === "procedure" ? "grid" : desktopBrowseViewModeRef.current);
+        setSelectionSurface("grid");
+        setKeyboardSurface("grid");
+        return;
+      }
+
+      setDocumentationModeActive(false);
+      setWorkspaceMode("grid");
+      setDesktopViewMode("grid");
+      setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("structure"));
+      setExecutionQuickOpenDeliverableId(null);
+      await store.navigateTo(workspaceRootNode.id);
+      setPrimarySelection(workspaceRootNode.id, "grid");
       setSelectionSurface("grid");
       setKeyboardSurface("grid");
     },
-    [activeProjectRootId, openNodeInDesktopTab, updateWorkspaceNodeTabSession, workspaceNodeTabSessions]
+    [
+      activeProjectRootId,
+      ensureNodeAccessAllowed,
+      nodeById,
+      openNodeInDesktopTab,
+      store,
+      updateWorkspaceNodeTabSession,
+      workspaceNodeTabSessions
+    ]
   );
 
   const dedicatedNodeWindowTargetAppliedRef = useRef(false);
@@ -9924,7 +11080,8 @@ export default function App() {
           : rootNode.id;
       validOpenTabs.push({
         nodeId: rootNode.id,
-        lastSelectedNodeId: nextSelectedNodeId
+        lastSelectedNodeId: nextSelectedNodeId,
+        mode: normalizeWorkspaceNodeTabMode(entry.mode)
       });
     }
 
@@ -9940,7 +11097,8 @@ export default function App() {
         return (
           !currentEntry ||
           currentEntry.nodeId !== entry.nodeId ||
-          currentEntry.lastSelectedNodeId !== entry.lastSelectedNodeId
+          currentEntry.lastSelectedNodeId !== entry.lastSelectedNodeId ||
+          normalizeWorkspaceNodeTabMode(currentEntry.mode) !== normalizeWorkspaceNodeTabMode(entry.mode)
         );
       }) ||
       nextActiveTabId !== currentSession.activeTabId;
@@ -10478,6 +11636,17 @@ export default function App() {
     setWorkspaceLocalPathInput(nextState.workspaceLocalPathInput);
   }, []);
 
+  const openWorkspaceSettings = useCallback(() => {
+    const nextState = buildWorkspaceSettingsToggleState(false);
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(null);
+    setWorkspaceSettingsOpen(nextState.workspaceSettingsOpen);
+    setWorkspaceCreateInlineOpen(nextState.workspaceCreateInlineOpen);
+    if (nextState.workspaceNameInput !== null) {
+      setWorkspaceNameInput(nextState.workspaceNameInput);
+    }
+  }, []);
+
   const cancelWorkspaceCreateInline = useCallback(() => {
     if (isWorkspaceCreating) return;
     const nextState = buildWorkspaceCreateInlineCancelState();
@@ -10569,9 +11738,9 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!commandBarOpen) return;
+    if (!commandBarOpen && !activeTabIsAiMode) return;
     refreshAssistantActivity();
-  }, [commandBarOpen]);
+  }, [activeTabIsAiMode, commandBarOpen]);
 
   const runAssistantPlanMyDay = async () => {
     const startedAt = Date.now();
@@ -11177,8 +12346,16 @@ export default function App() {
   ]);
 
   const collapseAllTreeNodes = useCallback(() => {
+    const nextBaseExpandedIds =
+      hideWorkspaceContainerRow && activeWorkspaceRootId ? new Set<string>([activeWorkspaceRootId]) : new Set<string>();
     if (workspaceMode === "grid" && workspaceFocusMode === "execution") {
-      setExpandedIds((prev) => (prev.size === 0 ? prev : new Set()));
+      setExpandedIds((prev) => {
+        const next = nextBaseExpandedIds;
+        if (prev.size === next.size && Array.from(next).every((id) => prev.has(id))) {
+          return prev;
+        }
+        return next;
+      });
       return;
     }
     if (workspaceMode === "timeline") {
@@ -11186,8 +12363,21 @@ export default function App() {
       return;
     }
     if (hasActiveFavoriteGroupTreeFiltering || treeUsesNodeStateFiltering) return;
-    setExpandedIds((prev) => (prev.size === 0 ? prev : new Set()));
-  }, [hasActiveFavoriteGroupTreeFiltering, treeUsesNodeStateFiltering, workspaceFocusMode, workspaceMode]);
+    setExpandedIds((prev) => {
+      const next = nextBaseExpandedIds;
+      if (prev.size === next.size && Array.from(next).every((id) => prev.has(id))) {
+        return prev;
+      }
+      return next;
+    });
+  }, [
+    activeWorkspaceRootId,
+    hasActiveFavoriteGroupTreeFiltering,
+    hideWorkspaceContainerRow,
+    treeUsesNodeStateFiltering,
+    workspaceFocusMode,
+    workspaceMode
+  ]);
 
   const openFolder = async (nodeId: string) => {
     const node = await getNode(nodeId);
@@ -11538,6 +12728,44 @@ export default function App() {
       activeExternalImportKeysRef.current.delete(importKey);
     }
   };
+  const importFilePayloadsIntoNode = async (
+    filePayloads: ImportedFilePayload[],
+    targetNodeId?: string | null,
+    surface: SelectionSurface = "tree"
+  ): Promise<boolean> => {
+    if (!isDesktopRuntime || filePayloads.length === 0) return false;
+
+    const targetNode =
+      surface === "grid" && targetNodeId === undefined ? null : await resolveMutationTargetNode(targetNodeId);
+    const parentId = resolveImportParentNodeId({
+      targetNode,
+      surface,
+      currentFolderId: store.currentFolderId,
+      activeProjectRootId
+    });
+    if (!ensureStructureMutationAllowed([parentId], { scope: "content" })) return false;
+
+    try {
+      const created = await importFilePayloadsToNode(parentId, filePayloads);
+      if (created.length === 0) return false;
+
+      const revealDesktopFolderId = surface === "grid" ? parentId : undefined;
+      const expandNodeIds = parentId ? [parentId] : [];
+      await refreshTreeAndKeepContext(
+        created[created.length - 1].id,
+        expandNodeIds,
+        resolvePostImportSelectionSurface(surface),
+        revealDesktopFolderId
+      );
+      setProjectError(null);
+      return true;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setProjectNotice(null);
+      setProjectError(t("share.import_failed", { reason }));
+      return false;
+    }
+  };
   useEffect(() => {
     importExternalFilesToNodeRef.current = importExternalFilesToNode;
   }, [importExternalFilesToNode]);
@@ -11557,16 +12785,42 @@ export default function App() {
     return importExternalFilesToNode(paths, targetNodeId, surface);
   };
 
-  const collectFileInputPaths = (fileList: FileList | null): string[] => {
-    if (!fileList || fileList.length === 0) return [];
+  const encodeFileBytesToBase64 = (bytes: Uint8Array): string => {
+    let binary = "";
+    const chunkSize = 0x8000;
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+      const chunk = bytes.subarray(index, Math.min(bytes.length, index + chunkSize));
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  };
+
+  const collectFileInputSelection = async (
+    files: File[]
+  ): Promise<{ paths: string[]; payloads: ImportedFilePayload[] }> => {
     const paths: string[] = [];
-    for (const file of Array.from(fileList)) {
+    const payloads: ImportedFilePayload[] = [];
+    const seenPaths = new Set<string>();
+
+    for (const file of files) {
       const candidate = (file as File & { path?: string }).path;
       if (typeof candidate === "string" && candidate.trim().length > 0) {
-        paths.push(candidate.trim());
+        const normalizedPath = candidate.trim();
+        const key = normalizedPath.toLowerCase();
+        if (!seenPaths.has(key)) {
+          seenPaths.add(key);
+          paths.push(normalizedPath);
+        }
+        continue;
       }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      payloads.push({
+        name: file.name.trim() || "Imported file",
+        bytesBase64: encodeFileBytesToBase64(bytes)
+      });
     }
-    return paths;
+
+    return { paths, payloads };
   };
 
   const resolveDesktopUploadTargetId = useCallback((): string | null => {
@@ -11671,11 +12925,33 @@ export default function App() {
 
   const onUploadInputChange = (event: ChangeEvent<HTMLInputElement>) => {
     const uploadTargetId = pendingDesktopUploadTargetIdRef.current ?? resolveDesktopUploadTargetId();
-    const paths = collectFileInputPaths(event.target.files);
+    const selectedFiles = Array.from(event.target.files ?? []);
     pendingDesktopUploadTargetIdRef.current = null;
     event.target.value = "";
-    if (paths.length === 0) return;
-    void importExternalFilesToNode(paths, uploadTargetId, "grid");
+    if (selectedFiles.length === 0) return;
+
+    void (async () => {
+      try {
+        const { paths, payloads } = await collectFileInputSelection(selectedFiles);
+        let imported = false;
+
+        if (paths.length > 0) {
+          imported = (await importExternalFilesToNode(paths, uploadTargetId, "grid")) || imported;
+        }
+        if (payloads.length > 0) {
+          imported = (await importFilePayloadsIntoNode(payloads, uploadTargetId, "grid")) || imported;
+        }
+
+        if (!imported && paths.length === 0 && payloads.length === 0) {
+          setProjectNotice(null);
+          setProjectError(t("share.import_failed", { reason: "No readable files were selected." }));
+        }
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        setProjectNotice(null);
+        setProjectError(t("share.import_failed", { reason }));
+      }
+    })();
   };
 
   const reportExecutionProjectionMoveBlocked = () => {
@@ -13974,14 +15250,7 @@ export default function App() {
 
   const updateQuickAppDraftItem = useCallback((itemId: string, patch: Partial<NodeQuickAppItem>) => {
     setQuickAppsDraftItems((current) =>
-      current.map((item) =>
-        item.id === itemId
-          ? {
-              ...item,
-              ...patch
-            }
-          : item
-      )
+      current.map((item) => (item.id === itemId ? applyQuickAppItemPatch(item, patch) : item))
     );
   }, []);
 
@@ -14022,6 +15291,7 @@ export default function App() {
         properties: nextProperties,
         updatedAt: Date.now()
       });
+      persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextQuickApps));
 
       if (localAutoQuickApps.length > 0) {
         const uniqueIconRequests = new Map<string, { target: string; fileName: string }>();
@@ -14048,10 +15318,75 @@ export default function App() {
     } finally {
       setQuickAppsSaving(false);
     }
-  }, [ensureNodeAccessAllowed, nodeById, quickAppsDraftItems, quickAppsModalNodeId, store]);
+  }, [ensureNodeAccessAllowed, nodeById, persistQuickAppLibrary, quickAppsDraftItems, quickAppsModalNodeId, store]);
+
+  const openQuickAppBrowserWindow = useCallback(
+    async (
+      item: NodeQuickAppItem,
+      browserUrl: string,
+      context?: QuickAppLaunchContext | null,
+      options?: { mode?: "link" | "html"; title?: string | null }
+    ) => {
+      if (!browserUrl.trim()) {
+        throw new Error("The quick app browser target could not be opened.");
+      }
+
+      if (!isTauri()) {
+        if (typeof window !== "undefined") {
+          window.open(browserUrl, "_blank", "noopener,noreferrer");
+          return;
+        }
+        throw new Error("Quick app browser windows require the ODE desktop runtime.");
+      }
+
+      const label =
+        options?.mode === "html"
+          ? buildQuickAppHtmlWindowLabel(item, context)
+          : buildQuickAppBrowserWindowLabel(item, context);
+      const windowTitle = `${APP_DISPLAY_NAME} - ${buildQuickAppWindowTitle(
+        item,
+        browserUrl,
+        context,
+        options?.title ?? null
+      )}`;
+      const existing = await WebviewWindow.getByLabel(label);
+      if (existing) {
+        await existing.setTitle(windowTitle).catch(() => {});
+        await existing.unminimize().catch(() => {});
+        await existing.show().catch(() => {});
+        await existing.setFocus().catch(() => {});
+        return;
+      }
+
+      const panelWindow = new WebviewWindow(label, {
+        title: windowTitle,
+        url: browserUrl,
+        center: true,
+        width: 1280,
+        height: 900,
+        minWidth: 860,
+        minHeight: 620,
+        resizable: true,
+        focus: true
+      });
+      void panelWindow.once("tauri://error", () => {});
+    },
+    []
+  );
+
+  const openQuickAppHtmlWindow = useCallback(
+    async (item: NodeQuickAppItem, instancePath: string, context?: QuickAppLaunchContext | null) => {
+      const htmlUrl = buildQuickAppHtmlLaunchUrl(instancePath, item, context);
+      await openQuickAppBrowserWindow(item, htmlUrl, context, {
+        mode: "html",
+        title: item.label.trim() || getPathFileName(instancePath) || "HTML"
+      });
+    },
+    [openQuickAppBrowserWindow]
+  );
 
   const launchQuickApp = useCallback(
-    async (item: NodeQuickAppItem) => {
+    async (item: NodeQuickAppItem, context?: QuickAppLaunchContext | null) => {
       const target = resolveQuickAppLaunchTarget(item);
       if (!target) {
         setProjectError(t("quick_apps.target_required"));
@@ -14078,7 +15413,25 @@ export default function App() {
             await openNodeInDedicatedWindow(targetNode.id);
           }
         } else if (item.kind === "local_path") {
-          await openLocalPath(target);
+          const localPath = resolveQuickAppLocalPath(target);
+          if (isQuickAppHtmlItem(item) || isQuickAppHtmlLocalPath(localPath)) {
+            if (!localPath) {
+              throw new Error("The HTML template path could not be resolved.");
+            }
+            const instancePath = await prepareQuickAppHtmlInstance(
+              localPath,
+              buildQuickAppHtmlInstanceFileName(item, context),
+              {
+                templateBaseHref: buildQuickAppHtmlTemplateBaseHref(localPath),
+                storageNamespace: buildQuickAppHtmlStorageNamespace(item, context)
+              }
+            );
+            await openQuickAppHtmlWindow(item, instancePath, context);
+            return;
+          }
+          await openLocalPath(localPath ?? target);
+        } else if (shouldOpenQuickAppInsideOdeBrowser(item)) {
+          await openQuickAppBrowserWindow(item, target, context, { mode: "link" });
         } else {
           await openExternalUrl(target);
         }
@@ -14091,7 +15444,14 @@ export default function App() {
         );
       }
     },
-    [openFileNode, openNodeInDedicatedWindow, resolveCachedNodeById, t]
+    [
+      openFileNode,
+      openNodeInDedicatedWindow,
+      openQuickAppBrowserWindow,
+      openQuickAppHtmlWindow,
+      resolveCachedNodeById,
+      t
+    ]
   );
 
   const syncExecutionTaskDeletionToOwner = useCallback(
@@ -15444,7 +16804,7 @@ export default function App() {
       exitDocumentationMode();
       clearActiveDesktopNodeTab();
       setWorkspaceMode("grid");
-      setDesktopViewMode("dashboard");
+      setDesktopViewMode("grid");
       setActiveNodeStateFilters(resolveNodeStateFiltersForWorkspaceFocusMode("structure"));
       setExecutionQuickOpenDeliverableId(null);
       await store.navigateTo(targetNode.id);
@@ -16649,19 +18009,19 @@ export default function App() {
       if (!isToggleShortcut) return;
       if (hasBlockingOverlayOpenWithMove) return;
       event.preventDefault();
-      setCommandBarOpen((prev) => !prev);
+      void openAiWorkspaceForCurrentContext();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [hasBlockingOverlayOpenWithMove]);
+  }, [hasBlockingOverlayOpenWithMove, openAiWorkspaceForCurrentContext]);
 
   useEffect(() => {
-    if (!commandBarOpen) return;
+    if (!commandBarOpen && !activeTabIsAiMode) return;
     setContextMenu(null);
     setSearchDropdownOpen(false);
-  }, [commandBarOpen]);
+  }, [activeTabIsAiMode, commandBarOpen]);
 
   const {
     copySelectedBranch,
@@ -16985,15 +18345,16 @@ export default function App() {
     onEditNodeAccessPolicy: openNodeAccessPolicyEditor
   });
 
-  const activeKeyboardSelectionSurface = resolveSelectionSurfaceForKeyboardSurface(
+  const activeKeyboardSelectionSurface = resolveActiveSelectionSurface({
+    desktopViewMode,
     keyboardSurface,
-    selectionSurface
-  );
-  const keyboardCreationSurface = resolveKeyboardCreationSurface({
-    keyboardSurface,
-    workspaceMode,
-    selectionSurface
+    selectionSurface,
+    workspaceMode
   });
+  const keyboardCreationSurface = resolveEffectiveCreationSurfaceForWorkspace(
+    activeKeyboardSelectionSurface,
+    workspaceMode
+  );
   const assistantOverlayOpen =
     (AI_COMMAND_BAR_ENABLED && commandBarOpen) ||
     documentAdvisorOpen ||
@@ -17586,14 +18947,18 @@ export default function App() {
       scheduleDesktopWindowChromeStateSync(win);
     } else {
       desktopWindowRestoreBoundsRef.current = await captureDesktopWindowRestoreBounds(win);
-      const fittedToWorkArea = await fitDesktopWindowToWorkArea({
-        fillWorkArea: true,
-        coverTaskbar: false,
-        margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
+      await win.maximize().catch(() => {
+        // Borderless desktop windows sometimes reject native maximize.
+        // We fall back to the manual work-area fit below.
       });
-      if (!fittedToWorkArea) {
-        await win.maximize().catch(() => {
-          // Native maximize is the safest fallback because it respects the OS work area.
+      await waitForMs(80);
+
+      const maximizedAfterNativeAttempt = await isDesktopWindowEffectivelyMaximized(win);
+      if (!maximizedAfterNativeAttempt) {
+        await fitDesktopWindowToWorkArea({
+          fillWorkArea: true,
+          coverTaskbar: false,
+          margin: DESKTOP_WINDOW_MAXIMIZE_MARGIN_PX
         });
       }
       setIsWindowMaximized(await isDesktopWindowEffectivelyMaximized(win));
@@ -17677,6 +19042,86 @@ export default function App() {
     if (!selectedId) return null;
     return nodeById.get(selectedId) ?? null;
   };
+
+  const getAssistantTargetNode = (): AppNode | null => {
+    if (activeWorkspaceNodeTabEntry?.nodeId) {
+      const preferredNodeId =
+        activeWorkspaceNodeTabEntry?.lastSelectedNodeId ?? activeWorkspaceNodeTabEntry?.nodeId ?? null;
+      if (preferredNodeId) {
+        const preferredNode = nodeById.get(preferredNodeId) ?? null;
+        if (preferredNode) return preferredNode;
+      }
+      if (activeWorkspaceTabNode) return activeWorkspaceTabNode;
+    }
+    return getPrimarySelectionNode();
+  };
+
+  const getQuickAppUrlPreviewCached = useCallback(async (record: ScopedQuickAppRecord): Promise<QuickAppUrlPreview | null> => {
+    const cacheKey = buildQuickAppPreviewCacheKey(record);
+    if (quickAppUrlPreviewCacheRef.current.has(cacheKey)) {
+      return quickAppUrlPreviewCacheRef.current.get(cacheKey) ?? null;
+    }
+
+    try {
+      const preview = await fetchQuickAppUrlPreview(record.launchTarget);
+      quickAppUrlPreviewCacheRef.current.set(cacheKey, preview ?? null);
+      return preview ?? null;
+    } catch {
+      quickAppUrlPreviewCacheRef.current.set(cacheKey, null);
+      return null;
+    }
+  }, []);
+
+  const collectGroundedQuickAppSources = useCallback(
+    async (quickApps: ScopedQuickAppCollection, maxSources = 4) => {
+      const candidateRecords = quickApps.ordered.filter(
+        (record) =>
+          record.readabilityStatus === "readable_local_file" ||
+          record.readabilityStatus === "previewable_url"
+      );
+      const sources: GroundedQuickAppSource[] = [];
+
+      for (const record of candidateRecords) {
+        if (sources.length >= maxSources) break;
+        if (record.readabilityStatus === "previewable_url") {
+          const preview = await getQuickAppUrlPreviewCached(record);
+          const previewText = trimAiEvidenceText(
+            [preview?.title, preview?.description, preview?.excerpt].filter(Boolean).join("\n")
+          );
+          if (!previewText) continue;
+          sources.push({
+            record,
+            text: previewText,
+            sourceKind: "url_preview",
+            previewTitle: preview?.title ?? record.label ?? null,
+            previewDetail: preview?.finalUrl ?? record.launchTarget
+          });
+          continue;
+        }
+
+        const localPath = resolveQuickAppLocalPath(record.launchTarget);
+        if (!localPath) continue;
+        const fileName = getPathFileName(localPath);
+        const extension = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() ?? "" : "";
+        try {
+          const text = (await extractDocumentText(localPath, { extension }))?.trim() ?? "";
+          if (!text) continue;
+          sources.push({
+            record,
+            text: trimAiEvidenceText(text),
+            sourceKind: "local_file",
+            previewTitle: record.label || getPathFileName(record.launchTarget) || null,
+            previewDetail: localPath
+          });
+        } catch {
+          // Quick-app text extraction is best-effort only.
+        }
+      }
+
+      return sources;
+    },
+    [getQuickAppUrlPreviewCached]
+  );
 
   const getNodeTextForAi = (node: AppNode | null | undefined): string => {
     if (!node) return "";
@@ -18063,11 +19508,133 @@ export default function App() {
     return ordered;
   };
 
+  const resolveAssistantEvidenceScope = (requestText: string | null | undefined): AssistantEvidenceScope => {
+    const normalized = requestText?.trim().toLowerCase() ?? "";
+    if (!normalized) return "node";
+    if (
+      /\b(all workspaces|across all workspaces|whole application|whole app|entire application|entire app|global app|application-wide|app-wide)\b/.test(
+        normalized
+      )
+    ) {
+      return "application";
+    }
+    if (
+      /\b(this workspace|whole workspace|entire workspace|workspace level|workspace-wide|workspace)\b/.test(
+        normalized
+      )
+    ) {
+      return "workspace";
+    }
+    return "node";
+  };
+
+  const isAssistantOutOfScopeRequest = (requestText: string | null | undefined): boolean => {
+    const normalized = requestText?.trim().toLowerCase() ?? "";
+    if (!normalized) return false;
+    const hasOrganizationTerms =
+      /\b(node|nodes|workspace|workspaces|application|app|document|documents|file|files|deliverable|deliverables|task|tasks|action|actions|risk|risks|decision|decisions|organisation|organization|tree|structure|resource|resources|link|links|html|quick app|quick apps|local app|local apps)\b/.test(
+        normalized
+      );
+    if (hasOrganizationTerms) {
+      return false;
+    }
+    return (
+      /^(hi|hello|hey|good morning|good afternoon|good evening|thanks|thank you)\b/.test(normalized) ||
+      /\b(how are you|who are you|tell me about yourself|what can you do|how can you help|can you help me)\b/.test(
+        normalized
+      )
+    );
+  };
+
+  const getAssistantEvidenceScopeLabel = (scope: AssistantEvidenceScope): string => {
+    if (scope === "application") return "whole application";
+    if (scope === "workspace") return "workspace";
+    return "node";
+  };
+
   const trimAssistantExcerpt = (value: string, limit = 420): string => {
     const normalized = value.replace(/\s+/g, " ").trim();
     if (normalized.length <= limit) return normalized;
     return `${normalized.slice(0, limit).trim()}...`;
   };
+
+  const normalizePromptAttachments = (
+    attachments: AiCommandAttachment[] | null | undefined
+  ): AiCommandAttachment[] => {
+    const deduped = new Map<string, AiCommandAttachment>();
+    for (const attachment of getReadyAiCommandAttachments(attachments)) {
+      const normalizedName = attachment.name.trim();
+      if (!normalizedName) continue;
+      const normalizedMimeType = attachment.mimeType.trim();
+      if (attachment.kind === "image") {
+        const dataUrl = attachment.dataUrl?.trim() ?? "";
+        if (!dataUrl) continue;
+        deduped.set(attachment.id, {
+          ...attachment,
+          name: normalizedName,
+          mimeType: normalizedMimeType,
+          dataUrl
+        });
+        continue;
+      }
+      const extractedText = attachment.extractedText?.trim() ?? "";
+      if (!extractedText) continue;
+      deduped.set(attachment.id, {
+        ...attachment,
+        name: normalizedName,
+        mimeType: normalizedMimeType,
+        extractedText
+      });
+    }
+    return Array.from(deduped.values());
+  };
+
+  const parsePromptAttachmentsFromArgs = (args?: Record<string, unknown>): AiCommandAttachment[] => {
+    const rawValue = args?.prompt_attachments ?? args?.promptAttachments;
+    if (!Array.isArray(rawValue)) return [];
+    return normalizePromptAttachments(rawValue as AiCommandAttachment[]);
+  };
+
+  const mergePromptAttachmentsIntoArgs = (
+    args: Record<string, unknown> | undefined,
+    attachments: AiCommandAttachment[] | null | undefined
+  ): Record<string, unknown> => {
+    const normalizedAttachments = normalizePromptAttachments(attachments);
+    if (normalizedAttachments.length === 0) return args ?? {};
+    return {
+      ...(args ?? {}),
+      prompt_attachments: normalizedAttachments
+    };
+  };
+
+  const buildPromptAttachmentInput = (
+    basePrompt: string,
+    attachments: AiCommandAttachment[] | null | undefined,
+    aiEngine: "cloud" | "local" = "cloud"
+  ) =>
+    buildAiPromptInput(basePrompt, normalizePromptAttachments(attachments), {
+      aiEngine,
+      attachmentHeading: "Temporary prompt attachments:",
+      localImageWarning: t("command.ai_attachment_local_only_warning"),
+      emptyPromptFallback: t("command.ai_attachment_default_prompt")
+    });
+
+  const buildPromptAttachmentWorkstreamSources = (
+    attachments: AiCommandAttachment[] | null | undefined
+  ): ODEWorkstreamSource[] =>
+    normalizePromptAttachments(attachments).map((attachment) => ({
+      sourceId: `prompt-attachment-${attachment.id}`,
+      label:
+        attachment.kind === "image"
+          ? `Prompt image: ${attachment.name}`
+          : `Prompt attachment: ${attachment.name}`,
+      kind: attachment.kind === "image" ? "description" : "document",
+      sourceNodeId: null,
+      excerpt:
+        attachment.kind === "image"
+          ? "Temporary image attachment supplied directly in the AI command."
+          : trimAssistantExcerpt(attachment.extractedText ?? "", 700)
+    }));
 
   const readWorkspaceNAAnchor = (node: AppNode | null | undefined): WorkspaceNAAnchor | null => {
     const raw = node?.properties?.odeWorkspaceNA;
@@ -19733,6 +21300,43 @@ export default function App() {
   const isTextDocumentNode = (node: AppNode | null | undefined): node is AppNode =>
     Boolean(node && node.type === "file" && TEXT_PREVIEW_EXTENSIONS.has(extractFileExtensionLower(node.name)));
 
+  const buildAssistantScopeDocumentCandidates = useCallback(
+    (target: AppNode, scope: AssistantEvidenceScope, maxCandidates = 24): AppNode[] => {
+      const ordered: AppNode[] = [];
+      const seen = new Set<string>();
+
+      const pushCandidates = (candidates: AppNode[]) => {
+        for (const candidate of candidates) {
+          if (ordered.length >= maxCandidates) break;
+          if (seen.has(candidate.id) || !isDocumentCandidateNode(candidate)) continue;
+          seen.add(candidate.id);
+          ordered.push(candidate);
+        }
+      };
+
+      pushCandidates(collectNodeAssistantCandidateNodes(target, maxCandidates));
+      if (scope === "node") {
+        return ordered;
+      }
+
+      const workspaceScopeIds = fullProjectScopedNodeIds ?? new Set<string>();
+      const workspaceCandidates = store.allNodes
+        .filter((candidate) => workspaceScopeIds.has(candidate.id) && candidate.id !== target.id)
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      pushCandidates(workspaceCandidates);
+      if (scope === "workspace") {
+        return ordered;
+      }
+
+      const applicationCandidates = [...store.allNodes]
+        .filter((candidate) => candidate.id !== target.id)
+        .sort((left, right) => right.updatedAt - left.updatedAt);
+      pushCandidates(applicationCandidates);
+      return ordered;
+    },
+    [fullProjectScopedNodeIds, store.allNodes]
+  );
+
   const readDocumentTextSource = async (node: AppNode): Promise<{ node: AppNode; text: string }> => {
     const freshNode = await getFreshNodeForAi(node);
     const text = getDocumentAdvisorLines(getNodeTextForAi(freshNode)).join("\n");
@@ -19782,9 +21386,10 @@ export default function App() {
   const collectNodeAssistantTextSources = async (
     target: AppNode,
     maxSources = 6,
-    selectedDocumentIds?: string[]
+    selectedDocumentIds?: string[],
+    scope: AssistantEvidenceScope = "node"
   ): Promise<Array<{ node: AppNode; text: string }>> => {
-    const candidates = collectNodeAssistantCandidateNodes(target, Math.max(maxSources * 3, maxSources));
+    const candidates = buildAssistantScopeDocumentCandidates(target, scope, Math.max(maxSources * 3, maxSources));
     const normalizedSelectedIds = Array.from(
       new Set(
         (selectedDocumentIds ?? [])
@@ -19810,19 +21415,60 @@ export default function App() {
     return textBackedSources;
   };
 
+  const formatQuickAppCatalogLines = useCallback(
+    (quickApps: ScopedQuickAppCollection): string =>
+      quickApps.ordered.length > 0
+        ? quickApps.ordered
+            .slice(0, 12)
+            .map((record) => {
+              const label = record.label || getPathFileName(record.launchTarget) || "Quick app";
+              const scopeLabel =
+                record.scope === "function"
+                  ? t("quick_apps.scope_function")
+                  : record.scope === "tab"
+                    ? t("quick_apps.scope_tab")
+                    : t("quick_apps.scope_general");
+              return `- [${scopeLabel}] ${label} | ${record.ownerLabel} | ${record.readabilityStatus} | ${record.launchTarget}`;
+            })
+            .join("\n")
+        : "- none",
+    [t]
+  );
+
+  const formatGroundedQuickAppEvidenceLines = useCallback(
+    (sources: GroundedQuickAppSource[]): string =>
+      sources.length > 0
+        ? sources
+            .map((source, index) => {
+              const title =
+                source.previewTitle ||
+                source.record.label ||
+                getPathFileName(source.record.launchTarget) ||
+                "Quick app";
+              return `[Q${index + 1}|${source.record.scope}|${source.sourceKind}|${title}]\n${source.text}`;
+            })
+            .join("\n\n")
+        : "No grounded quick-app content was available.",
+    []
+  );
+
   const assistantNodeContext = useMemo<AiNodeContext | null>(() => {
-    const target = getPrimarySelectionNode();
+    const target = getAssistantTargetNode();
     if (!target) return null;
     const objective = readNodeObjectiveValue(target) ?? null;
     const scheduleStatus = parseNodeTimelineSchedule(target)?.status?.replace(/_/g, " ") ?? null;
     const candidateNodes = collectNodeAssistantCandidateNodes(target, 12);
+    const quickAppLabels = activeScopedQuickApps.ordered
+      .slice(0, 6)
+      .map((record) => record.label || getPathFileName(record.launchTarget))
+      .filter((label) => label.trim().length > 0);
     return {
       title: target.name,
       pathLabel: getNodePathLabel(target),
       objective,
       scheduleStatus,
-      documentCount: candidateNodes.length,
-      sourceLabels: candidateNodes.slice(0, 6).map((node) => node.name),
+      documentCount: candidateNodes.length + activeScopedQuickApps.ordered.length,
+      sourceLabels: [...candidateNodes.slice(0, 6).map((node) => node.name), ...quickAppLabels].slice(0, 6),
       documents: candidateNodes.map((node) => ({
         id: node.id,
         name: node.name,
@@ -19830,7 +21476,7 @@ export default function App() {
         type: node.type
       }))
     };
-  }, [byParent, nodeById, selectedNode, store.selectedNodeId, store.allNodes]);
+  }, [activeScopedQuickApps.ordered, activeTabIsAiMode, activeWorkspaceNodeTabEntry, activeWorkspaceTabNode, byParent, nodeById, selectedNode, store.selectedNodeId, store.allNodes]);
 
   const resolveAssistantExistingDeliverables = useCallback(
     (node: AppNode): ODEStructuredDeliverable[] => {
@@ -19866,7 +21512,16 @@ export default function App() {
         throw new Error(t("assistant.mistral_missing_key"));
       }
 
-      const target = getPrimarySelectionNode();
+      if (isAssistantOutOfScopeRequest(requestText)) {
+        return {
+          title: null,
+          answer:
+            "Ask about organisation nodes, documents, or connected links, apps, and HTML at node, workspace, or whole-application level.",
+          sourceLabels: []
+        };
+      }
+
+      const target = getAssistantTargetNode();
       if (!target) {
         throw new Error("Select a node first.");
       }
@@ -19876,15 +21531,29 @@ export default function App() {
       const objective = readNodeObjectiveValue(freshTarget) ?? null;
       const scheduleStatus = parseNodeTimelineSchedule(freshTarget)?.status?.replace(/_/g, " ") ?? "none";
       const existingDeliverables = resolveAssistantExistingDeliverables(freshTarget);
-      const sourceDocuments = await collectNodeAssistantTextSources(freshTarget, 6, options?.selectedDocumentIds);
+      const evidenceScope = resolveAssistantEvidenceScope(requestText);
+      const sourceDocuments = await collectNodeAssistantTextSources(
+        freshTarget,
+        6,
+        options?.selectedDocumentIds,
+        evidenceScope
+      );
+      const groundedQuickAppSources = await collectGroundedQuickAppSources(activeScopedQuickApps, 4);
       const nodeText = getNodeTextForAi(freshTarget).trim();
 
       const systemPrompt = [
-        "You are ODETool node assistant.",
-        "Use the selected node path, parent context, existing objective, existing deliverables, and readable documents.",
+        "You are ODETool organisation assistant.",
+        "Your work is limited to organisation and node decisions inside ODETool.",
+        "Only use node, workspace, or whole-application documents and connected links, local apps, and HTML resources as evidence.",
+        "Work like a grounded decision assistant, not a generic chatbot.",
+        "Never small-talk, never describe yourself, and never ask how else you can help.",
+        "If a request falls outside organisation evidence or the scoped data, reply with one short redirect sentence and stop.",
+        "Use the selected node path, parent context, existing objective, existing deliverables, readable documents, and grounded quick-app evidence.",
         "The node path changes meaning, so always respect the full hierarchy.",
+        "When the request is about what to do, recommend the best next decision with a short Why section.",
         "If the user asks for deliverables or actions, return concise sections named Summary, Deliverables, and Actions.",
-        "For other requests, answer directly in plain text with short sections or bullets when useful.",
+        "For direct questions inside scope, answer in short plain text grounded in the evidence.",
+        "Differentiate grounded evidence from metadata-only quick apps or weak signals.",
         "Do not invent facts. If evidence is weak, say 'Insufficient evidence'.",
         "Do not return markdown tables."
       ].join(" ");
@@ -19905,21 +21574,25 @@ export default function App() {
           ? sourceDocuments
               .map(
                 (source, index) =>
-                  `[${index + 1}|${source.node.name}]\n${source.text.replace(/\s+/g, " ").trim().slice(0, 1400)}`
+                  `[${index + 1}|${source.node.name}]\n${trimAiEvidenceText(source.text)}`
               )
               .join("\n\n")
           : "No readable documents were found under this node.";
+      const quickAppLines = formatQuickAppCatalogLines(activeScopedQuickApps);
+      const quickAppEvidenceLines = formatGroundedQuickAppEvidenceLines(groundedQuickAppSources);
 
-      const userPrompt = [
+      const baseUserPrompt = [
         `Date: ${toIsoDateOnly(new Date())}`,
         `Workspace: ${activeProject?.name ?? t("project.none")}`,
         `Node: ${freshTarget.name}`,
         `Path: ${pathLabel}`,
         `Type: ${freshTarget.type}`,
+        `Evidence scope: ${getAssistantEvidenceScopeLabel(evidenceScope)}`,
         `Schedule status: ${scheduleStatus}`,
         `Objective: ${objective ?? "(none)"}`,
         "",
         `Selected files: ${sourceDocuments.map((source) => source.node.name).join(", ") || "(none)"}`,
+        `Scoped quick apps: ${activeScopedQuickApps.ordered.map((record) => record.label).join(", ") || "(none)"}`,
         "",
         "Existing deliverables:",
         deliverableLines,
@@ -19932,14 +21605,22 @@ export default function App() {
         "Readable documents in scope:",
         documentLines,
         "",
+        "Scoped quick apps in priority order:",
+        quickAppLines,
+        "",
+        "Grounded quick-app evidence:",
+        quickAppEvidenceLines,
+        "",
         "Return plain text only."
       ].join("\n");
+      const promptInput = buildPromptAttachmentInput(baseUserPrompt, options?.attachments, "cloud");
 
       try {
         const answer = await runAiPromptAnalysis({
           apiKey,
           systemPrompt,
-          userPrompt,
+          userPrompt: promptInput.userPrompt,
+          userContent: promptInput.userContent,
           aiEngine: "cloud"
         });
         recordAiTelemetryEvent({
@@ -19955,7 +21636,11 @@ export default function App() {
         return {
           title: pathLabel,
           answer: answer.trim(),
-          sourceLabels: sourceDocuments.map((source) => source.node.name)
+          sourceLabels: [
+            ...sourceDocuments.map((source) => source.node.name),
+            ...groundedQuickAppSources.map((source) => source.record.label),
+            ...promptInput.attachmentLabels
+          ]
         };
       } catch (error) {
         recordAiTelemetryEvent({
@@ -19974,7 +21659,11 @@ export default function App() {
     },
     [
       activeProject,
+      activeScopedQuickApps,
       byParent,
+      collectGroundedQuickAppSources,
+      formatGroundedQuickAppEvidenceLines,
+      formatQuickAppCatalogLines,
       language,
       nodeById,
       resolveAssistantExistingDeliverables,
@@ -19992,8 +21681,9 @@ export default function App() {
     objective: string;
     textSources: Array<{ node: AppNode; text: string }>;
     deliverableTitle?: string;
+    promptAttachments?: AiCommandAttachment[];
   }): ODEWorkstreamSource[] => {
-    const { target, requestText, answerText, objective, textSources, deliverableTitle } = options;
+    const { target, requestText, answerText, objective, textSources, deliverableTitle, promptAttachments } = options;
     const sources: ODEWorkstreamSource[] = [];
 
     if (objective.trim().length > 0) {
@@ -20057,6 +21747,8 @@ export default function App() {
       });
     }
 
+    sources.push(...buildPromptAttachmentWorkstreamSources(promptAttachments));
+
     const deduped = new Map<string, ODEWorkstreamSource>();
     for (const source of sources) {
       if (!deduped.has(source.sourceId)) {
@@ -20097,7 +21789,12 @@ export default function App() {
       const freshTarget = await getFreshNodeForAi(planTarget);
       const objective = readNodeObjectiveValue(freshTarget)?.trim() || freshTarget.name;
       const existingDeliverables = resolveAssistantExistingDeliverables(freshTarget);
-      const textSources = await collectNodeAssistantTextSources(freshTarget, 6, options?.selectedDocumentIds);
+      const textSources = await collectNodeAssistantTextSources(
+        freshTarget,
+        6,
+        options?.selectedDocumentIds,
+        resolveAssistantEvidenceScope(requestText)
+      );
       const description =
         [freshTarget.description?.trim(), requestText.trim()].filter((item) => Boolean(item && item.length > 0)).join("\n\n") ||
         objective;
@@ -20106,7 +21803,8 @@ export default function App() {
         requestText,
         answerText: "",
         objective,
-        textSources
+        textSources,
+        promptAttachments: options?.attachments
       });
       const proposal = await generateDeliverableProposal({
         apiKey,
@@ -20115,7 +21813,8 @@ export default function App() {
         targetLanguage: language,
         description,
         existingDeliverables: existingDeliverables.map((deliverable) => deliverable.title.trim()).filter(Boolean),
-        sources
+        sources,
+        promptAttachments: options?.attachments
       });
 
       setAssistantDeliverableProposalState({
@@ -20145,7 +21844,12 @@ export default function App() {
       const freshTarget = await getFreshNodeForAi(planTarget);
       const objective = readNodeObjectiveValue(freshTarget)?.trim() || freshTarget.name;
       const existingDeliverables = resolveAssistantExistingDeliverables(freshTarget);
-      const textSources = await collectNodeAssistantTextSources(freshTarget, 6, options?.selectedDocumentIds);
+      const textSources = await collectNodeAssistantTextSources(
+        freshTarget,
+        6,
+        options?.selectedDocumentIds,
+        resolveAssistantEvidenceScope(requestText)
+      );
       const description =
         [freshTarget.description?.trim(), requestText.trim()].filter((item) => Boolean(item && item.length > 0)).join("\n\n") ||
         objective;
@@ -20154,7 +21858,8 @@ export default function App() {
         requestText,
         answerText: "",
         objective,
-        textSources
+        textSources,
+        promptAttachments: options?.attachments
       });
 
       const proposal = await generateIntegratedPlanProposal({
@@ -20166,6 +21871,7 @@ export default function App() {
         objective,
         existingDeliverables,
         deliverableSources,
+        promptAttachments: options?.attachments,
         buildTaskSources: (deliverable) =>
           buildNodeAssistantPlanSources({
             target: freshTarget,
@@ -20173,7 +21879,8 @@ export default function App() {
             answerText: "",
             objective,
             textSources,
-            deliverableTitle: deliverable.title
+            deliverableTitle: deliverable.title,
+            promptAttachments: options?.attachments
           })
       });
 
@@ -20205,13 +21912,19 @@ export default function App() {
       const objective = readNodeObjectiveValue(freshTarget)?.trim() || freshTarget.name;
       const existingDeliverables = resolveAssistantExistingDeliverables(freshTarget);
       const combinedDescription = [requestText.trim(), answerText.trim()].filter((item) => item.length > 0).join("\n\n");
-      const textSources = await collectNodeAssistantTextSources(freshTarget, 6, options?.selectedDocumentIds);
+      const textSources = await collectNodeAssistantTextSources(
+        freshTarget,
+        6,
+        options?.selectedDocumentIds,
+        resolveAssistantEvidenceScope(requestText)
+      );
       const deliverableSources = buildNodeAssistantPlanSources({
         target: freshTarget,
         requestText,
         answerText,
         objective,
-        textSources
+        textSources,
+        promptAttachments: options?.attachments
       });
 
       const proposal = await generateIntegratedPlanProposal({
@@ -20223,6 +21936,7 @@ export default function App() {
         objective,
         existingDeliverables,
         deliverableSources,
+        promptAttachments: options?.attachments,
         buildTaskSources: (deliverable) =>
           buildNodeAssistantPlanSources({
             target: freshTarget,
@@ -20230,7 +21944,8 @@ export default function App() {
             answerText,
             objective,
             textSources,
-            deliverableTitle: deliverable.title
+            deliverableTitle: deliverable.title,
+            promptAttachments: options?.attachments
           })
       });
 
@@ -21423,6 +23138,7 @@ export default function App() {
 
     const goal = parseArgsString(args, "goal") || "Summarize key findings and recommend next actions.";
     const selectedDocumentIdsFromArgs = parseSelectedDocumentIdsFromArgs(args);
+    const promptAttachments = parsePromptAttachmentsFromArgs(args);
     const targetId = selectedNode?.id ?? store.currentFolderId ?? activeProjectRootId;
 
     const collectScopeRoots = (): string[] => {
@@ -21471,7 +23187,9 @@ export default function App() {
     }
 
     if (readableDocumentNodes.length === 0) {
-      throw new Error(t("assistant.doc_review_empty"));
+      if (promptAttachments.length === 0) {
+        throw new Error(t("assistant.doc_review_empty"));
+      }
     }
 
     const lines = readableDocumentNodes.slice(0, 100).map((node) => {
@@ -21485,6 +23203,12 @@ export default function App() {
         : "unknown";
       return `- [${numberLabel}|${node.name}] type=${node.type} modified=${modified} snippet=${snippet || "(none)"}`;
     });
+    const promptAttachmentLines = promptAttachments
+      .filter((attachment) => attachment.kind === "document" && attachment.extractedText?.trim())
+      .map((attachment, index) => {
+        const snippet = trimAiEvidenceText(attachment.extractedText ?? "", 420);
+        return `- [A${index + 1}|Prompt attachment: ${attachment.name}] type=temporary attachment modified=now snippet=${snippet || "(none)"}`;
+      });
 
     const selectedLabel = selectedNode
       ? `${scopedNumbering.get(selectedNode.id) ?? numbering.get(selectedNode.id) ?? "-"} ${selectedNode.name}`
@@ -21497,7 +23221,7 @@ export default function App() {
       "Every finding, risk, and recommendation must include one or more citations in format [number|name].",
       "If evidence is insufficient, explicitly say 'Insufficient evidence'."
     ].join(" ");
-    const userPrompt = [
+    const baseUserPrompt = [
       `Date: ${toIsoDateOnly(new Date())}`,
       `Workspace: ${activeProject?.name ?? t("project.none")}`,
       `Selected node: ${selectedLabel}`,
@@ -21513,14 +23237,16 @@ export default function App() {
       "- Attach citations as [number|name] for each claim.",
       "",
       "Document context:",
-      lines.join("\n")
+      [...lines, ...promptAttachmentLines].join("\n")
     ].join("\n");
+    const promptInput = buildPromptAttachmentInput(baseUserPrompt, promptAttachments, "cloud");
 
     try {
       const response = await runAiPromptAnalysis({
         apiKey,
         systemPrompt,
-        userPrompt,
+        userPrompt: promptInput.userPrompt,
+        userContent: promptInput.userContent,
         aiEngine: "cloud"
       });
       await writePlainTextToClipboard(response.trim());
@@ -22831,23 +24557,20 @@ export default function App() {
     options?: AiCommandRequestOptions
   ): Promise<AiCommandPlan> => {
     const startedAt = Date.now();
-    const selectedLabel = selectedNode
-      ? `${scopedNumbering.get(selectedNode.id) ?? numbering.get(selectedNode.id) ?? "-"} ${selectedNode.name}`
+    const plannerSelectedNode = getAssistantTargetNode() ?? getPrimarySelectionNode();
+    const selectedLabel = plannerSelectedNode
+      ? `${scopedNumbering.get(plannerSelectedNode.id) ?? numbering.get(plannerSelectedNode.id) ?? "-"} ${plannerSelectedNode.name}`
       : "none";
-    const plannerSelectedNode = getPrimarySelectionNode();
     const preferDocumentWbs = Boolean(plannerSelectedNode && isDocumentCandidateNode(plannerSelectedNode));
     const forcedActionId = normalizeAiCommandActionId(options?.actionHint);
-    const context = buildAiCommandContext({
-      date: toIsoDateOnly(new Date()),
-      workspaceName: activeProject?.name ?? t("project.none"),
-      view: workspaceMode === "grid" ? "desktop" : "timeline",
-      selectedLabel
-    });
     if (forcedActionId) {
-      const forcedArgs = {
-        ...inferAiCommandArgs(commandText, forcedActionId),
-        ...(options?.selectedDocumentIds?.length ? { selected_document_ids: options.selectedDocumentIds } : {})
-      };
+      const forcedArgs = mergePromptAttachmentsIntoArgs(
+        {
+          ...inferAiCommandArgs(commandText, forcedActionId),
+          ...(options?.selectedDocumentIds?.length ? { selected_document_ids: options.selectedDocumentIds } : {})
+        },
+        options?.attachments
+      );
       return {
         intent: commandText.trim(),
         actionId: forcedActionId,
@@ -22866,6 +24589,31 @@ export default function App() {
         requiresConfirmation: forcedActionId === "wbs_from_document"
       };
     }
+    const plannerEvidenceScope = getAssistantEvidenceScopeLabel(resolveAssistantEvidenceScope(commandText));
+    const plannerDocumentSources = plannerSelectedNode
+      ? await collectNodeAssistantTextSources(
+          plannerSelectedNode,
+          4,
+          options?.selectedDocumentIds,
+          resolveAssistantEvidenceScope(commandText)
+        )
+      : [];
+    const groundedQuickAppSources = await collectGroundedQuickAppSources(activeScopedQuickApps, 3);
+    const context = buildAiCommandContext({
+      date: toIsoDateOnly(new Date()),
+      workspaceName: activeProject?.name ?? t("project.none"),
+      view: workspaceMode === "grid" ? "desktop" : "timeline",
+      selectedLabel,
+      selectedPathLabel: plannerSelectedNode ? getNodePathLabel(plannerSelectedNode) : null,
+      documentScopeLabel: plannerEvidenceScope,
+      objective: plannerSelectedNode ? readNodeObjectiveValue(plannerSelectedNode) ?? null : null,
+      scheduleStatus: plannerSelectedNode
+        ? parseNodeTimelineSchedule(plannerSelectedNode)?.status?.replace(/_/g, " ") ?? null
+        : null,
+      documentLabels: plannerDocumentSources.map((source) => source.node.name),
+      quickAppCatalogLines: formatQuickAppCatalogLines(activeScopedQuickApps),
+      groundedQuickAppEvidenceLines: formatGroundedQuickAppEvidenceLines(groundedQuickAppSources)
+    });
     const {
       heuristicAction,
       wbsIntentRequested,
@@ -22879,12 +24627,14 @@ export default function App() {
     const apiKey = getSavedMistralApiKey();
     if (apiKey && !skipPlannerLlm) {
       const { systemPrompt, userPrompt } = buildAiPlannerPrompts(commandText, context);
+      const promptInput = buildPromptAttachmentInput(userPrompt, options?.attachments, "cloud");
 
       try {
           const raw = await runAiPromptAnalysis({
             apiKey,
             systemPrompt,
-            userPrompt,
+            userPrompt: promptInput.userPrompt,
+            userContent: promptInput.userContent,
             aiEngine: "cloud"
           });
           const parsed = parseAiPlannerPayload(raw, commandText);
@@ -22927,6 +24677,8 @@ export default function App() {
         fallbackUsed
       }));
 
+    args = mergePromptAttachmentsIntoArgs(args, options?.attachments);
+
     const plan: AiCommandPlan = {
       intent: commandText,
       actionId,
@@ -22951,7 +24703,7 @@ export default function App() {
       latencyMs: Date.now() - startedAt,
       fallbackUsed,
       workspace: activeProject?.name ?? t("project.none"),
-      selectedNodeId: selectedNode?.id ?? null,
+      selectedNodeId: plannerSelectedNode?.id ?? null,
       error: plan.actionId ? undefined : "No executable action identified."
     });
 
@@ -23803,7 +25555,7 @@ export default function App() {
       }}
     >
       <ModalStack>
-        {authGateOpen && authGateMode ? (
+        {authGateVisible && authGateMode ? (
           <AuthGateModal
             mode={authGateMode}
             busy={authBusy}
@@ -23870,7 +25622,6 @@ export default function App() {
           activeProjectId={activeProjectId}
           defaultProjectId={defaultProjectId}
           workspaceNameInput={workspaceNameInput}
-          workspaceLocalPathInput={workspaceLocalPathInput}
           isProjectImporting={isProjectImporting}
           isWorkspaceCreating={isWorkspaceCreating}
           isProjectResyncing={isProjectResyncing}
@@ -23894,7 +25645,6 @@ export default function App() {
             void handleProjectSelectionChange(projectId);
           }}
           onWorkspaceNameInputChange={setWorkspaceNameInput}
-          onWorkspaceLocalPathInputChange={setWorkspaceLocalPathInput}
           onOpenCreateWorkspace={openWorkspaceCreateInline}
           onCancelCreateWorkspace={cancelWorkspaceCreateInline}
           onCreateWorkspace={() => {
@@ -23902,12 +25652,6 @@ export default function App() {
           }}
           onPickAndImportProjectFolder={() => {
             void handlePickAndImportProjectFolder();
-          }}
-          onPickWorkspaceLocalFolder={() => {
-            void handlePickWorkspaceLocalFolder();
-          }}
-          onSetWorkspaceLocalPath={() => {
-            void handleSetActiveWorkspaceLocalPath();
           }}
           onReSyncWorkspace={() => {
             void (async () => {
@@ -23922,6 +25666,8 @@ export default function App() {
           onOpenWorkspaceFolderLocation={() => {
             void openSelectedWorkspaceFolderLocation();
           }}
+          workspaceRootNumberingEnabled={workspaceRootNumberingEnabled}
+          onWorkspaceRootNumberingEnabledChange={setWorkspaceRootNumberingEnabled}
           aiRebuildStatus={aiRebuildStatus}
           aiRebuildStatusBusy={aiRebuildStatusBusy}
           aiRebuildWorkflowBusy={aiRebuildWorkflowBusy}
@@ -24424,16 +26170,20 @@ export default function App() {
         />
         <NodeQuickAppsModal
           t={t}
-          open={Boolean(quickAppsModalNode)}
-          nodeLabel={quickAppsModalNode?.name ?? ""}
-          items={quickAppsDraftItems}
+          open={quickAppsStudioOpen}
+          title={scopedQuickAppsModalTitle}
+          nodeLabel={scopedQuickAppsModalSubtitle}
+          emptyMessage={t("quick_apps.scope_empty")}
+          libraryItems={quickAppLibrary}
+          items={scopedQuickAppsModalItems}
           saving={quickAppsSaving}
-          onAdd={addQuickAppDraftItem}
-          onRemove={removeQuickAppDraftItem}
-          onMove={moveQuickAppDraftItem}
-          onChange={updateQuickAppDraftItem}
-          onClose={closeNodeQuickAppsModal}
-          onSave={saveQuickAppsModal}
+          onAdd={() => addQuickAppsStudioItem(quickAppsStudioFocusedScope)}
+          onAddFromLibrary={(libraryItemId) => addQuickAppsStudioItemFromLibrary(quickAppsStudioFocusedScope, libraryItemId)}
+          onRemove={(itemId) => removeQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId)}
+          onMove={(itemId, direction) => moveQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId, direction)}
+          onChange={(itemId, patch) => updateQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId, patch)}
+          onClose={closeQuickAppsStudio}
+          onSave={saveQuickAppsStudio}
         />
         {favoriteGroupModalOpen ? (
           <div
@@ -24954,19 +26704,34 @@ export default function App() {
 
       <TopBar
         t={t}
+        hidden={quickAppsStudioOpen || workspaceSettingsOpen}
+        activeWorkspaceLabel={activeProject?.name ?? activeWorkspaceRootNode?.name ?? null}
         workspaceMode={workspaceMode}
         workspaceFocusMode={workspaceFocusMode}
         documentationModeActive={documentationModeActive}
         libraryModeActive={desktopViewMode === "library"}
-        workspaceSettingsOpen={workspaceSettingsOpen}
         isDesktopRuntime={isDesktopRuntime}
         isWindowMaximized={isWindowMaximized}
         hasBlockingOverlayOpen={hasBlockingOverlayOpenWithMove || assistantOverlayOpen}
+        workspaceSettingsEnabled={Boolean(activeProjectId)}
+        onOpenWorkspaceSettings={openWorkspaceSettings}
+        workspaceQuickAppsEnabled={Boolean(activeWorkspaceRootId) && !documentationModeActive}
+        workspaceQuickApps={functionQuickApps}
+        onLaunchWorkspaceQuickApp={(item) => {
+          void launchQuickApp(item, {
+            scope: "function",
+            ownerId: activeWorkspaceRootNode?.id ?? null,
+            ownerLabel: activeWorkspaceRootNode?.name ?? null
+          });
+        }}
+        onManageWorkspaceQuickApps={() => {
+          void openQuickAppsStudioForScope("function");
+        }}
         onBrandClick={
           AI_COMMAND_BAR_ENABLED
             ? () => {
                 if (hasBlockingOverlayOpenWithMove || assistantOverlayOpen) return;
-                setCommandBarOpen(true);
+                void openAiWorkspaceForCurrentContext();
               }
             : undefined
         }
@@ -25026,16 +26791,6 @@ export default function App() {
           setSelectionSurface("grid");
           setKeyboardSurface("grid");
         }}
-        onWorkspaceSettingsClick={() =>
-          setWorkspaceSettingsOpen((prev) => {
-            const nextState = buildWorkspaceSettingsToggleState(prev);
-            setWorkspaceCreateInlineOpen(nextState.workspaceCreateInlineOpen);
-            if (nextState.workspaceNameInput !== null) {
-              setWorkspaceNameInput(nextState.workspaceNameInput);
-            }
-            return nextState.workspaceSettingsOpen;
-          })
-        }
         onWindowMinimize={() => {
           void handleWindowMinimize();
         }}
@@ -25047,7 +26802,7 @@ export default function App() {
         }}
       />
 
-      <div className="relative min-h-0 flex-1 lg:flex">
+      <div className={`relative min-h-0 flex-1 ${isDesktopRuntime ? "pt-14" : ""} lg:flex`}>
         {workspaceMode === "grid" ? (
           <DesktopView>
             <SidebarPanel
@@ -25201,7 +26956,7 @@ export default function App() {
               onCreateFirstNode={async () => {
                 await handleCreateFirstNodeRequest("tree");
               }}
-              onOpenNodeTab={async (nodeId) => {
+              onOpenNodeTab={async (nodeId, options) => {
                 if (documentationModeActive) {
                   setPrimarySelection(nodeId, "tree");
                   setSelectionSurface("tree");
@@ -25213,7 +26968,9 @@ export default function App() {
                   await openNodeInWorkarea(nodeId);
                   return;
                 }
-                await openNodeInDesktopTab(nodeId);
+                await openNodeInDesktopTab(nodeId, {
+                  preserveTreeFocus: options?.preserveTreeFocus
+                });
               }}
               onReviewFile={openFilePreview}
             />
@@ -25268,15 +27025,22 @@ export default function App() {
             <MainPaneHeader
               t={t}
               breadcrumbNodes={mainPaneBreadcrumbNodes}
+              activeWorkspaceRootId={activeWorkspaceRootId}
               getBreadcrumbLabel={getTransientNodeDisplayLabel}
-              workspaceMode={workspaceMode}
-              desktopViewMode={desktopViewMode}
-              workspaceFocusMode={workspaceFocusMode}
+              isDesktopRuntime={isDesktopRuntime}
               documentationModeActive={documentationModeActive}
               workspaceStructureLocked={workspaceStructureLocked}
               currentFolderNode={store.currentNode}
+              fileItems={[]}
+              showUploadAction={false}
               uploadInputRef={uploadInputRef}
               onUploadInputChange={onUploadInputChange}
+              onTriggerUpload={() => {
+                void triggerDesktopUpload();
+              }}
+              onOpenFileItem={(nodeId) => {
+                openFilePreview(nodeId);
+              }}
               onSelectBreadcrumbNode={(nodeId) => {
                 void (async () => {
                   if (workspaceMode === "timeline") {
@@ -25290,14 +27054,25 @@ export default function App() {
                   await openNodeHomeView(nodeId);
                 })();
               }}
-              onOpenNodeHome={() => {
-                void openNodeHomeView();
+              commandBarEnabled={false}
+              commandBarBusy={false}
+              commandBarActive={true}
+              onOpenCommandBar={() => {
+                void openAiWorkspaceForCurrentContext();
               }}
-              onOpenNodeExecution={() => {
-                void openNodeExecutionView();
+              onOpenWorkspaceSettings={openWorkspaceSettings}
+              workspaceSettingsEnabled={false}
+              onOpenFunctionQuickApps={() => {
+                void openQuickAppsStudioForScope("function");
               }}
-              onOpenNodeTimeline={() => {
-                void openNodeTimelineView();
+              functionQuickAppsEnabled={false}
+              functionQuickApps={functionQuickApps}
+              onLaunchFunctionQuickApp={(item) => {
+                void launchQuickApp(item, {
+                  scope: "function",
+                  ownerId: activeWorkspaceRootNode?.id ?? null,
+                  ownerLabel: activeWorkspaceRootNode?.name ?? null
+                });
               }}
             />
           ) : null}
@@ -25376,6 +27151,45 @@ export default function App() {
                 }}
                 isDedicatedFieldOrderWindow={isDedicatedFieldOrderWindow}
               />
+            ) : AI_COMMAND_BAR_ENABLED ? (
+              <div className="flex min-h-0 flex-1 overflow-hidden">
+                <AiCommandBar
+                  open
+                  simpleMode
+                  layout="embedded"
+                  chrome="minimal"
+                  focusRequestKey={embeddedAiFocusRequestKey}
+                  historyStorageKey={embeddedAiHistoryStorageKey}
+                  onTriggerUpload={() => {
+                    void triggerDesktopUpload(embeddedAiUploadTargetNodeId);
+                  }}
+                  t={t}
+                  language={language}
+                  languageCodes={LANGUAGE_CODES}
+                  activityItems={assistantActivityItems}
+                  initialSurface={
+                    desktopViewMode === "procedure" ||
+                    workspaceFocusMode === "data" ||
+                    workspaceFocusMode === "execution"
+                      ? "workarea"
+                      : "organization"
+                  }
+                  nodeContext={assistantNodeContext}
+                  quickAppScopes={activeQuickAppScopeSummaries}
+                  documentReview={null}
+                  onClose={() => {}}
+                  onDocumentTranslationModeChange={setDocumentAdvisorTranslationMode}
+                  onDocumentManualTranslationLanguageChange={setDocumentAdvisorManualTranslationLanguage}
+                  onAskNode={askSelectedNodeAssistant}
+                  onApplyNodePlan={applyNodeAssistantPlan}
+                  onOpenNodeDeliverableProposal={openNodeDeliverableProposal}
+                  onOpenNodeIntegratedPlanProposal={openNodeIntegratedPlanProposal}
+                  onAnalyze={analyzeAiCommand}
+                  onExecute={executeAiPlan}
+                  onExecuteDocumentReview={async () => {}}
+                  onClearActivity={clearAssistantActivity}
+                />
+              </div>
             ) : (
               <DesktopContentPanel
                 t={t}
@@ -25575,6 +27389,45 @@ export default function App() {
                 onTriggerUpload={() => {
                   void triggerDesktopUpload();
                 }}
+                dashboardEmbeddedContent={
+                  AI_COMMAND_BAR_ENABLED ? (
+                    <AiCommandBar
+                      open
+                      simpleMode
+                      layout="embedded"
+                      chrome="minimal"
+                      historyStorageKey={dashboardAiHistoryStorageKey}
+                      onTriggerUpload={() => {
+                        void triggerDesktopUpload();
+                      }}
+                      t={t}
+                      language={language}
+                      languageCodes={LANGUAGE_CODES}
+                      activityItems={assistantActivityItems}
+                      initialSurface={
+                        desktopViewMode === "procedure" ||
+                        workspaceFocusMode === "data" ||
+                        workspaceFocusMode === "execution"
+                          ? "workarea"
+                          : "organization"
+                      }
+                      nodeContext={assistantNodeContext}
+                      quickAppScopes={activeQuickAppScopeSummaries}
+                      documentReview={null}
+                      onClose={() => {}}
+                      onDocumentTranslationModeChange={setDocumentAdvisorTranslationMode}
+                      onDocumentManualTranslationLanguageChange={setDocumentAdvisorManualTranslationLanguage}
+                      onAskNode={askSelectedNodeAssistant}
+                      onApplyNodePlan={applyNodeAssistantPlan}
+                      onOpenNodeDeliverableProposal={openNodeDeliverableProposal}
+                      onOpenNodeIntegratedPlanProposal={openNodeIntegratedPlanProposal}
+                      onAnalyze={analyzeAiCommand}
+                      onExecute={executeAiPlan}
+                      onExecuteDocumentReview={async () => {}}
+                      onClearActivity={clearAssistantActivity}
+                    />
+                  ) : null
+                }
               />
             )
           ) : documentationModeActive ? (
@@ -25779,7 +27632,10 @@ export default function App() {
               tabs={desktopOpenNodeTabs}
               activeTabId={activeWorkspaceNodeTabSession.activeTabId}
               isSidebarCollapsed={isSidebarCollapsed}
-              showUploadAction={desktopViewMode === "dashboard"}
+              showUploadAction={false}
+              showAiAction={false}
+              showQuickAppsAction={false}
+              activeTabQuickApps={tabQuickApps}
               onActivateTab={(nodeId) => {
                 const tabEntry =
                   activeWorkspaceNodeTabSession.openTabs.find((entry) => entry.nodeId === nodeId) ?? null;
@@ -25792,6 +27648,19 @@ export default function App() {
               }}
               onTriggerUpload={() => {
                 void triggerDesktopUpload(store.currentNode?.id ?? activeWorkspaceNodeTabSession.activeTabId ?? null);
+              }}
+              onOpenAiForActiveTab={() => {
+                void openAiWorkspaceForCurrentContext();
+              }}
+              onLaunchQuickAppForActiveTab={(item) => {
+                void launchQuickApp(item, {
+                  scope: "tab",
+                  ownerId: activeWorkspaceTabNode?.id ?? null,
+                  ownerLabel: activeWorkspaceTabNode?.name ?? null
+                });
+              }}
+              onManageQuickAppsForActiveTab={() => {
+                void openQuickAppsStudioForScope("tab");
               }}
             />
           ) : null}
@@ -25810,17 +27679,35 @@ export default function App() {
         showExecutionMode={false}
         workareaAvailable={workareaAvailable}
         workspaceEmptyOnly={workspaceEmptyOnly}
-        quickAppNodeLabel={footerQuickAppTargetNode?.name ?? null}
+        quickAppNodeLabel={t("quick_apps.scope_general")}
         quickApps={footerQuickApps}
+        tabQuickAppNodeLabel={activeWorkspaceTabNode?.name ?? null}
+        tabQuickApps={tabQuickApps}
         onLaunchQuickApp={(item) => {
-          void launchQuickApp(item);
+          void launchQuickApp(item, {
+            scope: "general",
+            ownerId: null,
+            ownerLabel: null
+          });
         }}
         onReorderQuickApps={(quickApps) => {
           void reorderFooterQuickApps(quickApps);
         }}
         onManageQuickApps={() => {
-          if (!footerQuickAppTargetNode) return;
-          openNodeQuickAppsModal(footerQuickAppTargetNode.id);
+          void openQuickAppsStudioForScope("general");
+        }}
+        onLaunchTabQuickApp={(item) => {
+          void launchQuickApp(item, {
+            scope: "tab",
+            ownerId: activeWorkspaceTabNode?.id ?? null,
+            ownerLabel: activeWorkspaceTabNode?.name ?? null
+          });
+        }}
+        onReorderTabQuickApps={(quickApps) => {
+          void reorderTabQuickApps(activeWorkspaceTabNode?.id ?? null, quickApps);
+        }}
+        onManageTabQuickApps={() => {
+          void openQuickAppsStudioForScope("tab");
         }}
         onSelectWorkspaceFocusMode={workspaceMode === "timeline" ? selectTimelineWorkspaceFocusMode : selectWorkspaceFocusMode}
         onToggleWorkspaceEmptyOnly={toggleWorkspaceEmptyOnly}

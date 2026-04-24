@@ -12,7 +12,7 @@ import type { WorkspaceKnowledgeSummaryOutput } from "@/ai/rebuild/workflows/wor
 import type { WorkspaceOverviewOutput } from "@/ai/rebuild/workflows/workspaceOverview";
 import { WorkspaceManageCard } from "@/components/workspace/WorkspaceManageCard";
 import { AiRebuildCard } from "@/components/workspace/AiRebuildCard";
-import { useDraggableModalSurface } from "@/hooks/useDraggableModalSurface";
+import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import type { TranslationParams } from "@/lib/i18n";
 import type { ProjectSummary } from "@/lib/types";
 
@@ -26,7 +26,6 @@ interface WorkspaceSettingsModalProps {
   activeProjectId: string | null;
   defaultProjectId: string | null;
   workspaceNameInput: string;
-  workspaceLocalPathInput: string;
   isProjectImporting: boolean;
   isWorkspaceCreating: boolean;
   isProjectResyncing: boolean;
@@ -39,17 +38,16 @@ interface WorkspaceSettingsModalProps {
   onClose: () => void;
   onProjectSelectionChange: (projectId: string) => void;
   onWorkspaceNameInputChange: (value: string) => void;
-  onWorkspaceLocalPathInputChange: (value: string) => void;
   onOpenCreateWorkspace: () => void;
   onCancelCreateWorkspace: () => void;
   onCreateWorkspace: () => void;
   onPickAndImportProjectFolder: () => void;
-  onPickWorkspaceLocalFolder: () => void;
-  onSetWorkspaceLocalPath: () => void;
   onReSyncWorkspace: () => void;
   onDeleteProjectWorkspace: () => void;
   onSetDefaultWorkspace: () => void;
   onOpenWorkspaceFolderLocation: () => void;
+  workspaceRootNumberingEnabled: boolean;
+  onWorkspaceRootNumberingEnabledChange: (enabled: boolean) => void;
   aiRebuildStatus: AiRebuildStatus | null;
   aiRebuildStatusBusy: boolean;
   aiRebuildWorkflowBusy: boolean;
@@ -85,7 +83,6 @@ export function WorkspaceSettingsModal({
   activeProjectId,
   defaultProjectId,
   workspaceNameInput,
-  workspaceLocalPathInput,
   isProjectImporting,
   isWorkspaceCreating,
   isProjectResyncing,
@@ -98,17 +95,16 @@ export function WorkspaceSettingsModal({
   onClose,
   onProjectSelectionChange,
   onWorkspaceNameInputChange,
-  onWorkspaceLocalPathInputChange,
   onOpenCreateWorkspace,
   onCancelCreateWorkspace,
   onCreateWorkspace,
   onPickAndImportProjectFolder,
-  onPickWorkspaceLocalFolder,
-  onSetWorkspaceLocalPath,
   onReSyncWorkspace,
   onDeleteProjectWorkspace,
   onSetDefaultWorkspace,
   onOpenWorkspaceFolderLocation,
+  workspaceRootNumberingEnabled,
+  onWorkspaceRootNumberingEnabledChange,
   aiRebuildStatus,
   aiRebuildStatusBusy,
   aiRebuildWorkflowBusy,
@@ -135,8 +131,6 @@ export function WorkspaceSettingsModal({
   onRunAiRebuildExecutionPacket,
   onRunAiRebuildFinalSolution
 }: WorkspaceSettingsModalProps) {
-  const { surfaceRef, surfaceStyle, handlePointerDown } = useDraggableModalSurface({ open });
-
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -154,37 +148,34 @@ export function WorkspaceSettingsModal({
   if (!open) return null;
 
   return (
-    <div
-      className="ode-overlay-scrim fixed inset-0 z-[118] flex items-start justify-center overflow-y-auto p-2 sm:p-3 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (event.target !== event.currentTarget) return;
-        onClose();
-      }}
-    >
+    <div className="ode-overlay-scrim fixed inset-0 z-[220] flex backdrop-blur-sm">
       <div
-        ref={surfaceRef}
-        style={surfaceStyle}
-        className="ode-modal mt-1 flex max-h-[calc(100vh-0.75rem)] w-[min(96vw,96rem)] max-w-none flex-col overflow-hidden rounded-[24px] border border-[var(--ode-border-strong)] sm:mt-2"
+        className="ode-modal flex h-screen w-screen flex-col overflow-hidden rounded-none border-0"
       >
-        <div
-          className="ode-modal-drag-handle flex shrink-0 items-center justify-between border-b border-[var(--ode-border)] px-6 py-5"
-          onPointerDown={handlePointerDown}
-        >
-          <h2 className="text-[1.5rem] font-semibold tracking-tight text-[var(--ode-accent)]">
+        <div className="flex shrink-0 items-center justify-between border-b border-[var(--ode-border)] bg-[rgba(2,18,31,0.96)] px-4 py-3 sm:px-6 sm:py-4">
+          <h2 className="truncate text-[1.15rem] font-semibold tracking-[0.01em] text-[var(--ode-accent)]">
             {t("project.settings_title")}
           </h2>
-          <button type="button" className="ode-icon-btn h-10 w-10" onClick={onClose}>
-            x
-          </button>
+          <OdeTooltip label={t("window.close")} side="bottom">
+            <span className="block">
+              <button
+                type="button"
+                className="ode-text-btn h-10 px-4 shrink-0"
+                onClick={onClose}
+                aria-label={t("window.close")}
+              >
+                {t("window.close")}
+              </button>
+            </span>
+          </OdeTooltip>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <WorkspaceManageCard
             t={t}
             projects={projects}
             activeProjectId={activeProjectId}
             defaultProjectId={defaultProjectId}
             workspaceNameInput={workspaceNameInput}
-            workspaceLocalPathInput={workspaceLocalPathInput}
             isProjectImporting={isProjectImporting}
             isWorkspaceCreating={isWorkspaceCreating}
             isProjectResyncing={isProjectResyncing}
@@ -196,17 +187,16 @@ export function WorkspaceSettingsModal({
             workspaceNotice={workspaceNotice}
             onProjectSelectionChange={onProjectSelectionChange}
             onWorkspaceNameInputChange={onWorkspaceNameInputChange}
-            onWorkspaceLocalPathInputChange={onWorkspaceLocalPathInputChange}
             onOpenCreateWorkspace={onOpenCreateWorkspace}
             onCancelCreateWorkspace={onCancelCreateWorkspace}
             onCreateWorkspace={onCreateWorkspace}
             onPickAndImportProjectFolder={onPickAndImportProjectFolder}
-            onPickWorkspaceLocalFolder={onPickWorkspaceLocalFolder}
-            onSetWorkspaceLocalPath={onSetWorkspaceLocalPath}
             onReSyncWorkspace={onReSyncWorkspace}
             onDeleteProjectWorkspace={onDeleteProjectWorkspace}
             onSetDefaultWorkspace={onSetDefaultWorkspace}
             onOpenWorkspaceFolderLocation={onOpenWorkspaceFolderLocation}
+            workspaceRootNumberingEnabled={workspaceRootNumberingEnabled}
+            onWorkspaceRootNumberingEnabledChange={onWorkspaceRootNumberingEnabledChange}
           />
           {showAiRebuild ? (
             <AiRebuildCard

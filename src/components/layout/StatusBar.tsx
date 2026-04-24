@@ -45,9 +45,14 @@ interface StatusBarProps {
   qaChecklistHealth: QaChecklistHealth;
   quickAppNodeLabel: string | null;
   quickApps: NodeQuickAppItem[];
+  tabQuickAppNodeLabel?: string | null;
+  tabQuickApps?: NodeQuickAppItem[];
   onLaunchQuickApp: (item: NodeQuickAppItem) => void;
   onReorderQuickApps: (quickApps: NodeQuickAppItem[]) => void;
   onManageQuickApps: () => void;
+  onLaunchTabQuickApp?: (item: NodeQuickAppItem) => void;
+  onReorderTabQuickApps?: (quickApps: NodeQuickAppItem[]) => void;
+  onManageTabQuickApps?: () => void;
   onOpenReleaseNotes: () => void;
   onOpenHelp: () => void;
   onOpenQaChecklist: () => void;
@@ -181,9 +186,14 @@ export function StatusBar({
   qaChecklistHealth,
   quickAppNodeLabel,
   quickApps,
+  tabQuickAppNodeLabel = null,
+  tabQuickApps = [],
   onLaunchQuickApp,
   onReorderQuickApps,
   onManageQuickApps,
+  onLaunchTabQuickApp,
+  onReorderTabQuickApps,
+  onManageTabQuickApps,
   onOpenReleaseNotes,
   onOpenHelp,
   onOpenQaChecklist,
@@ -622,7 +632,20 @@ export function StatusBar({
           leadingSlot={userProfileMenu}
         />
 
-        <div className="flex items-center gap-3 px-3">{infoMenu}</div>
+        <div className="flex min-w-0 items-center justify-end gap-3 px-3">
+          {tabQuickAppNodeLabel && onLaunchTabQuickApp && onReorderTabQuickApps && onManageTabQuickApps ? (
+            <NodeQuickAppDock
+              t={t}
+              nodeLabel={tabQuickAppNodeLabel}
+              quickApps={tabQuickApps}
+              onLaunchQuickApp={onLaunchTabQuickApp}
+              onReorderQuickApps={onReorderTabQuickApps}
+              onManageQuickApps={onManageTabQuickApps}
+              compact
+            />
+          ) : null}
+          {infoMenu}
+        </div>
       </footer>
     </>
   );

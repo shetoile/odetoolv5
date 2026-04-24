@@ -193,6 +193,8 @@ export function buildAiPlannerPrompts(commandText: string, context: string): {
       "You are ODETool AI command planner.",
       "Return exactly one JSON object and no markdown.",
       "Do not include actions outside the allowed action list.",
+      "Base the action on the grounded context, including documents and quick-app evidence when present.",
+      "Prefer review-first or non-destructive actions when the request is ambiguous or the evidence is thin.",
       "Keep args minimal and safe.",
       "If no safe action exists, set action_id to null."
     ].join(" "),

@@ -33,21 +33,18 @@ export default defineConfig({
           if (normalizedId.includes("/src/components/views/")) {
             return "views";
           }
-          if (normalizedId.includes("/src/components/modals/")) {
-            return "modals";
-          }
-          if (normalizedId.includes("/src/components/overlay/")) {
-            return "overlay";
-          }
-          // These feature folders import each other heavily. Forcing them into
-          // separate manual chunks produces circular chunk warnings during build,
-          // so we let Rollup place them automatically.
+          // These UI folders import each other heavily. Forcing them into
+          // separate manual chunks can produce circular chunk warnings and
+          // release-only initialization issues, so we let Rollup place them
+          // automatically.
           if (
+            normalizedId.includes("/src/components/modals/") ||
+            normalizedId.includes("/src/components/overlay/") ||
             normalizedId.includes("/src/lib/helpGuideLocalization.ts") ||
             normalizedId.includes("/src/lib/releaseNotesLocalization.ts") ||
             normalizedId.includes("/src/lib/regressionChecklistLocalization.ts")
           ) {
-            return "localized-content";
+            return normalizedId.includes("/src/lib/") ? "localized-content" : undefined;
           }
           if (
             normalizedId.includes("/quality/release-log.json") ||
