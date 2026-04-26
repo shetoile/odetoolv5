@@ -1,28 +1,11 @@
-export const AI_COMMAND_ACTION_IDS = [
-  "workspace_import",
-  "workspace_resync",
-  "plan_my_day",
-  "wbs_generate",
-  "wbs_from_document",
-  "database_create_section",
-  "tree_create_topic",
-  "tree_rename_selected",
-  "tree_move_selected",
-  "tree_bulk_create",
-  "favorite_selected",
-  "desktop_open",
-  "timeline_open",
-  "timeline_set_schedule",
-  "timeline_clear_schedule",
-  "document_review",
-  "ticket_create",
-  "ticket_analyze",
-  "ticket_draft_reply",
-  "run_qa",
-  "draft_release_note"
-] as const;
+import {
+  AI_COMMAND_ACTION_IDS,
+  buildAiCapabilityPlannerCatalog,
+  normalizeAiCapabilityActionId,
+  type AiCommandActionId
+} from "@/features/ai/capabilityRegistry";
 
-export type AiCommandActionId = (typeof AI_COMMAND_ACTION_IDS)[number];
+export { AI_COMMAND_ACTION_IDS, type AiCommandActionId };
 
 export type AiPlannerParseResult = {
   actionId: AiCommandActionId | null;
@@ -34,73 +17,14 @@ export type AiPlannerParseResult = {
 };
 
 export function normalizeAiCommandActionId(value: string | null | undefined): AiCommandActionId | null {
-  if (!value) return null;
-  const normalized = value.trim().toLowerCase().replace(/[\s-]+/g, "_");
-  const aliases: Record<string, AiCommandActionId> = {
-    import_folder: "workspace_import",
-    workspace_import: "workspace_import",
-    resync_workspace: "workspace_resync",
-    workspace_resync: "workspace_resync",
-    plan_my_day: "plan_my_day",
-    my_day_plan: "plan_my_day",
-    daily_plan: "plan_my_day",
-    wbs_generate: "wbs_generate",
-    ai_wbs: "wbs_generate",
-    generate_wbs: "wbs_generate",
-    work_breakdown: "wbs_generate",
-    create_wbs: "wbs_generate",
-    wbs_from_document: "wbs_from_document",
-    document_wbs: "wbs_from_document",
-    file_wbs: "wbs_from_document",
-    create_wbs_from_document: "wbs_from_document",
-    create_wbs_from_file: "wbs_from_document",
-    create_database_section: "database_create_section",
-    database_create_section: "database_create_section",
-    database_section: "database_create_section",
-    database_schema: "database_create_section",
-    create_schema: "database_create_section",
-    create_database_schema: "database_create_section",
-    create_topic: "tree_create_topic",
-    tree_create_topic: "tree_create_topic",
-    rename_selected: "tree_rename_selected",
-    rename_node: "tree_rename_selected",
-    tree_rename_selected: "tree_rename_selected",
-    move_selected: "tree_move_selected",
-    move_node: "tree_move_selected",
-    tree_move_selected: "tree_move_selected",
-    bulk_create: "tree_bulk_create",
-    tree_bulk_create: "tree_bulk_create",
-    favorite_selected: "favorite_selected",
-    add_favorite: "favorite_selected",
-    pin_favorite: "favorite_selected",
-    bookmark_selected: "favorite_selected",
-    open_desktop: "desktop_open",
-    desktop_open: "desktop_open",
-    open_timeline: "timeline_open",
-    timeline_open: "timeline_open",
-    set_schedule: "timeline_set_schedule",
-    timeline_set_schedule: "timeline_set_schedule",
-    clear_schedule: "timeline_clear_schedule",
-    timeline_clear_schedule: "timeline_clear_schedule",
-    document_review: "document_review",
-    review_documents: "document_review",
-    review_docs: "document_review",
-    create_ticket: "ticket_create",
-    ticket_create: "ticket_create",
-    analyze_ticket: "ticket_analyze",
-    ticket_analyze: "ticket_analyze",
-    draft_ticket_reply: "ticket_draft_reply",
-    ticket_draft_reply: "ticket_draft_reply",
-    run_qa: "run_qa",
-    qa_run: "run_qa",
-    draft_release_note: "draft_release_note",
-    release_note_draft: "draft_release_note"
-  };
-  return aliases[normalized] ?? null;
+  return normalizeAiCapabilityActionId(value);
 }
 
 export function inferAiCommandActionId(commandText: string): AiCommandActionId | null {
   const text = commandText.toLowerCase();
+  const workspaceMentioned = text.includes("workspace");
+  const quickAppMentioned = text.includes("quick app") || text.includes("quickapp");
+  const htmlMentioned = /\bhtml\b/.test(text);
   const hasDatabaseIntent =
     (text.includes("database") ||
       text.includes("schema") ||
@@ -117,6 +41,19 @@ export function inferAiCommandActionId(commandText: string): AiCommandActionId |
     (text.includes("document") || text.includes("documents") || text.includes("doc") || text.includes("file") || text.includes("pdf") || text.includes("proposal") || text.includes("brief") || text.includes("report") || text.includes("upload"))) {
     return "wbs_from_document";
   }
+  if (workspaceMentioned && (text.includes("create") || text.includes("new") || text.includes("add"))) return "workspace_create";
+  if (workspaceMentioned && text.includes("folder") && (text.includes("show") || text.includes("open") || text.includes("reveal"))) return "workspace_open_folder";
+  if (workspaceMentioned && (text.includes("switch") || text.includes("change") || text.includes("open") || text.includes("go to"))) return "workspace_switch";
+  if (workspaceMentioned && text.includes("rename")) return "workspace_rename";
+  if (workspaceMentioned && (text.includes("location") || text.includes("folder path") || text.includes("workspace path") || text.includes("link folder") || text.includes("set path"))) return "workspace_set_location";
+  if (workspaceMentioned && text.includes("default")) return "workspace_set_default";
+  if (workspaceMentioned && (text.includes("delete") || text.includes("remove"))) return "workspace_delete";
+  if (quickAppMentioned && (text.includes("add") || text.includes("create") || text.includes("save"))) return "quick_app_add";
+  if (quickAppMentioned && (text.includes("remove") || text.includes("delete"))) return "quick_app_remove";
+  if ((quickAppMentioned || htmlMentioned) && (text.includes("review") || text.includes("analyze") || text.includes("analyse") || text.includes("summarize") || text.includes("summary") || text.includes("feedback") || text.includes("report"))) {
+    return "document_review";
+  }
+  if (quickAppMentioned && (text.includes("open") || text.includes("launch") || text.includes("run"))) return "quick_app_open";
   if (text.includes("plan my day") || text.includes("my day") || text.includes("daily plan") || text.includes("focus list")) return "plan_my_day";
   if (text.includes("wbs") || text.includes("work breakdown") || text.includes("break down") || text.includes("breakdown")) return "wbs_generate";
   if (text.includes("import")) return "workspace_import";
@@ -164,29 +101,7 @@ export function buildAiPlannerPrompts(commandText: string, context: string): {
   systemPrompt: string;
   userPrompt: string;
 } {
-  const actionCatalog = [
-    "workspace_import: Import a folder and create/sync workspace.",
-    "workspace_resync: Re-sync selected workspace.",
-    "plan_my_day: Build a short AI focus plan from current workspace context.",
-    "wbs_generate: Generate recursive AI WBS under current context. args: { goal }",
-    "wbs_from_document: Generate recursive AI WBS from selected document/file context. args: { goal? }",
-    "database_create_section: Create a database section and optional aligned fields. args: { section_name?, fields?: string[] }",
-    "tree_create_topic: Create a new topic node in current context.",
-    "tree_rename_selected: Rename selected node. args: { new_name }",
-    "tree_move_selected: Move selected node(s) into target folder. args: { target_ref }",
-    "tree_bulk_create: Create multiple topics under current context. args: { names: string[] }",
-    "favorite_selected: Add selected node to favorites and optional group. args: { group? }",
-    "desktop_open: Switch to Desktop view.",
-    "timeline_open: Switch to Timeline view.",
-    "timeline_set_schedule: Set selected node schedule. args: { start_date, end_date, status, predecessor?, title? }",
-    "timeline_clear_schedule: Clear selected node schedule.",
-    "document_review: Review documents in selected context with desired result. args: { goal? }",
-    "ticket_create: Create a support ticket node.",
-    "ticket_analyze: Analyze selected ticket with AI.",
-    "ticket_draft_reply: Draft a reply for selected ticket. args: { instructions? }",
-    "run_qa: Run quality gate.",
-    "draft_release_note: Draft release note from current context and QA."
-  ].join("\n");
+  const actionCatalog = buildAiCapabilityPlannerCatalog();
 
   return {
     systemPrompt: [
@@ -252,9 +167,142 @@ function extractDatabaseFields(text: string): string[] {
   return values.length >= 2 ? values : [];
 }
 
+function extractQuotedSegments(text: string): string[] {
+  return Array.from(
+    text.matchAll(/"([^"\n]+)"|'([^'\n]+)'/g),
+    (match) => (match[1] ?? match[2] ?? "").trim()
+  ).filter((value) => value.length > 0);
+}
+
+function extractUrlFromText(text: string): string {
+  return text.match(/\bhttps?:\/\/[^\s"'`]+/i)?.[0]?.trim() ?? "";
+}
+
+function extractPathFromText(text: string): string {
+  const windowsPath =
+    text.match(/\b[a-zA-Z]:\\[^"'`\n]+/i)?.[0] ??
+    text.match(/\b[a-zA-Z]:\/[^"'`\n]+/i)?.[0] ??
+    "";
+  if (windowsPath) return windowsPath.trim();
+  const unixPath = text.match(/(?:^|\s)(\/[^"'`\n]+)(?=\s|$)/)?.[1] ?? "";
+  return unixPath.trim();
+}
+
+function extractWorkspaceReference(text: string): string {
+  return (
+    text.match(/\bworkspace\s+(?:named|called)\s+["']?([^"'\n]+?)["']?(?:\s+(?:to|as|at|in|path|location)\b|$)/i)?.[1] ??
+    text.match(/\b(?:switch|change|open|delete|remove|resync|sync)\s+(?:to\s+)?workspace\s+["']?([^"'\n]+?)["']?$/i)?.[1] ??
+    text.match(/\bworkspace\s+["']?([^"'\n]+?)["']?\s+(?:folder|path|location|default)\b/i)?.[1] ??
+    ""
+  ).trim();
+}
+
+function extractWorkspaceCreateName(text: string): string {
+  return (
+    text.match(/\b(?:create|new|add)\s+workspace\s+(?:named|called)\s+["']?([^"'\n]+?)["']?(?:\s+(?:at|in|path|location)\b|$)/i)?.[1] ??
+    text.match(/\b(?:create|new|add)\s+workspace\s+["']?([^"'\n]+?)["']?(?:\s+(?:at|in|path|location)\b|$)/i)?.[1] ??
+    ""
+  ).trim();
+}
+
+function extractWorkspaceRenameArgs(text: string): { workspaceRef?: string; newName?: string } {
+  const explicitRefMatch = text.match(
+    /\brename\s+workspace\s+["']?([^"'\n]+?)["']?\s+(?:to|as)\s+["']?([^"'\n]+?)["']?$/i
+  );
+  if (explicitRefMatch) {
+    return {
+      workspaceRef: explicitRefMatch[1].trim(),
+      newName: explicitRefMatch[2].trim()
+    };
+  }
+  const currentMatch = text.match(/\brename\s+(?:the\s+)?workspace\s+(?:to|as)\s+["']?([^"'\n]+?)["']?$/i);
+  return currentMatch ? { newName: currentMatch[1].trim() } : {};
+}
+
+function extractQuickAppScope(text: string): string {
+  if (/\bglobal\b|\bgeneral\b/.test(text)) return "general";
+  if (/\bworkspace\b|\bfunction\b/.test(text)) return "function";
+  if (/\btab\b|\bnode\b|\bcurrent node\b/.test(text)) return "tab";
+  return "";
+}
+
+function extractQuickAppLabel(text: string): string {
+  return (
+    text.match(/\bquick\s*app\s+(?:called|named|label)\s+["']?([^"'\n]+?)["']?(?:\s+(?:to|for|in|on|at|https?:\/\/|[a-zA-Z]:\\|\/)\b|$)/i)?.[1] ??
+    text.match(/\b(?:add|create|save)\s+(?:a\s+)?quick\s*app\s+["']?([^"'\n]+?)["']?(?:\s+(?:to|for|in|on|at|https?:\/\/|[a-zA-Z]:\\|\/)\b|$)/i)?.[1] ??
+    ""
+  ).trim();
+}
+
+function inferQuickAppTypeFromTarget(target: string): string {
+  if (/^https?:\/\//i.test(target)) return "link";
+  if (/\.(html?|xhtml)$/i.test(target)) return "html";
+  return "local_app";
+}
+
+function extractQuickAppReference(text: string): string {
+  return (
+    text.match(/\bquick\s*app\s+["']?([^"'\n]+?)["']?$/i)?.[1] ??
+    text.match(/\b(?:open|launch|remove|delete)\s+(?:the\s+)?quick\s*app\s+["']?([^"'\n]+?)["']?$/i)?.[1] ??
+    ""
+  ).trim();
+}
+
+function extractDocumentReviewOutputFormat(text: string): string {
+  return /\bpdf\b/i.test(text) && /\b(export|save|generate|create|make|report)\b/i.test(text) ? "pdf" : "";
+}
+
+function stripDocumentReviewOutputInstruction(value: string): string {
+  return value
+    .replace(/\b(?:and|then)?\s*(?:export|save|generate|create|make)\s+(?:it|this|that|a|the)?\s*(?:full\s+)?(?:pdf\s+)?report\b.*$/i, "")
+    .replace(/\b(?:and|then)?\s*(?:export|save|generate|create|make)\s+(?:it|this|that)?\s*(?:as\s+)?pdf\b.*$/i, "")
+    .replace(/\bas\s+pdf\b.*$/i, "")
+    .trim()
+    .replace(/[\s,;:-]+$/g, "");
+}
+
+function extractDocumentReviewTitle(text: string): string {
+  return (
+    text.match(/\b(?:pdf|report)\s+(?:called|named|titled)\s+["']?([^"'\n]+?)["']?(?:\s+(?:for|about|on|from)\b|$)/i)?.[1] ??
+    text.match(/\b(?:called|named|titled)\s+["']?([^"'\n]+?)["']?\s+(?:pdf|report)\b/i)?.[1] ??
+    ""
+  ).trim();
+}
+
 export function inferAiCommandArgs(commandText: string, actionId: AiCommandActionId | null): Record<string, unknown> {
   if (!actionId) return {};
   const text = commandText.trim();
+  if (actionId === "workspace_import") {
+    const path = extractPathFromText(text);
+    return path ? { path } : {};
+  }
+  if (actionId === "workspace_create") {
+    const workspaceName = extractWorkspaceCreateName(text);
+    const path = extractPathFromText(text);
+    const args: Record<string, unknown> = {};
+    if (workspaceName) args.workspace_name = workspaceName;
+    if (path) args.path = path;
+    return args;
+  }
+  if (actionId === "workspace_switch" || actionId === "workspace_set_default" || actionId === "workspace_open_folder" || actionId === "workspace_delete" || actionId === "workspace_resync") {
+    const workspaceRef = extractWorkspaceReference(text);
+    return workspaceRef ? { workspace_ref: workspaceRef } : {};
+  }
+  if (actionId === "workspace_rename") {
+    const renameArgs = extractWorkspaceRenameArgs(text);
+    const args: Record<string, unknown> = {};
+    if (renameArgs.workspaceRef) args.workspace_ref = renameArgs.workspaceRef;
+    if (renameArgs.newName) args.new_name = renameArgs.newName;
+    return args;
+  }
+  if (actionId === "workspace_set_location") {
+    const workspaceRef = extractWorkspaceReference(text);
+    const path = extractPathFromText(text);
+    const args: Record<string, unknown> = {};
+    if (workspaceRef) args.workspace_ref = workspaceRef;
+    if (path) args.path = path;
+    return args;
+  }
   if (actionId === "database_create_section") {
     const sectionName = extractDatabaseSectionName(text);
     const fields = extractDatabaseFields(text);
@@ -304,8 +352,49 @@ export function inferAiCommandArgs(commandText: string, actionId: AiCommandActio
     return group ? { group } : {};
   }
   if (actionId === "document_review") {
-    const goal = (text.match(/(?:for|with result|result)\s*(?:\:)?\s*(.+)$/i)?.[1] ?? text.match(/review\s+(?:documents?|files?)\s*(?:\:)?\s*(.+)$/i)?.[1] ?? "").trim();
-    return goal ? { goal } : {};
+    const rawGoal =
+      (text.match(/(?:for|with result|result)\s*(?:\:)?\s*(.+)$/i)?.[1] ??
+        text.match(/(?:review|analy[sz]e|summari[sz]e)\s+(?:documents?|files?|quick\s*apps?|html)\s*(?:\:)?\s*(.+)$/i)?.[1] ??
+        "").trim();
+    const goal = stripDocumentReviewOutputInstruction(rawGoal);
+    const outputFormat = extractDocumentReviewOutputFormat(text);
+    const reportTitle = extractDocumentReviewTitle(text);
+    const args: Record<string, unknown> = {};
+    if (goal) args.goal = goal;
+    if (outputFormat) args.output_format = outputFormat;
+    if (reportTitle) args.report_title = reportTitle;
+    return args;
+  }
+  if (actionId === "quick_app_add") {
+    const quotedValues = extractQuotedSegments(text);
+    const target = extractUrlFromText(text) || extractPathFromText(text) || quotedValues.find((value) => /^https?:\/\//i.test(value) || /^[a-zA-Z]:[\\/]/.test(value) || value.startsWith("/")) || "";
+    const label =
+      extractQuickAppLabel(text) ||
+      quotedValues.find((value) => value !== target) ||
+      "";
+    const scope = extractQuickAppScope(text.toLowerCase());
+    const requestedType =
+      text.includes("html quick app") || /\bhtml\b/.test(text)
+        ? "html"
+        : text.includes("local app")
+          ? "local_app"
+          : target
+            ? inferQuickAppTypeFromTarget(target)
+            : "";
+    const args: Record<string, unknown> = {};
+    if (label) args.label = label;
+    if (target) args.target = target;
+    if (scope) args.scope = scope;
+    if (requestedType) args.type = requestedType;
+    return args;
+  }
+  if (actionId === "quick_app_remove" || actionId === "quick_app_open") {
+    const itemRef = extractQuickAppReference(text) || extractQuickAppLabel(text) || extractQuotedSegments(text)[0] || "";
+    const scope = extractQuickAppScope(text.toLowerCase());
+    const args: Record<string, unknown> = {};
+    if (itemRef) args.item_ref = itemRef;
+    if (scope) args.scope = scope;
+    return args;
   }
   if (actionId === "ticket_draft_reply") {
     const instructions = (text.match(/(?:with|using|style|tone)\s*(?:\:)?\s*(.+)$/i)?.[1] ?? text.match(/reply(?:\s+to)?\s+ticket\s*(?:\:)?\s*(.+)$/i)?.[1] ?? "").trim();
@@ -348,6 +437,38 @@ export function sanitizeAiCommandArgs(actionId: AiCommandActionId, rawArgs: Reco
     }
     return [] as string[];
   };
+  if (actionId === "workspace_import") {
+    const path = getString("path", "folder_path", "workspace_path");
+    return path ? { path } : fallback;
+  }
+  if (actionId === "workspace_create") {
+    const args: Record<string, unknown> = {};
+    const workspaceName = getString("workspace_name", "workspaceName", "name", "title");
+    const path = getString("path", "folder_path", "workspace_path");
+    if (workspaceName) args.workspace_name = workspaceName;
+    if (path) args.path = path;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
+  if (actionId === "workspace_switch" || actionId === "workspace_set_default" || actionId === "workspace_open_folder" || actionId === "workspace_delete" || actionId === "workspace_resync") {
+    const workspaceRef = getString("workspace_ref", "workspaceRef", "workspace", "name", "target");
+    return workspaceRef ? { workspace_ref: workspaceRef } : fallback;
+  }
+  if (actionId === "workspace_rename") {
+    const args: Record<string, unknown> = {};
+    const workspaceRef = getString("workspace_ref", "workspaceRef", "workspace", "target");
+    const newName = getString("new_name", "newName", "name", "title");
+    if (workspaceRef) args.workspace_ref = workspaceRef;
+    if (newName) args.new_name = newName;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
+  if (actionId === "workspace_set_location") {
+    const args: Record<string, unknown> = {};
+    const workspaceRef = getString("workspace_ref", "workspaceRef", "workspace", "target");
+    const path = getString("path", "folder_path", "workspace_path");
+    if (workspaceRef) args.workspace_ref = workspaceRef;
+    if (path) args.path = path;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
   if (actionId === "database_create_section") {
     const args: Record<string, unknown> = {};
     const sectionName = getString("section_name", "sectionName", "name", "title", "section");
@@ -383,7 +504,36 @@ export function sanitizeAiCommandArgs(actionId: AiCommandActionId, rawArgs: Reco
   if (actionId === "wbs_generate") return getString("goal", "objective", "target", "topic") ? { goal: getString("goal", "objective", "target", "topic") } : fallback;
   if (actionId === "wbs_from_document") return getString("goal", "objective", "target", "topic", "focus") ? { goal: getString("goal", "objective", "target", "topic", "focus") } : fallback;
   if (actionId === "favorite_selected") return getString("group", "group_name", "favorite_group") ? { group: getString("group", "group_name", "favorite_group") } : fallback;
-  if (actionId === "document_review") return getString("goal", "objective", "focus") ? { goal: getString("goal", "objective", "focus") } : fallback;
+  if (actionId === "document_review") {
+    const args: Record<string, unknown> = {};
+    const goal = getString("goal", "objective", "focus");
+    const outputFormat = getString("output_format", "outputFormat", "format");
+    const reportTitle = getString("report_title", "reportTitle", "title");
+    if (goal) args.goal = goal;
+    if (outputFormat) args.output_format = outputFormat;
+    if (reportTitle) args.report_title = reportTitle;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
+  if (actionId === "quick_app_add") {
+    const args: Record<string, unknown> = {};
+    const label = getString("label", "name", "title");
+    const target = getString("target", "url", "path", "launch_target", "launchTarget");
+    const scope = getString("scope");
+    const type = getString("type", "item_type", "itemType");
+    if (label) args.label = label;
+    if (target) args.target = target;
+    if (scope) args.scope = scope;
+    if (type) args.type = type;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
+  if (actionId === "quick_app_remove" || actionId === "quick_app_open") {
+    const args: Record<string, unknown> = {};
+    const itemRef = getString("item_ref", "itemRef", "name", "label", "target");
+    const scope = getString("scope");
+    if (itemRef) args.item_ref = itemRef;
+    if (scope) args.scope = scope;
+    return Object.keys(args).length > 0 ? args : fallback;
+  }
   if (actionId === "ticket_draft_reply") return getString("instructions", "style", "tone", "guidance") ? { instructions: getString("instructions", "style", "tone", "guidance") } : fallback;
   return {};
 }

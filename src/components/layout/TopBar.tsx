@@ -18,6 +18,7 @@ interface TopBarProps {
   t: TranslateFn;
   hidden?: boolean;
   activeWorkspaceLabel?: string | null;
+  workspaceToolsInsetLeft?: number;
   workspaceMode: WorkspaceMode;
   workspaceFocusMode: WorkspaceFocusMode;
   documentationModeActive: boolean;
@@ -45,6 +46,7 @@ export function TopBar({
   t,
   hidden = false,
   activeWorkspaceLabel = null,
+  workspaceToolsInsetLeft = 180,
   workspaceMode,
   workspaceFocusMode,
   documentationModeActive,
@@ -81,6 +83,8 @@ export function TopBar({
   const workspaceLabel = activeWorkspaceLabel?.trim() ?? "";
   const showWorkspaceTools = workspaceSettingsEnabled || workspaceQuickAppsEnabled;
   const workspaceQuickAppsLabel = t("quick_apps.scope_function");
+  const workspaceToolsLeft = Math.max(168, Math.round(workspaceToolsInsetLeft));
+  const workspaceToolsRightInset = 176;
 
   const handleWindowFrameMouseDown = (event: ReactMouseEvent<HTMLElement>) => {
     if (!isDesktopRuntime) return;
@@ -120,12 +124,12 @@ export function TopBar({
         onDoubleClick={handleWindowFrameDoubleClick}
       />
 
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-[211] flex h-14 items-center justify-between px-4">
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-[211] h-14">
         <button
           type="button"
           data-ode-window-drag-ignore="true"
           data-tauri-drag-region="false"
-          className={`pointer-events-auto inline-flex items-center gap-3 rounded-full px-2 py-1.5 text-left transition ${
+          className={`pointer-events-auto absolute left-4 top-1/2 inline-flex -translate-y-1/2 items-center gap-3 rounded-full px-2 py-1.5 text-left transition ${
             brandClickable
               ? "cursor-pointer hover:bg-[rgba(7,36,57,0.42)]"
               : "cursor-default"
@@ -143,86 +147,89 @@ export function TopBar({
           <span className="text-[1.08rem] font-semibold tracking-[0.01em] text-[var(--ode-text)]">ODETool Pro</span>
         </button>
 
-        <div className="pointer-events-auto flex items-center gap-2.5" data-ode-window-drag-ignore="true">
-          {showWorkspaceTools ? (
-            <>
-              {workspaceLabel ? (
-                <span
-                  role={workspaceSettingsEnabled ? "button" : undefined}
-                  tabIndex={workspaceSettingsEnabled ? 0 : undefined}
-                  className={`inline-flex max-w-[220px] items-center truncate rounded-full px-3 py-1.5 text-[0.96rem] font-medium text-[var(--ode-text)] ${
-                    workspaceSettingsEnabled
-                      ? "cursor-pointer bg-[rgba(7,36,57,0.28)] transition hover:bg-[rgba(10,50,77,0.38)]"
-                      : ""
-                  }`}
-                  onDoubleClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openWorkspaceSwitcher();
-                  }}
-                  onKeyDown={handleWorkspaceLabelKeyDown}
-                  aria-label={workspaceLabel}
+        {showWorkspaceTools ? (
+          <div
+            className="pointer-events-auto absolute top-1/2 flex min-w-0 -translate-y-1/2 items-center gap-2.5"
+            data-ode-window-drag-ignore="true"
+            style={{ left: `${workspaceToolsLeft}px`, right: `${workspaceToolsRightInset}px` }}
+          >
+            {workspaceLabel ? (
+              <span
+                role={workspaceSettingsEnabled ? "button" : undefined}
+                tabIndex={workspaceSettingsEnabled ? 0 : undefined}
+                className={`inline-flex max-w-[220px] shrink-0 items-center truncate rounded-full px-3 py-1.5 text-[0.96rem] font-medium text-[var(--ode-text)] ${
+                  workspaceSettingsEnabled
+                    ? "cursor-pointer bg-[rgba(7,36,57,0.28)] transition hover:bg-[rgba(10,50,77,0.38)]"
+                    : ""
+                }`}
+                onDoubleClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openWorkspaceSwitcher();
+                }}
+                onKeyDown={handleWorkspaceLabelKeyDown}
+                aria-label={workspaceLabel}
+              >
+                {workspaceLabel}
+              </span>
+            ) : null}
+
+            {workspaceSettingsEnabled ? (
+              <OdeTooltip label={t("project.settings_title")} side="bottom" align="start">
+                <button
+                  type="button"
+                  data-ode-window-drag-ignore="true"
+                  data-tauri-drag-region="false"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[rgba(90,162,204,0.24)] bg-[rgba(7,36,57,0.32)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.42)] hover:text-[var(--ode-text)]"
+                  onClick={openWorkspaceSwitcher}
+                  aria-label={t("project.settings_title")}
+                  disabled={hasBlockingOverlayOpen}
                 >
-                  {workspaceLabel}
-                </span>
-              ) : null}
+                  <SettingsGlyphSmall />
+                </button>
+              </OdeTooltip>
+            ) : null}
 
-              {workspaceSettingsEnabled ? (
-                <OdeTooltip label={t("project.settings_title")} side="bottom" align="end">
-                  <button
-                    type="button"
-                    data-ode-window-drag-ignore="true"
-                    data-tauri-drag-region="false"
-                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[rgba(90,162,204,0.24)] bg-[rgba(7,36,57,0.32)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.42)] hover:text-[var(--ode-text)]"
-                    onClick={openWorkspaceSwitcher}
-                    aria-label={t("project.settings_title")}
-                    disabled={hasBlockingOverlayOpen}
-                  >
-                    <SettingsGlyphSmall />
-                  </button>
-                </OdeTooltip>
-              ) : null}
-
-              {workspaceQuickAppsEnabled ? (
-                <div className="flex max-w-[320px] items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1">
-                  {workspaceQuickApps.map((item) => (
-                    <OdeTooltip key={item.id} label={item.label || workspaceQuickAppsLabel} side="bottom">
-                      <button
-                        type="button"
-                        data-ode-window-drag-ignore="true"
-                        data-tauri-drag-region="false"
-                        className="group inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-transparent p-0 text-[var(--ode-text)] transition duration-150 hover:-translate-y-[1px] hover:bg-[rgba(18,75,108,0.26)]"
-                        onClick={() => onLaunchWorkspaceQuickApp?.(item)}
-                        aria-label={t("quick_apps.open_item", { name: item.label })}
-                        disabled={hasBlockingOverlayOpen}
-                      >
-                        <QuickAppIcon item={item} variant="dock" />
-                      </button>
-                    </OdeTooltip>
-                  ))}
-                  <OdeTooltip
-                    label={workspaceQuickApps.length > 0 ? t("quick_apps.manage") : workspaceQuickAppsLabel}
-                    side="bottom"
-                    align="end"
-                  >
+            {workspaceQuickAppsEnabled ? (
+              <div className="flex max-w-[320px] min-w-0 items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1">
+                {workspaceQuickApps.map((item) => (
+                  <OdeTooltip key={item.id} label={item.label || workspaceQuickAppsLabel} side="bottom">
                     <button
                       type="button"
                       data-ode-window-drag-ignore="true"
                       data-tauri-drag-region="false"
-                      className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-[rgba(7,36,57,0.28)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.38)] hover:text-[var(--ode-text)]"
-                      onClick={() => onManageWorkspaceQuickApps?.()}
-                      aria-label={workspaceQuickApps.length > 0 ? t("quick_apps.manage") : workspaceQuickAppsLabel}
+                      className="group inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-transparent p-0 text-[var(--ode-text)] transition duration-150 hover:-translate-y-[1px] hover:bg-[rgba(18,75,108,0.26)]"
+                      onClick={() => onLaunchWorkspaceQuickApp?.(item)}
+                      aria-label={t("quick_apps.open_item", { name: item.label })}
                       disabled={hasBlockingOverlayOpen}
                     >
-                      {workspaceQuickApps.length > 0 ? <EditGlyphSmall /> : <PlusGlyphSmall />}
+                      <QuickAppIcon item={item} variant="dock" />
                     </button>
                   </OdeTooltip>
-                </div>
-              ) : null}
-            </>
-          ) : null}
+                ))}
+                <OdeTooltip
+                  label={workspaceQuickApps.length > 0 ? t("quick_apps.manage") : workspaceQuickAppsLabel}
+                  side="bottom"
+                  align="start"
+                >
+                  <button
+                    type="button"
+                    data-ode-window-drag-ignore="true"
+                    data-tauri-drag-region="false"
+                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-[rgba(7,36,57,0.28)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.38)] hover:text-[var(--ode-text)]"
+                    onClick={() => onManageWorkspaceQuickApps?.()}
+                    aria-label={workspaceQuickApps.length > 0 ? t("quick_apps.manage") : workspaceQuickAppsLabel}
+                    disabled={hasBlockingOverlayOpen}
+                  >
+                    {workspaceQuickApps.length > 0 ? <EditGlyphSmall /> : <PlusGlyphSmall />}
+                  </button>
+                </OdeTooltip>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
-          <div className="flex">
+        <div className="pointer-events-auto absolute right-4 top-0 flex h-14 items-center" data-ode-window-drag-ignore="true">
           <div
             data-ode-window-drag-ignore="true"
             className="pointer-events-auto flex items-stretch overflow-hidden rounded-bl-[16px] border border-t-0 border-r-0 border-[rgba(67,142,188,0.26)] bg-[linear-gradient(180deg,rgba(5,25,44,0.84),rgba(2,15,28,0.74))] shadow-[0_14px_32px_rgba(0,0,0,0.26)] backdrop-blur-[14px]"
@@ -236,7 +243,6 @@ export function TopBar({
               onWindowToggleMaximize={onWindowToggleMaximize}
               onWindowClose={onWindowClose}
             />
-          </div>
           </div>
         </div>
       </div>

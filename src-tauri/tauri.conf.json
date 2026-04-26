@@ -27,6 +27,14 @@
       "capabilities": [
         "default"
       ],
+      "assetProtocol": {
+        "enable": true,
+        "scope": [
+          "$HOME/**",
+          "$APPDATA/**",
+          "$APPLOCALDATA/**"
+        ]
+      },
       "csp": null
     }
   },

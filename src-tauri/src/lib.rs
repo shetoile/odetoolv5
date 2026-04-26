@@ -56,6 +56,7 @@ const MIRROR_NODE_FILES_DIR_NAME: &str = "node_files";
 const MIRROR_SHARE_PACKAGES_DIR_NAME: &str = "share_packages";
 const POWERPOINT_PREVIEW_DIR_NAME: &str = "powerpoint_previews";
 const QUICK_APP_HTML_INSTANCES_DIR_NAME: &str = "quick_app_html_instances";
+const QUICK_APP_HTML_SNAPSHOT_STORE_FILE: &str = "quick_app_html_snapshots.json";
 const USER_ACCOUNT_STORE_FILE: &str = "user_accounts.json";
 const ODE_CONTEXT_FILE_NAME: &str = ".ode-context";
 const MIRROR_PROJECTION_INDEX_FILE: &str = ".ode_projection_index.json";
@@ -69,6 +70,7 @@ const UPDATE_NODE_DESCRIPTION_QUERY: &str =
 pub(crate) const AI_REBUILD_DISABLED_MESSAGE: &str =
     "Legacy AI is disabled while ODETool AI is being rebuilt.";
 const USER_ACCOUNT_STORE_VERSION: u32 = 2;
+const QUICK_APP_HTML_SNAPSHOT_STORE_VERSION: u32 = 1;
 const USER_ACCOUNT_REMEMBER_SESSION_MIN_MS: i64 = 60 * 60 * 1000;
 const USER_ACCOUNT_REMEMBER_SESSION_MAX_MS: i64 = 5 * 365 * 24 * 60 * 60 * 1000;
 
@@ -101,6 +103,55 @@ struct QuickAppUrlPreview {
     excerpt: Option<String>,
     content_type: Option<String>,
     reachable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickAppHtmlSnapshotRecord {
+    namespace: String,
+    scope: String,
+    owner_id: Option<String>,
+    owner_label: Option<String>,
+    quick_app_id: String,
+    title: Option<String>,
+    current_url: Option<String>,
+    #[serde(default)]
+    entries: BTreeMap<String, String>,
+    #[serde(default)]
+    field_entries: BTreeMap<String, String>,
+    document_text: Option<String>,
+    updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct QuickAppHtmlSnapshotStore {
+    version: u32,
+    records: Vec<QuickAppHtmlSnapshotRecord>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncQuickAppHtmlSnapshotInput {
+    namespace: String,
+    scope: String,
+    owner_id: Option<String>,
+    owner_label: Option<String>,
+    quick_app_id: String,
+    title: Option<String>,
+    current_url: Option<String>,
+    entries: BTreeMap<String, String>,
+    field_entries: BTreeMap<String, String>,
+    document_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct QuickAppHtmlSnapshotSeed {
+    scope: String,
+    owner_id: Option<String>,
+    owner_label: Option<String>,
+    quick_app_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -687,6 +738,10 @@ fn get_user_account_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String
     Ok(ensure_internal_state_root_exists(app)?.join(USER_ACCOUNT_STORE_FILE))
 }
 
+fn get_quick_app_html_snapshot_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(ensure_internal_state_root_exists(app)?.join(QUICK_APP_HTML_SNAPSHOT_STORE_FILE))
+}
+
 fn read_user_account_store(app: &tauri::AppHandle) -> Result<UserAccountStore, String> {
     let path = get_user_account_store_path(app)?;
     if !path.exists() {
@@ -713,6 +768,80 @@ fn write_user_account_store(app: &tauri::AppHandle, store: &UserAccountStore) ->
         .map_err(|err| format!("failed to encode user account store: {err}"))?;
     fs::write(&path, payload)
         .map_err(|err| format!("failed to write user account store {:?}: {err}", path))
+}
+
+fn read_quick_app_html_snapshot_store(
+    app: &tauri::AppHandle,
+) -> Result<QuickAppHtmlSnapshotStore, String> {
+    let path = get_quick_app_html_snapshot_store_path(app)?;
+    if !path.exists() {
+        return Ok(QuickAppHtmlSnapshotStore {
+            version: QUICK_APP_HTML_SNAPSHOT_STORE_VERSION,
+            records: Vec::new(),
+        });
+    }
+
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read quick app snapshot store {:?}: {err}", path))?;
+    if raw.trim().is_empty() {
+        return Ok(QuickAppHtmlSnapshotStore {
+            version: QUICK_APP_HTML_SNAPSHOT_STORE_VERSION,
+            records: Vec::new(),
+        });
+    }
+
+    let mut store: QuickAppHtmlSnapshotStore = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to decode quick app snapshot store {:?}: {err}", path))?;
+    if store.version == 0 {
+        store.version = QUICK_APP_HTML_SNAPSHOT_STORE_VERSION;
+    }
+    Ok(store)
+}
+
+fn write_quick_app_html_snapshot_store(
+    app: &tauri::AppHandle,
+    store: &QuickAppHtmlSnapshotStore,
+) -> Result<(), String> {
+    let path = get_quick_app_html_snapshot_store_path(app)?;
+    let payload = serde_json::to_string_pretty(store)
+        .map_err(|err| format!("failed to encode quick app snapshot store: {err}"))?;
+    fs::write(&path, payload)
+        .map_err(|err| format!("failed to write quick app snapshot store {:?}: {err}", path))
+}
+
+fn sanitize_quick_app_snapshot_optional_text(value: Option<String>) -> Option<String> {
+    value
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+}
+
+fn normalize_quick_app_snapshot_entries(
+    entries: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut normalized = BTreeMap::new();
+    for (key, value) in entries {
+        let trimmed_key = key.trim();
+        if trimmed_key.is_empty() {
+            continue;
+        }
+        normalized.insert(trimmed_key.to_string(), value);
+    }
+    normalized
+}
+
+fn sanitize_quick_app_snapshot_document_text(value: Option<String>) -> Option<String> {
+    const QUICK_APP_HTML_SNAPSHOT_TEXT_LIMIT: usize = 16_000;
+    value
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let mut truncated = entry;
+            if truncated.len() > QUICK_APP_HTML_SNAPSHOT_TEXT_LIMIT {
+                truncated.truncate(QUICK_APP_HTML_SNAPSHOT_TEXT_LIMIT);
+            }
+            truncated
+        })
+        .filter(|entry| !entry.is_empty())
 }
 
 fn sanitize_display_name(value: &str) -> Result<String, String> {
@@ -6727,6 +6856,66 @@ async fn extract_document_text(
 }
 
 #[tauri::command]
+async fn sync_quick_app_html_storage_snapshot(
+    app: tauri::AppHandle,
+    payload: SyncQuickAppHtmlSnapshotInput,
+) -> Result<(), String> {
+    let namespace = payload.namespace.trim().to_string();
+    let scope = payload.scope.trim().to_string();
+    let quick_app_id = payload.quick_app_id.trim().to_string();
+    if namespace.is_empty() || scope.is_empty() || quick_app_id.is_empty() {
+        return Ok(());
+    }
+
+    let owner_id = sanitize_quick_app_snapshot_optional_text(payload.owner_id);
+    let owner_label = sanitize_quick_app_snapshot_optional_text(payload.owner_label);
+    let title = sanitize_quick_app_snapshot_optional_text(payload.title);
+    let current_url = sanitize_quick_app_snapshot_optional_text(payload.current_url);
+    let entries = normalize_quick_app_snapshot_entries(payload.entries);
+    let field_entries = normalize_quick_app_snapshot_entries(payload.field_entries);
+    let document_text = sanitize_quick_app_snapshot_document_text(payload.document_text);
+
+    let mut store = read_quick_app_html_snapshot_store(&app)?;
+    store.version = QUICK_APP_HTML_SNAPSHOT_STORE_VERSION;
+    store.records.retain(|record| record.namespace != namespace);
+
+    if !entries.is_empty() || !field_entries.is_empty() || document_text.is_some() {
+        store.records.push(QuickAppHtmlSnapshotRecord {
+            namespace,
+            scope,
+            owner_id,
+            owner_label,
+            quick_app_id,
+            title,
+            current_url,
+            entries,
+            field_entries,
+            document_text,
+            updated_at: now_ms(),
+        });
+    }
+
+    write_quick_app_html_snapshot_store(&app, &store)
+}
+
+#[tauri::command]
+async fn get_quick_app_html_storage_snapshot(
+    app: tauri::AppHandle,
+    namespace: String,
+) -> Result<Option<QuickAppHtmlSnapshotRecord>, String> {
+    let normalized_namespace = namespace.trim();
+    if normalized_namespace.is_empty() {
+        return Ok(None);
+    }
+
+    let store = read_quick_app_html_snapshot_store(&app)?;
+    Ok(store
+        .records
+        .into_iter()
+        .find(|record| record.namespace == normalized_namespace))
+}
+
+#[tauri::command]
 async fn fetch_quick_app_url_preview(url: String) -> Result<Option<QuickAppUrlPreview>, String> {
     let trimmed_url = url.trim();
     if trimmed_url.is_empty() {
@@ -6816,7 +7005,7 @@ async fn fetch_quick_app_url_preview(url: String) -> Result<Option<QuickAppUrlPr
     } else {
         limited_body
     };
-    let excerpt = trim_preview_text(&excerpt_source, 1200);
+    let excerpt = trim_preview_text(&excerpt_source, 3000);
 
     Ok(Some(QuickAppUrlPreview {
         url: trimmed_url.to_string(),
@@ -10111,11 +10300,36 @@ fn inject_quick_app_html_base_href(raw: &str, template_base_href: Option<&str>) 
     format!("<head>\n{injection}\n</head>\n{raw}")
 }
 
-fn inject_quick_app_html_scoped_storage(raw: &str, storage_namespace: Option<&str>) -> String {
+fn inject_quick_app_html_scoped_storage(
+    raw: &str,
+    storage_namespace: Option<&str>,
+    snapshot_seed: Option<&QuickAppHtmlSnapshotSeed>,
+) -> String {
     let Some(namespace) = storage_namespace.map(str::trim).filter(|value| !value.is_empty()) else {
         return raw.to_string();
     };
     let Ok(namespace_json) = serde_json::to_string(namespace) else {
+        return raw.to_string();
+    };
+    let seeded_scope = snapshot_seed
+        .map(|seed| seed.scope.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let seeded_owner_id = snapshot_seed.and_then(|seed| sanitize_quick_app_snapshot_optional_text(seed.owner_id.clone()));
+    let seeded_owner_label =
+        snapshot_seed.and_then(|seed| sanitize_quick_app_snapshot_optional_text(seed.owner_label.clone()));
+    let seeded_quick_app_id = snapshot_seed
+        .map(|seed| seed.quick_app_id.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let Ok(seeded_scope_json) = serde_json::to_string(&seeded_scope) else {
+        return raw.to_string();
+    };
+    let Ok(seeded_owner_id_json) = serde_json::to_string(&seeded_owner_id) else {
+        return raw.to_string();
+    };
+    let Ok(seeded_owner_label_json) = serde_json::to_string(&seeded_owner_label) else {
+        return raw.to_string();
+    };
+    let Ok(seeded_quick_app_id_json) = serde_json::to_string(&seeded_quick_app_id) else {
         return raw.to_string();
     };
 
@@ -10125,57 +10339,280 @@ fn inject_quick_app_html_scoped_storage(raw: &str, storage_namespace: Option<&st
   const namespace = {namespace_json};
   if (!namespace) return;
   const prefix = namespace + "::";
-  const storageRef = window.localStorage;
-  if (!storageRef) return;
-  const storageProto = Object.getPrototypeOf(storageRef);
-  if (!storageProto) return;
+  const seededScope = {seeded_scope_json};
+  const seededOwnerId = {seeded_owner_id_json};
+  const seededOwnerLabel = {seeded_owner_label_json};
+  const seededQuickAppId = {seeded_quick_app_id_json};
+  let storageRef = null;
+  try {{
+    storageRef = window.localStorage;
+  }} catch (_error) {{
+    storageRef = null;
+  }}
+  const storageProto = storageRef ? Object.getPrototypeOf(storageRef) : null;
   if (window.__ODE_QUICK_APP_SCOPED_STORAGE__ === namespace) return;
   window.__ODE_QUICK_APP_SCOPED_STORAGE__ = namespace;
+  const params = new URLSearchParams(window.location.search || "");
+  const scope = String(seededScope || params.get("ode_scope") || "").trim();
+  const ownerId = String(seededOwnerId || params.get("ode_owner_id") || "").trim();
+  const ownerLabel = String(
+    seededOwnerLabel ||
+      params.get("ode_owner_label") ||
+      params.get("ode_scope_label") ||
+      params.get("chantier") ||
+      ""
+  ).trim();
+  const quickAppId = String(seededQuickAppId || params.get("ode_quick_app_id") || "").trim();
+  const normalizeSnapshotText = (value) => {{
+    return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  }};
+  const truncateSnapshotText = (value, limit = 16000) => {{
+    const normalized = normalizeSnapshotText(value);
+    return normalized.length > limit ? normalized.slice(0, limit).trim() : normalized;
+  }};
 
-  const originalGetItem = storageProto.getItem;
-  const originalSetItem = storageProto.setItem;
-  const originalRemoveItem = storageProto.removeItem;
-  const originalClear = storageProto.clear;
-  const originalKey = storageProto.key;
-  const originalLengthDescriptor = Object.getOwnPropertyDescriptor(storageProto, "length");
+  const invokeTauri = (command, args) => {{
+    try {{
+      if (window.__TAURI__ && window.__TAURI__.core && typeof window.__TAURI__.core.invoke === "function") {{
+        return window.__TAURI__.core.invoke(command, args);
+      }}
+    }} catch (_error) {{
+      // Fall through to raw internals.
+    }}
+    try {{
+      if (window.__TAURI__ && typeof window.__TAURI__.invoke === "function") {{
+        return window.__TAURI__.invoke(command, args);
+      }}
+    }} catch (_error) {{
+      // Fall through to raw internals.
+    }}
+    try {{
+      if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === "function") {{
+        return window.__TAURI_INTERNALS__.invoke(command, args);
+      }}
+    }} catch (_error) {{
+      // Fall through to rejected promise below.
+    }}
+    return Promise.reject(new Error("Tauri invoke unavailable."));
+  }};
+
+  const originalGetItem = storageProto && typeof storageProto.getItem === "function" ? storageProto.getItem : null;
+  const originalSetItem = storageProto && typeof storageProto.setItem === "function" ? storageProto.setItem : null;
+  const originalRemoveItem = storageProto && typeof storageProto.removeItem === "function" ? storageProto.removeItem : null;
+  const originalClear = storageProto && typeof storageProto.clear === "function" ? storageProto.clear : null;
+  const originalKey = storageProto && typeof storageProto.key === "function" ? storageProto.key : null;
+  const originalLengthDescriptor = storageProto ? Object.getOwnPropertyDescriptor(storageProto, "length") : null;
   const mapKey = (key) => prefix + String(key ?? "");
-  const isLocalStorage = (target) => target === storageRef;
+  const isLocalStorage = (target) => Boolean(storageRef) && target === storageRef;
+  const readRawStorageValue = (rawKey) => {{
+    if (!storageRef) return null;
+    try {{
+      if (typeof originalGetItem === "function") {{
+        return originalGetItem.call(storageRef, rawKey);
+      }}
+      const directValue = storageRef[rawKey];
+      return typeof directValue === "string" ? directValue : null;
+    }} catch (_error) {{
+      return null;
+    }}
+  }};
   const collectScopedKeys = () => {{
-    if (!originalLengthDescriptor || typeof originalLengthDescriptor.get !== "function") return [];
-    const totalLength = Number(originalLengthDescriptor.get.call(storageRef)) || 0;
+    if (!storageRef) return [];
+    if (originalLengthDescriptor && typeof originalLengthDescriptor.get === "function" && typeof originalKey === "function") {{
+      const totalLength = Number(originalLengthDescriptor.get.call(storageRef)) || 0;
+      const keys = [];
+      for (let index = 0; index < totalLength; index += 1) {{
+        const rawKey = originalKey.call(storageRef, index);
+        if (typeof rawKey === "string" && rawKey.startsWith(prefix)) {{
+          keys.push(rawKey);
+        }}
+      }}
+      return keys;
+    }}
     const keys = [];
-    for (let index = 0; index < totalLength; index += 1) {{
-      const rawKey = originalKey.call(storageRef, index);
+    Object.keys(storageRef).forEach((rawKey) => {{
       if (typeof rawKey === "string" && rawKey.startsWith(prefix)) {{
         keys.push(rawKey);
       }}
-    }}
+    }});
     return keys;
   }};
+  const collectScopedEntries = () => {{
+    const entries = {{}};
+    collectScopedKeys().forEach((rawKey) => {{
+      const scopedKey = rawKey.slice(prefix.length);
+      const value = readRawStorageValue(rawKey);
+      if (typeof scopedKey === "string" && scopedKey && typeof value === "string") {{
+        entries[scopedKey] = value;
+      }}
+    }});
+    return entries;
+  }};
+  const resolveFieldLabel = (element) => {{
+    if (!element || typeof element !== "object") return "";
+    const directLabel = typeof element.getAttribute === "function"
+      ? normalizeSnapshotText(
+          element.getAttribute("aria-label") ||
+          element.getAttribute("data-label") ||
+          element.getAttribute("placeholder")
+        )
+      : "";
+    if (directLabel) return directLabel;
+    const labels = Array.from(element.labels || [])
+      .map((label) => normalizeSnapshotText(label.textContent || ""))
+      .filter(Boolean);
+    if (labels.length > 0) return labels.join(" / ");
+    const identifier = normalizeSnapshotText(element.name || element.id || "");
+    if (identifier) return identifier;
+    const wrappedLabel = normalizeSnapshotText(element.closest && element.closest("label") ? element.closest("label").textContent || "" : "");
+    if (wrappedLabel) return wrappedLabel;
+    return normalizeSnapshotText(element.tagName || "field");
+  }};
+  const readFieldValue = (element) => {{
+    if (!element || typeof element !== "object") return "";
+    const tagName = String(element.tagName || "").toLowerCase();
+    const type = String(element.type || "").toLowerCase();
+    if (type === "password" || type === "hidden") return "";
+    if (type === "checkbox") {{
+      return element.checked ? normalizeSnapshotText(element.value || "checked") : "";
+    }}
+    if (type === "radio") {{
+      return element.checked ? normalizeSnapshotText(element.value || "selected") : "";
+    }}
+    if (tagName === "select" && element.multiple) {{
+      return Array.from(element.selectedOptions || [])
+        .map((option) => normalizeSnapshotText(option.textContent || option.value || ""))
+        .filter(Boolean)
+        .join(", ");
+    }}
+    if (typeof element.value === "string") {{
+      return normalizeSnapshotText(element.value);
+    }}
+    if (element.isContentEditable) {{
+      return normalizeSnapshotText(element.innerText || element.textContent || "");
+    }}
+    return "";
+  }};
+  const collectFieldEntries = () => {{
+    const fields = {{}};
+    const elements = Array.from(document.querySelectorAll("input, textarea, select, [contenteditable='true']"));
+    elements.forEach((element, index) => {{
+      const label = resolveFieldLabel(element);
+      const value = readFieldValue(element);
+      if (!label || !value) return;
+      const baseKey = label;
+      let key = baseKey;
+      let suffix = 2;
+      while (Object.prototype.hasOwnProperty.call(fields, key) && fields[key] !== value) {{
+        key = `${{baseKey}} (${{suffix}})`;
+        suffix += 1;
+      }}
+      fields[key] = value;
+    }});
+    return fields;
+  }};
+  const collectDocumentText = () => {{
+    return truncateSnapshotText(
+      (document.body && (document.body.innerText || document.body.textContent)) || document.documentElement?.innerText || ""
+    );
+  }};
+  let syncTimer = null;
+  let retryTimer = null;
+  let lastSuccessfulSyncSignature = "";
+  let syncInFlight = null;
+  const scheduleRetry = (delayMs = 650) => {{
+    if (retryTimer !== null) {{
+      window.clearTimeout(retryTimer);
+    }}
+    retryTimer = window.setTimeout(() => {{
+      retryTimer = null;
+      scheduleSync();
+    }}, delayMs);
+  }};
+  const syncSnapshot = () => {{
+    if (!namespace || !scope || !quickAppId) return Promise.resolve();
+    const payload = {{
+      namespace,
+      scope,
+      ownerId: ownerId || null,
+      ownerLabel: ownerLabel || null,
+      quickAppId,
+      title: document.title || null,
+      currentUrl: window.location.href || null,
+      entries: collectScopedEntries(),
+      fieldEntries: collectFieldEntries(),
+      documentText: collectDocumentText() || null
+    }};
+    const signature = JSON.stringify(payload);
+    if (signature === lastSuccessfulSyncSignature) return Promise.resolve();
+    if (syncInFlight) return syncInFlight;
+    const attempt = invokeTauri("sync_quick_app_html_storage_snapshot", {{
+      payload
+    }})
+      .then(() => {{
+        lastSuccessfulSyncSignature = signature;
+        return null;
+      }})
+      .catch(() => {{
+        scheduleRetry();
+        return null;
+      }})
+      .finally(() => {{
+        if (syncInFlight === attempt) {{
+          syncInFlight = null;
+        }}
+      }});
+    syncInFlight = attempt;
+    return attempt;
+  }};
+  const scheduleSync = () => {{
+    if (syncTimer !== null) {{
+      window.clearTimeout(syncTimer);
+    }}
+    syncTimer = window.setTimeout(() => {{
+      syncTimer = null;
+      void syncSnapshot();
+    }}, 180);
+  }};
 
-  storageProto.getItem = function(key) {{
-    if (!isLocalStorage(this)) return originalGetItem.call(this, key);
-    return originalGetItem.call(this, mapKey(key));
-  }};
-  storageProto.setItem = function(key, value) {{
-    if (!isLocalStorage(this)) return originalSetItem.call(this, key, value);
-    return originalSetItem.call(this, mapKey(key), value);
-  }};
-  storageProto.removeItem = function(key) {{
-    if (!isLocalStorage(this)) return originalRemoveItem.call(this, key);
-    return originalRemoveItem.call(this, mapKey(key));
-  }};
-  storageProto.clear = function() {{
-    if (!isLocalStorage(this)) return originalClear.call(this);
-    collectScopedKeys().forEach((key) => originalRemoveItem.call(storageRef, key));
-  }};
-  storageProto.key = function(index) {{
-    if (!isLocalStorage(this)) return originalKey.call(this, index);
-    const scopedKeys = collectScopedKeys();
-    const scopedKey = scopedKeys[index];
-    return typeof scopedKey === "string" ? scopedKey.slice(prefix.length) : null;
-  }};
-  if (originalLengthDescriptor && typeof originalLengthDescriptor.get === "function") {{
+  if (storageProto && storageRef && typeof originalGetItem === "function") {{
+    storageProto.getItem = function(key) {{
+      if (!isLocalStorage(this)) return originalGetItem.call(this, key);
+      return originalGetItem.call(this, mapKey(key));
+    }};
+  }}
+  if (storageProto && storageRef && typeof originalSetItem === "function") {{
+    storageProto.setItem = function(key, value) {{
+      if (!isLocalStorage(this)) return originalSetItem.call(this, key, value);
+      const result = originalSetItem.call(this, mapKey(key), value);
+      scheduleSync();
+      return result;
+    }};
+  }}
+  if (storageProto && storageRef && typeof originalRemoveItem === "function") {{
+    storageProto.removeItem = function(key) {{
+      if (!isLocalStorage(this)) return originalRemoveItem.call(this, key);
+      const result = originalRemoveItem.call(this, mapKey(key));
+      scheduleSync();
+      return result;
+    }};
+  }}
+  if (storageProto && storageRef && typeof originalClear === "function" && typeof originalRemoveItem === "function") {{
+    storageProto.clear = function() {{
+      if (!isLocalStorage(this)) return originalClear.call(this);
+      collectScopedKeys().forEach((key) => originalRemoveItem.call(storageRef, key));
+      scheduleSync();
+    }};
+  }}
+  if (storageProto && storageRef && typeof originalKey === "function") {{
+    storageProto.key = function(index) {{
+      if (!isLocalStorage(this)) return originalKey.call(this, index);
+      const scopedKeys = collectScopedKeys();
+      const scopedKey = scopedKeys[index];
+      return typeof scopedKey === "string" ? scopedKey.slice(prefix.length) : null;
+    }};
+  }}
+  if (storageProto && storageRef && originalLengthDescriptor && typeof originalLengthDescriptor.get === "function") {{
     try {{
       Object.defineProperty(storageProto, "length", {{
         configurable: true,
@@ -10189,6 +10626,32 @@ fn inject_quick_app_html_scoped_storage(raw: &str, storage_namespace: Option<&st
       // Ignore environments that disallow overriding Storage.length.
     }}
   }}
+  window.addEventListener("pagehide", () => {{
+    void syncSnapshot();
+  }});
+  window.addEventListener("beforeunload", () => {{
+    void syncSnapshot();
+  }});
+  if (document.readyState === "loading") {{
+    document.addEventListener("DOMContentLoaded", scheduleSync, {{ once: true }});
+  }} else {{
+    scheduleSync();
+  }}
+  document.addEventListener("input", scheduleSync, true);
+  document.addEventListener("change", scheduleSync, true);
+  document.addEventListener("click", scheduleSync, true);
+  if (window.MutationObserver && document.documentElement) {{
+    const observer = new MutationObserver(() => {{
+      scheduleSync();
+    }});
+    observer.observe(document.documentElement, {{
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true
+    }});
+  }}
+  window.setTimeout(scheduleSync, 0);
 }})();
 </script>"#
     );
@@ -10223,6 +10686,7 @@ fn prepare_quick_app_html_instance(
     instance_file_name: String,
     template_base_href: Option<String>,
     storage_namespace: Option<String>,
+    snapshot_seed: Option<QuickAppHtmlSnapshotSeed>,
 ) -> Result<String, String> {
     let trimmed = template_path.trim().trim_matches('"');
     if trimmed.is_empty() {
@@ -10252,7 +10716,8 @@ fn prepare_quick_app_html_instance(
     let raw_html =
         fs::read_to_string(&template).map_err(|err| format!("failed to read html template {:?}: {err}", template))?;
     let with_base_href = inject_quick_app_html_base_href(&raw_html, template_base_href.as_deref());
-    let materialized_html = inject_quick_app_html_scoped_storage(&with_base_href, storage_namespace.as_deref());
+    let materialized_html =
+        inject_quick_app_html_scoped_storage(&with_base_href, storage_namespace.as_deref(), snapshot_seed.as_ref());
     let sibling_instance = parent_dir.join(&sanitized_file_name);
 
     if sibling_instance != template {
@@ -10634,6 +11099,8 @@ pub fn run() {
             import_node_package,
             open_node_file,
             extract_document_text,
+            sync_quick_app_html_storage_snapshot,
+            get_quick_app_html_storage_snapshot,
             fetch_quick_app_url_preview,
             reparse_node_document_content,
             open_node_file_with,

@@ -135,6 +135,23 @@ export function useKeyboardShortcuts({
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
     };
 
+    const hasSelectedDomText = (): boolean => {
+      if (typeof window.getSelection !== "function") return false;
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0 || selection.isCollapsed) return false;
+      const selectedText = selection.toString().replace(/\s+/g, " ").trim();
+      if (!selectedText) return false;
+      const anchorElement =
+        selection.anchorNode instanceof HTMLElement
+          ? selection.anchorNode
+          : selection.anchorNode?.parentElement ?? null;
+      const focusElement =
+        selection.focusNode instanceof HTMLElement
+          ? selection.focusNode
+          : selection.focusNode?.parentElement ?? null;
+      return Boolean(anchorElement || focusElement);
+    };
+
     const onKeyDown = (event: KeyboardEvent) => {
       if (hasBlockingOverlayOpen || contextMenuOpen) return;
       if (event.defaultPrevented) return;
@@ -221,6 +238,9 @@ export function useKeyboardShortcuts({
         if (linearSurface !== "tree" || workspaceMode === "timeline") return;
         void onBrowseTreeNode(nodeId);
       };
+      if (hasModifier && (keyLower === "c" || keyLower === "x") && hasSelectedDomText()) {
+        return;
+      }
       const resolveTreeSelectAllIds = (): string[] => {
         if (displayedTreeRows.length === 0) return [];
 

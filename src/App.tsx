@@ -10,7 +10,7 @@ import {
   useState
 } from "react";
 import { flushSync } from "react-dom";
-import { isTauri } from "@tauri-apps/api/core";
+import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getAllWindows, getCurrentWindow, type Window as TauriWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -456,12 +456,16 @@ import {
 } from "@/lib/iconSupport";
 import {
   createNode,
+  createProjectFromPath,
+  createWorkspace,
+  deleteProjectWorkspace,
   detectProjectWorkspaceExternalChanges,
   deleteNode,
   extractDocumentText,
   exportNodePackage,
   exportTreeStructureExcel,
   fetchQuickAppUrlPreview,
+  getQuickAppHtmlStorageSnapshot,
   getAllNodes,
   getChildren,
   getProjects,
@@ -480,6 +484,7 @@ import {
   openNodeFileLocation,
   openNodeFileWith,
   prepareQuickAppHtmlInstance,
+  reSyncProjectWorkspace,
   renameNode,
   runQualityGateCommand,
   exportPowerPointSlides,
@@ -487,6 +492,7 @@ import {
   readTreeStructureExcel,
   probeSingleInstanceRelaunch,
   saveExportFile,
+  setProjectWorkspacePath,
   type ImportedFilePayload,
   type QuickAppUrlPreview,
   type QualityGateResult,
@@ -523,6 +529,7 @@ import {
   type ScopedQuickAppCollection,
   type ScopedQuickAppRecord
 } from "@/lib/nodeQuickApps";
+import { formatQuickAppHtmlSnapshotEvidence } from "@/lib/quickAppHtmlSnapshot";
 import { createNodeNumberingLevelState, resolveNodeTreeNumbering } from "@/lib/nodeNumbering";
 import {
   ODE_WORKSTREAM_WORKSPACE_PROPERTY,
@@ -1621,12 +1628,35 @@ function buildQuickAppHtmlStorageNamespace(
   return `odetool.quick-app.html.${scopeToken}.${ownerToken}.${itemToken}`;
 }
 
+function buildQuickAppHtmlSnapshotSeed(
+  item: Pick<NodeQuickAppItem, "id">,
+  context?: QuickAppLaunchContext | null
+):
+  | {
+      scope: "general" | "workspace" | "node";
+      ownerId: string | null;
+      ownerLabel: string | null;
+      quickAppId: string;
+    }
+  | null {
+  const quickAppId = item.id.trim();
+  if (!quickAppId) return null;
+  const ownerId = context?.ownerId?.trim() || null;
+  const ownerLabel = context?.ownerLabel?.trim() || resolveQuickAppContextDisplayLabel(context);
+  return {
+    scope: resolveQuickAppContextScopeToken(context),
+    ownerId,
+    ownerLabel: ownerLabel?.trim() || null,
+    quickAppId
+  };
+}
+
 function buildQuickAppHtmlLaunchUrl(
   instancePath: string,
   item: Pick<NodeQuickAppItem, "id" | "label" | "target">,
   context?: QuickAppLaunchContext | null
 ): string {
-  const htmlUrl = buildFileUrlFromLocalPath(instancePath);
+  const htmlUrl = isTauri() ? convertFileSrc(instancePath) : buildFileUrlFromLocalPath(instancePath);
   if (!htmlUrl) {
     throw new Error("The HTML quick app instance could not be opened.");
   }
@@ -1694,12 +1724,275 @@ const QUICK_APP_READABLE_EXTENSIONS = new Set([
 type GroundedQuickAppSource = {
   record: ScopedQuickAppRecord;
   text: string;
-  sourceKind: "local_file" | "url_preview";
+  sourceKind: "live_state" | "local_file" | "url_preview";
   previewTitle: string | null;
   previewDetail: string | null;
 };
 
 type AssistantEvidenceScope = "node" | "workspace" | "application";
+
+const QUICK_APP_SCOPE_PRIORITY: Record<QuickAppScope, number> = {
+  tab: 0,
+  function: 1,
+  general: 2
+};
+
+const QUICK_APP_REQUEST_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "app",
+  "apps",
+  "current",
+  "file",
+  "files",
+  "for",
+  "give",
+  "html",
+  "htmls",
+  "node",
+  "of",
+  "only",
+  "page",
+  "please",
+  "quick",
+  "read",
+  "selected",
+  "summary",
+  "summarise",
+  "summarize",
+  "the",
+  "this"
+]);
+
+function buildScopedQuickAppRecordKey(
+  record: Pick<ScopedQuickAppRecord, "scope" | "ownerId" | "id" | "launchTarget">
+): string {
+  return `${record.scope}|${record.ownerId ?? "shared"}|${record.id}|${record.launchTarget.trim().toLowerCase()}`;
+}
+
+function normalizeQuickAppRequestText(value: string | null | undefined): string {
+  return (value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function tokenizeQuickAppRequestText(value: string | null | undefined): string[] {
+  return Array.from(
+    new Set(
+      normalizeQuickAppRequestText(value)
+        .split(/\s+/)
+        .map((token) => token.trim())
+        .filter(
+          (token) =>
+            token.length > 0 &&
+            (!QUICK_APP_REQUEST_STOP_WORDS.has(token) || /^\d+$/.test(token))
+        )
+    )
+  );
+}
+
+function computeLevenshteinDistance(a: string, b: string): number {
+  if (a === b) return 0;
+  if (!a) return b.length;
+  if (!b) return a.length;
+  const previous = new Array<number>(b.length + 1);
+  const current = new Array<number>(b.length + 1);
+  for (let index = 0; index <= b.length; index += 1) {
+    previous[index] = index;
+  }
+  for (let i = 1; i <= a.length; i += 1) {
+    current[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost
+      );
+    }
+    for (let j = 0; j <= b.length; j += 1) {
+      previous[j] = current[j];
+    }
+  }
+  return previous[b.length];
+}
+
+function quickAppTokensLooselyMatch(requestToken: string, candidateToken: string): boolean {
+  if (requestToken === candidateToken) return true;
+  if (!requestToken || !candidateToken) return false;
+  const shorterLength = Math.min(requestToken.length, candidateToken.length);
+  if (
+    shorterLength >= 5 &&
+    (requestToken.startsWith(candidateToken) || candidateToken.startsWith(requestToken))
+  ) {
+    return true;
+  }
+  if (shorterLength <= 2) return false;
+  const distance = computeLevenshteinDistance(requestToken, candidateToken);
+  if (shorterLength <= 4) return distance <= 1;
+  if (shorterLength <= 8) return distance <= 2;
+  return distance <= 3;
+}
+
+function getQuickAppReferenceNames(record: ScopedQuickAppRecord): string[] {
+  return Array.from(
+    new Set(
+      [
+        record.label,
+        getPathFileName(record.launchTarget),
+        getQuickAppTargetLeafName(record.launchTarget)
+      ]
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
+function computeQuickAppReferenceScore(
+  requestText: string,
+  requestTokens: string[],
+  record: ScopedQuickAppRecord
+): number {
+  if (!requestText && requestTokens.length === 0) return 0;
+  let bestScore = 0;
+  for (const candidateName of getQuickAppReferenceNames(record)) {
+    const normalizedCandidate = normalizeQuickAppRequestText(candidateName);
+    if (!normalizedCandidate) continue;
+    if (requestText.includes(normalizedCandidate)) {
+      bestScore = Math.max(bestScore, 240 + normalizedCandidate.length);
+      continue;
+    }
+    const candidateTokens = tokenizeQuickAppRequestText(candidateName);
+    if (candidateTokens.length === 0) continue;
+    let matchedCandidateTokens = 0;
+    let matchedNumericToken = false;
+    for (const candidateToken of candidateTokens) {
+      const matched = requestTokens.some((requestToken) =>
+        quickAppTokensLooselyMatch(requestToken, candidateToken)
+      );
+      if (!matched) continue;
+      matchedCandidateTokens += 1;
+      if (/^\d+$/.test(candidateToken)) {
+        matchedNumericToken = true;
+      }
+    }
+    if (matchedCandidateTokens === 0) continue;
+    let score = matchedCandidateTokens * 30;
+    if (matchedCandidateTokens === candidateTokens.length) {
+      score += 90;
+    } else if (matchedCandidateTokens >= Math.max(2, candidateTokens.length - 1)) {
+      score += 45;
+    }
+    if (matchedNumericToken) {
+      score += 25;
+    }
+    bestScore = Math.max(bestScore, score);
+  }
+  return bestScore;
+}
+
+function filterScopedQuickAppsByRecords(
+  quickApps: ScopedQuickAppCollection,
+  records: ScopedQuickAppRecord[]
+): ScopedQuickAppCollection {
+  const allowedKeys = new Set(records.map((record) => buildScopedQuickAppRecordKey(record)));
+  return {
+    general: quickApps.general.filter((record) => allowedKeys.has(buildScopedQuickAppRecordKey(record))),
+    function: quickApps.function.filter((record) => allowedKeys.has(buildScopedQuickAppRecordKey(record))),
+    tab: quickApps.tab.filter((record) => allowedKeys.has(buildScopedQuickAppRecordKey(record))),
+    ordered: quickApps.ordered.filter((record) => allowedKeys.has(buildScopedQuickAppRecordKey(record)))
+  };
+}
+
+function resolveBaseQuickAppRecordsForEvidenceScope(
+  quickApps: ScopedQuickAppCollection,
+  evidenceScope: AssistantEvidenceScope
+): ScopedQuickAppRecord[] {
+  if (evidenceScope === "application") {
+    return quickApps.ordered;
+  }
+  if (evidenceScope === "workspace") {
+    const workspaceRecords = [...quickApps.tab, ...quickApps.function];
+    return workspaceRecords.length > 0 ? workspaceRecords : quickApps.ordered;
+  }
+  return quickApps.tab.length > 0 ? quickApps.tab : quickApps.ordered;
+}
+
+function requestTargetsCurrentNodeHtml(requestText: string): boolean {
+  return (
+    /\b(this|current|selected)\s+(node|html|quick app|quick apps|app|page)\b/.test(requestText) ||
+    /\bhtml\s+of\s+this\b/.test(requestText)
+  );
+}
+
+function requestExplicitlyTargetsQuickApp(requestText: string): boolean {
+  return /\b(html|quick app|quick apps|app|page)\b/.test(requestText) || /\bonly\b/.test(requestText);
+}
+
+function chooseQuickAppRecordsFromRequest(
+  records: Array<{ record: ScopedQuickAppRecord; score: number }>
+): ScopedQuickAppRecord[] {
+  if (records.length === 0) return [];
+  const bestScore = Math.max(...records.map((entry) => entry.score));
+  const selected = records
+    .filter((entry) => entry.score >= Math.max(100, bestScore - 10))
+    .sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      return QUICK_APP_SCOPE_PRIORITY[left.record.scope] - QUICK_APP_SCOPE_PRIORITY[right.record.scope];
+    });
+  const deduped = new Map<string, ScopedQuickAppRecord>();
+  for (const entry of selected) {
+    const dedupeLabel =
+      normalizeQuickAppRequestText(entry.record.label) ||
+      normalizeQuickAppRequestText(getPathFileName(entry.record.launchTarget)) ||
+      normalizeQuickAppRequestText(entry.record.launchTarget);
+    if (!dedupeLabel || deduped.has(dedupeLabel)) continue;
+    deduped.set(dedupeLabel, entry.record);
+  }
+  return Array.from(deduped.values());
+}
+
+function resolveScopedQuickAppsForRequest(
+  quickApps: ScopedQuickAppCollection,
+  requestText: string | null | undefined,
+  evidenceScope: AssistantEvidenceScope
+): ScopedQuickAppCollection {
+  const normalizedRequest = normalizeQuickAppRequestText(requestText);
+  const requestTokens = tokenizeQuickAppRequestText(requestText);
+  let baseRecords = resolveBaseQuickAppRecordsForEvidenceScope(quickApps, evidenceScope);
+
+  if (normalizedRequest && requestTargetsCurrentNodeHtml(normalizedRequest) && quickApps.tab.length > 0) {
+    baseRecords = quickApps.tab;
+  }
+
+  const chooseMatches = (pool: ScopedQuickAppRecord[]): ScopedQuickAppRecord[] =>
+    chooseQuickAppRecordsFromRequest(
+      pool
+        .map((record) => ({
+          record,
+          score: computeQuickAppReferenceScore(normalizedRequest, requestTokens, record)
+        }))
+        .filter((entry) => entry.score > 0)
+    );
+
+  const baseMatches = chooseMatches(baseRecords);
+  if (baseMatches.length > 0) {
+    return filterScopedQuickAppsByRecords(quickApps, baseMatches);
+  }
+
+  if (normalizedRequest && requestExplicitlyTargetsQuickApp(normalizedRequest)) {
+    const globalMatches = chooseMatches(quickApps.ordered);
+    if (globalMatches.length > 0) {
+      return filterScopedQuickAppsByRecords(quickApps, globalMatches);
+    }
+  }
+
+  return filterScopedQuickAppsByRecords(quickApps, baseRecords);
+}
 
 function trimAiEvidenceText(value: string, limit = 1400): string {
   const normalized = value.replace(/\s+/g, " ").trim();
@@ -6044,34 +6337,44 @@ export default function App() {
     [finalizeAiTesterRun, language, qaAiPlan]
   );
 
+  const applyProjectListState = (
+    list: ProjectSummary[],
+    preferredProjectId?: string | null
+  ): string | null => {
+    setProjects(list);
+    setProjectError(null);
+    if (list.length === 0) {
+      setActiveProjectId(null);
+      activeProjectIdRef.current = null;
+      setDefaultProjectId(null);
+      return null;
+    }
+    const preferred = preferredProjectId !== undefined ? preferredProjectId : activeProjectIdRef.current;
+    const resolvedDefault = defaultProjectId && list.some((project) => project.id === defaultProjectId)
+      ? defaultProjectId
+      : null;
+    if (defaultProjectId && !resolvedDefault) {
+      setDefaultProjectId(null);
+    }
+    const nextActive =
+      preferred && list.some((project) => project.id === preferred)
+        ? preferred
+        : resolvedDefault ?? (list[0]?.id ?? null);
+    setActiveProjectId(nextActive);
+    activeProjectIdRef.current = nextActive;
+    return nextActive;
+  };
+
   const refreshProjects = async (preferredProjectId?: string | null): Promise<string | null> => {
     try {
       const list = await getProjects();
-      setProjects(list);
-      setProjectError(null);
-      if (list.length === 0) {
-        setActiveProjectId(null);
-        setDefaultProjectId(null);
-        return null;
-      }
-      const preferred = preferredProjectId !== undefined ? preferredProjectId : activeProjectId;
-      const resolvedDefault = defaultProjectId && list.some((project) => project.id === defaultProjectId)
-        ? defaultProjectId
-        : null;
-      if (defaultProjectId && !resolvedDefault) {
-        setDefaultProjectId(null);
-      }
-      const nextActive =
-        preferred && list.some((project) => project.id === preferred)
-          ? preferred
-          : resolvedDefault ?? (list[0]?.id ?? null);
-      setActiveProjectId(nextActive);
-      return nextActive;
+      return applyProjectListState(list, preferredProjectId);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       setProjectError(t("project.load_failed_reason", { reason }));
       setProjects([]);
       setActiveProjectId(null);
+      activeProjectIdRef.current = null;
       return null;
     }
   };
@@ -15351,11 +15654,16 @@ export default function App() {
       )}`;
       const existing = await WebviewWindow.getByLabel(label);
       if (existing) {
-        await existing.setTitle(windowTitle).catch(() => {});
-        await existing.unminimize().catch(() => {});
-        await existing.show().catch(() => {});
-        await existing.setFocus().catch(() => {});
-        return;
+        if (options?.mode === "html") {
+          await existing.close().catch(() => {});
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
+        } else {
+          await existing.setTitle(windowTitle).catch(() => {});
+          await existing.unminimize().catch(() => {});
+          await existing.show().catch(() => {});
+          await existing.setFocus().catch(() => {});
+          return;
+        }
       }
 
       const panelWindow = new WebviewWindow(label, {
@@ -15423,7 +15731,8 @@ export default function App() {
               buildQuickAppHtmlInstanceFileName(item, context),
               {
                 templateBaseHref: buildQuickAppHtmlTemplateBaseHref(localPath),
-                storageNamespace: buildQuickAppHtmlStorageNamespace(item, context)
+                storageNamespace: buildQuickAppHtmlStorageNamespace(item, context),
+                snapshotSeed: buildQuickAppHtmlSnapshotSeed(item, context)
               }
             );
             await openQuickAppHtmlWindow(item, instancePath, context);
@@ -19056,6 +19365,137 @@ export default function App() {
     return getPrimarySelectionNode();
   };
 
+  const normalizeCommandLookup = (value: string): string => value.trim().toLowerCase();
+
+  const ensureWorkspaceRootExpanded = (rootNodeId: string) => {
+    setExpandedIds((prev) => {
+      if (prev.has(rootNodeId)) return prev;
+      const next = new Set(prev);
+      next.add(rootNodeId);
+      return next;
+    });
+  };
+
+  const focusWorkspaceProject = async (project: ProjectSummary | null) => {
+    const nextProjectId = project?.id ?? null;
+    setActiveProjectId(nextProjectId);
+    activeProjectIdRef.current = nextProjectId;
+    if (!project) {
+      await store.navigateTo(null);
+      setPrimarySelection(null, "tree");
+      return;
+    }
+    await store.navigateTo(project.rootNodeId);
+    ensureWorkspaceRootExpanded(project.rootNodeId);
+    setPrimarySelection(project.rootNodeId, "tree");
+  };
+
+  const loadProjectsSnapshot = async (preferredProjectId?: string | null) => {
+    const list = await getProjects();
+    const nextActiveId = applyProjectListState(list, preferredProjectId);
+    return {
+      list,
+      nextActiveId,
+      nextActiveProject: list.find((project) => project.id === nextActiveId) ?? null
+    };
+  };
+
+  const resolveProjectByCommandRef = (reference?: string | null): ProjectSummary | null => {
+    const needle = normalizeCommandLookup(reference ?? "");
+    if (!needle) return activeProject ?? null;
+    return (
+      projects.find((project) => normalizeCommandLookup(project.id) === needle) ??
+      projects.find((project) => normalizeCommandLookup(project.rootNodeId) === needle) ??
+      projects.find((project) => normalizeCommandLookup(project.name) === needle) ??
+      projects.find((project) => normalizeCommandLookup(project.name).includes(needle)) ??
+      null
+    );
+  };
+
+  const normalizeQuickAppScopeArg = (value: string): QuickAppScope | null => {
+    const normalized = normalizeCommandLookup(value);
+    if (normalized === "general" || normalized === "function" || normalized === "tab") {
+      return normalized;
+    }
+    return null;
+  };
+
+  const resolveQuickAppCommandScope = (args?: Record<string, unknown>): QuickAppScope => {
+    const requested = normalizeQuickAppScopeArg(parseArgsString(args, "scope"));
+    if (requested) return requested;
+    if (contextualTabQuickAppOwnerNode) return "tab";
+    if (activeWorkspaceRootNode) return "function";
+    return "general";
+  };
+
+  const getQuickAppOwnerNodeForScope = (scope: QuickAppScope): AppNode | null => {
+    if (scope === "function") return activeWorkspaceRootNode;
+    if (scope === "tab") return contextualTabQuickAppOwnerNode;
+    return null;
+  };
+
+  const getQuickAppItemsForScope = (scope: QuickAppScope): NodeQuickAppItem[] => {
+    if (scope === "general") return generalQuickApps;
+    if (scope === "function") return functionQuickApps;
+    return tabQuickApps;
+  };
+
+  const persistQuickAppsForScope = async (
+    scope: QuickAppScope,
+    items: NodeQuickAppItem[]
+  ): Promise<NodeQuickAppItem[]> => {
+    const normalized = normalizeNodeQuickApps(items);
+    if (scope === "general") {
+      setGeneralQuickApps(normalized);
+      writeStoredGeneralQuickApps(normalized);
+      persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, normalized));
+      return normalized;
+    }
+
+    const ownerNode = getQuickAppOwnerNodeForScope(scope);
+    if (!ownerNode) {
+      throw new Error(
+        scope === "tab"
+          ? "No active node is available for tab quick apps."
+          : "No active workspace is available for workspace quick apps."
+      );
+    }
+    if (!ensureNodeAccessAllowed([ownerNode.id], "write")) {
+      throw new Error("You do not have permission to update quick apps here.");
+    }
+
+    const nextProperties =
+      scope === "function"
+        ? buildFunctionQuickAppsProperties(ownerNode.properties, normalized)
+        : buildNodeQuickAppsProperties(ownerNode.properties, normalized);
+    await updateNodeProperties(ownerNode.id, nextProperties);
+    store.patchNode(ownerNode.id, {
+      properties: nextProperties,
+      updatedAt: Date.now()
+    });
+    persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, normalized));
+    return normalized;
+  };
+
+  const resolveQuickAppRecordByCommandRef = (
+    itemRef: string,
+    scope?: QuickAppScope | null
+  ): ScopedQuickAppRecord | null => {
+    const needle = normalizeCommandLookup(itemRef);
+    if (!needle) return null;
+    const pool = scope ? activeScopedQuickApps[scope] : activeScopedQuickApps.ordered;
+    return (
+      pool.find((item) => normalizeCommandLookup(item.id) === needle) ??
+      pool.find((item) => normalizeCommandLookup(item.label) === needle) ??
+      pool.find((item) => normalizeCommandLookup(item.launchTarget) === needle) ??
+      pool.find((item) => normalizeCommandLookup(item.target) === needle) ??
+      pool.find((item) => normalizeCommandLookup(item.label).includes(needle)) ??
+      pool.find((item) => normalizeCommandLookup(item.launchTarget).includes(needle)) ??
+      pool.find((item) => normalizeCommandLookup(item.target).includes(needle)) ??
+      null
+    );
+  };
+
   const getQuickAppUrlPreviewCached = useCallback(async (record: ScopedQuickAppRecord): Promise<QuickAppUrlPreview | null> => {
     const cacheKey = buildQuickAppPreviewCacheKey(record);
     if (quickAppUrlPreviewCacheRef.current.has(cacheKey)) {
@@ -19086,7 +19526,8 @@ export default function App() {
         if (record.readabilityStatus === "previewable_url") {
           const preview = await getQuickAppUrlPreviewCached(record);
           const previewText = trimAiEvidenceText(
-            [preview?.title, preview?.description, preview?.excerpt].filter(Boolean).join("\n")
+            [preview?.title, preview?.description, preview?.excerpt].filter(Boolean).join("\n"),
+            2200
           );
           if (!previewText) continue;
           sources.push({
@@ -19104,11 +19545,33 @@ export default function App() {
         const fileName = getPathFileName(localPath);
         const extension = fileName.includes(".") ? fileName.split(".").pop()?.toLowerCase() ?? "" : "";
         try {
+          if (isQuickAppHtmlLocalPath(localPath)) {
+            const snapshotNamespace = buildQuickAppHtmlStorageNamespace(record, {
+              scope: record.scope,
+              ownerId: record.ownerId,
+              ownerLabel: record.ownerLabel
+            });
+            const snapshot = await getQuickAppHtmlStorageSnapshot(snapshotNamespace);
+            if (snapshot) {
+              const liveStateText = trimAiEvidenceText(formatQuickAppHtmlSnapshotEvidence(snapshot), 2200);
+              if (liveStateText) {
+                sources.push({
+                  record,
+                  text: liveStateText,
+                  sourceKind: "live_state",
+                  previewTitle: snapshot.title || record.label || getPathFileName(record.launchTarget) || null,
+                  previewDetail: snapshot.currentUrl ?? localPath
+                });
+                continue;
+              }
+            }
+          }
+
           const text = (await extractDocumentText(localPath, { extension }))?.trim() ?? "";
           if (!text) continue;
           sources.push({
             record,
-            text: trimAiEvidenceText(text),
+            text: trimAiEvidenceText(text, 2200),
             sourceKind: "local_file",
             previewTitle: record.label || getPathFileName(record.launchTarget) || null,
             previewDetail: localPath
@@ -21532,13 +21995,18 @@ export default function App() {
       const scheduleStatus = parseNodeTimelineSchedule(freshTarget)?.status?.replace(/_/g, " ") ?? "none";
       const existingDeliverables = resolveAssistantExistingDeliverables(freshTarget);
       const evidenceScope = resolveAssistantEvidenceScope(requestText);
+      const requestScopedQuickApps = resolveScopedQuickAppsForRequest(
+        activeScopedQuickApps,
+        requestText,
+        evidenceScope
+      );
       const sourceDocuments = await collectNodeAssistantTextSources(
         freshTarget,
         6,
         options?.selectedDocumentIds,
         evidenceScope
       );
-      const groundedQuickAppSources = await collectGroundedQuickAppSources(activeScopedQuickApps, 4);
+      const groundedQuickAppSources = await collectGroundedQuickAppSources(requestScopedQuickApps, 4);
       const nodeText = getNodeTextForAi(freshTarget).trim();
 
       const systemPrompt = [
@@ -21549,6 +22017,9 @@ export default function App() {
         "Never small-talk, never describe yourself, and never ask how else you can help.",
         "If a request falls outside organisation evidence or the scoped data, reply with one short redirect sentence and stop.",
         "Use the selected node path, parent context, existing objective, existing deliverables, readable documents, and grounded quick-app evidence.",
+        "Treat grounded quick-app evidence as readable source content.",
+        "A live quick-app HTML state that lists tasks, resources, documents, captured fields, or visible page text is sufficient evidence for summaries, action lists, team/resource lists, and reports.",
+        "If grounded quick-app evidence contains the requested facts, answer from it instead of replying 'Insufficient evidence'.",
         "The node path changes meaning, so always respect the full hierarchy.",
         "When the request is about what to do, recommend the best next decision with a short Why section.",
         "If the user asks for deliverables or actions, return concise sections named Summary, Deliverables, and Actions.",
@@ -21578,7 +22049,7 @@ export default function App() {
               )
               .join("\n\n")
           : "No readable documents were found under this node.";
-      const quickAppLines = formatQuickAppCatalogLines(activeScopedQuickApps);
+      const quickAppLines = formatQuickAppCatalogLines(requestScopedQuickApps);
       const quickAppEvidenceLines = formatGroundedQuickAppEvidenceLines(groundedQuickAppSources);
 
       const baseUserPrompt = [
@@ -21592,7 +22063,7 @@ export default function App() {
         `Objective: ${objective ?? "(none)"}`,
         "",
         `Selected files: ${sourceDocuments.map((source) => source.node.name).join(", ") || "(none)"}`,
-        `Scoped quick apps: ${activeScopedQuickApps.ordered.map((record) => record.label).join(", ") || "(none)"}`,
+        `Scoped quick apps: ${requestScopedQuickApps.ordered.map((record) => record.label).join(", ") || "(none)"}`,
         "",
         "Existing deliverables:",
         deliverableLines,
@@ -22886,6 +23357,239 @@ export default function App() {
     }
   };
 
+  const importWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const path = parseArgsString(args, "path");
+    if (!path) {
+      await handlePickAndImportProjectFolder();
+      return;
+    }
+
+    const project = await createProjectFromPath(path);
+    await store.refreshTree();
+    await loadProjectsSnapshot(project.id);
+    await focusWorkspaceProject(project);
+    setProjectNotice(`Imported workspace "${project.name}".`);
+  };
+
+  const createWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceName =
+      parseArgsString(args, "workspace_name") ||
+      parseArgsString(args, "name") ||
+      parseArgsString(args, "title");
+    if (!workspaceName) {
+      throw new Error("Missing workspace name.");
+    }
+
+    let workspace = await createWorkspace(workspaceName);
+    const path = parseArgsString(args, "path");
+    if (path) {
+      workspace = await setProjectWorkspacePath(workspace.id, path);
+    }
+
+    await store.refreshTree();
+    await loadProjectsSnapshot(workspace.id);
+    await focusWorkspaceProject(workspace);
+    setProjectNotice(
+      path
+        ? `Created workspace "${workspace.name}" and linked it to ${path}.`
+        : `Created workspace "${workspace.name}".`
+    );
+  };
+
+  const switchWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    if (!workspaceRef) {
+      throw new Error("Missing workspace reference.");
+    }
+    const project = resolveProjectByCommandRef(workspaceRef);
+    if (!project) {
+      throw new Error(`Workspace not found: ${workspaceRef}`);
+    }
+
+    await focusWorkspaceProject(project);
+    setProjectNotice(`Switched to workspace "${project.name}".`);
+  };
+
+  const renameWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    const project = workspaceRef ? resolveProjectByCommandRef(workspaceRef) : activeProject;
+    if (!project) {
+      throw new Error(workspaceRef ? `Workspace not found: ${workspaceRef}` : "No workspace selected.");
+    }
+
+    const newName = parseArgsString(args, "new_name");
+    if (!newName) {
+      throw new Error("Missing new workspace name.");
+    }
+    if (!ensureStructureMutationAllowed([project.rootNodeId])) return;
+
+    const savedName = await renameNode(project.rootNodeId, newName);
+    await store.refreshTree();
+    await loadProjectsSnapshot(activeProjectIdRef.current ?? project.id);
+    if ((activeProjectIdRef.current ?? project.id) === project.id) {
+      await focusWorkspaceProject({
+        ...project,
+        name: savedName
+      });
+    }
+    setProjectNotice(`Renamed workspace to "${savedName}".`);
+  };
+
+  const setWorkspaceLocationFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    const project = workspaceRef ? resolveProjectByCommandRef(workspaceRef) : activeProject;
+    if (!project) {
+      throw new Error(workspaceRef ? `Workspace not found: ${workspaceRef}` : "No workspace selected.");
+    }
+
+    const path = parseArgsString(args, "path");
+    if (!path) {
+      throw new Error("Missing workspace location path.");
+    }
+
+    const updatedProject = await setProjectWorkspacePath(project.id, path);
+    await store.refreshTree();
+    await loadProjectsSnapshot(activeProjectIdRef.current ?? updatedProject.id);
+    if ((activeProjectIdRef.current ?? updatedProject.id) === updatedProject.id) {
+      await focusWorkspaceProject(updatedProject);
+    }
+    setProjectNotice(`Workspace "${updatedProject.name}" path set to ${path}.`);
+  };
+
+  const setDefaultWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    const project = workspaceRef ? resolveProjectByCommandRef(workspaceRef) : activeProject;
+    if (!project) {
+      throw new Error(workspaceRef ? `Workspace not found: ${workspaceRef}` : "No workspace selected.");
+    }
+
+    setDefaultProjectId(project.id);
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(t("project.default_set_notice", { name: project.name }));
+    setProjectNotice(`Workspace "${project.name}" is now the default.`);
+  };
+
+  const openWorkspaceFolderFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    const project = workspaceRef ? resolveProjectByCommandRef(workspaceRef) : activeProject;
+    if (!project) {
+      throw new Error(workspaceRef ? `Workspace not found: ${workspaceRef}` : "No workspace selected.");
+    }
+
+    const path = resolveWorkspaceOpenFolderPath(project);
+    if (!path) {
+      throw new Error(t("project.open_workspace_unavailable"));
+    }
+    await openLocalPath(path);
+    setProjectNotice(`Opened the folder for workspace "${project.name}".`);
+  };
+
+  const deleteWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    const project = workspaceRef ? resolveProjectByCommandRef(workspaceRef) : activeProject;
+    if (!project) {
+      throw new Error(workspaceRef ? `Workspace not found: ${workspaceRef}` : "No workspace selected.");
+    }
+
+    await deleteProjectWorkspace(project.id);
+    await store.refreshTree();
+    const preferredProjectId = activeProjectIdRef.current === project.id ? null : activeProjectIdRef.current;
+    const { nextActiveProject } = await loadProjectsSnapshot(preferredProjectId);
+    await focusWorkspaceProject(nextActiveProject);
+    setProjectNotice(`Deleted workspace "${project.name}".`);
+  };
+
+  const resyncWorkspaceFromCommand = async (args?: Record<string, unknown>) => {
+    const workspaceRef = parseArgsString(args, "workspace_ref");
+    const project = workspaceRef ? resolveProjectByCommandRef(workspaceRef) : activeProject;
+    if (!project) {
+      throw new Error(workspaceRef ? `Workspace not found: ${workspaceRef}` : t("command.workspace_required"));
+    }
+    if (isInternalWorkspaceRootPath(project.rootPath)) {
+      throw new Error(t("command.workspace_resync_unavailable"));
+    }
+
+    const importedCount = await reSyncProjectWorkspace(project.id);
+    await store.refreshTree();
+    await loadProjectsSnapshot(activeProjectIdRef.current ?? project.id);
+    setProjectNotice(
+      importedCount > 0
+        ? t("project.resync_done", { count: importedCount })
+        : t("project.resync_done_no_changes")
+    );
+  };
+
+  const addQuickAppFromCommand = async (args?: Record<string, unknown>) => {
+    const target = parseArgsString(args, "target");
+    if (!target) {
+      throw new Error("Missing quick app target.");
+    }
+
+    const scope = resolveQuickAppCommandScope(args);
+    const currentItems = getQuickAppItemsForScope(scope);
+    const nextItem = createNodeQuickAppItem({
+      label: parseArgsString(args, "label") || undefined,
+      target,
+      type: (parseArgsString(args, "type") || undefined) as NodeQuickAppItem["type"]
+    });
+    const targetKey = normalizeCommandLookup(nextItem.target);
+    const labelKey = normalizeCommandLookup(nextItem.label);
+    const existingIndex = currentItems.findIndex((item) =>
+      normalizeCommandLookup(item.target) === targetKey ||
+      normalizeCommandLookup(item.label) === labelKey
+    );
+    const nextItems =
+      existingIndex >= 0
+        ? currentItems.map((item, index) => (index === existingIndex ? { ...nextItem, id: item.id } : item))
+        : [...currentItems, nextItem];
+    const savedItems = await persistQuickAppsForScope(scope, nextItems);
+    const savedItem =
+      savedItems.find((item) => item.id === (existingIndex >= 0 ? currentItems[existingIndex]?.id : nextItem.id)) ??
+      savedItems[savedItems.length - 1] ??
+      nextItem;
+    setProjectNotice(`Saved quick app "${savedItem.label}" in ${scope} scope.`);
+  };
+
+  const removeQuickAppFromCommand = async (args?: Record<string, unknown>) => {
+    const itemRef = parseArgsString(args, "item_ref");
+    if (!itemRef) {
+      throw new Error("Missing quick app reference.");
+    }
+
+    const scope = normalizeQuickAppScopeArg(parseArgsString(args, "scope"));
+    const record = resolveQuickAppRecordByCommandRef(itemRef, scope);
+    if (!record) {
+      throw new Error(`Quick app not found: ${itemRef}`);
+    }
+
+    const currentItems = getQuickAppItemsForScope(record.scope);
+    await persistQuickAppsForScope(
+      record.scope,
+      currentItems.filter((item) => item.id !== record.id)
+    );
+    setProjectNotice(`Removed quick app "${record.label}".`);
+  };
+
+  const openQuickAppFromCommand = async (args?: Record<string, unknown>) => {
+    const itemRef = parseArgsString(args, "item_ref");
+    if (!itemRef) {
+      throw new Error("Missing quick app reference.");
+    }
+
+    const scope = normalizeQuickAppScopeArg(parseArgsString(args, "scope"));
+    const record = resolveQuickAppRecordByCommandRef(itemRef, scope);
+    if (!record) {
+      throw new Error(`Quick app not found: ${itemRef}`);
+    }
+
+    await launchQuickApp(record, {
+      scope: record.scope,
+      ownerId: record.ownerId,
+      ownerLabel: record.ownerLabel
+    });
+    setProjectNotice(`Opened quick app "${record.label}".`);
+  };
+
   const normalizeScheduleStatusArg = (value: string): ScheduleStatus => {
     const normalized = value.trim().toLowerCase();
     if (normalized === "active" || normalized === "in_progress" || normalized === "in progress") return "active";
@@ -23126,6 +23830,20 @@ export default function App() {
     );
   };
 
+  const parseDocumentReviewOutputFormat = (
+    args?: Record<string, unknown>
+  ): "clipboard" | "pdf" => {
+    const explicit = parseArgsString(args, "output_format").toLowerCase();
+    if (explicit === "pdf") return "pdf";
+    const goalText = parseArgsString(args, "goal").toLowerCase();
+    return /\bpdf\b/.test(goalText) && /\b(export|save|generate|create|report)\b/.test(goalText)
+      ? "pdf"
+      : "clipboard";
+  };
+
+  const normalizeAiReviewExportFileName = (value: string): string =>
+    value.replace(/[^a-z0-9._-]+/gi, "_").replace(/^_+|_+$/g, "") || "ai-review";
+
   const reviewDocumentsFromCommand = async (
     args?: Record<string, unknown>,
     options?: { suppressTelemetry?: boolean }
@@ -23137,8 +23855,16 @@ export default function App() {
     }
 
     const goal = parseArgsString(args, "goal") || "Summarize key findings and recommend next actions.";
+    const outputFormat = parseDocumentReviewOutputFormat(args);
+    const reportTitleArg = parseArgsString(args, "report_title");
     const selectedDocumentIdsFromArgs = parseSelectedDocumentIdsFromArgs(args);
     const promptAttachments = parsePromptAttachmentsFromArgs(args);
+    const reviewEvidenceScope = resolveAssistantEvidenceScope(goal);
+    const reviewScopedQuickApps = resolveScopedQuickAppsForRequest(
+      activeScopedQuickApps,
+      goal,
+      reviewEvidenceScope
+    );
     const targetId = selectedNode?.id ?? store.currentFolderId ?? activeProjectRootId;
 
     const collectScopeRoots = (): string[] => {
@@ -23171,10 +23897,7 @@ export default function App() {
             .filter((node): node is AppNode => node !== null)
             .filter((node) => scopedDocumentNodes.some((candidate) => candidate.id === node.id))
         : scopedDocumentNodes;
-
-    if (documentNodes.length === 0) {
-      throw new Error(t("assistant.doc_review_empty"));
-    }
+    const groundedQuickAppSources = await collectGroundedQuickAppSources(reviewScopedQuickApps, 6);
 
     const readableDocumentNodes: AppNode[] = [];
     for (const candidate of documentNodes.slice(0, 24)) {
@@ -23186,37 +23909,81 @@ export default function App() {
       readableDocumentNodes.push(freshNode);
     }
 
-    if (readableDocumentNodes.length === 0) {
-      if (promptAttachments.length === 0) {
-        throw new Error(t("assistant.doc_review_empty"));
-      }
-    }
+    const readablePromptAttachments = promptAttachments.filter(
+      (attachment) => attachment.kind === "document" && attachment.extractedText?.trim()
+    );
 
-    const lines = readableDocumentNodes.slice(0, 100).map((node) => {
-      const numberLabel = scopedNumbering.get(node.id) ?? numbering.get(node.id) ?? "-";
-      const contentText =
-        (typeof node.content === "string" ? node.content : "") ||
-        (typeof node.description === "string" ? node.description : "");
-      const snippet = contentText.replace(/\s+/g, " ").trim().slice(0, 420);
-      const modified = Number.isFinite(node.updatedAt) && node.updatedAt > 0
-        ? new Date(node.updatedAt).toISOString().slice(0, 10)
-        : "unknown";
-      return `- [${numberLabel}|${node.name}] type=${node.type} modified=${modified} snippet=${snippet || "(none)"}`;
-    });
-    const promptAttachmentLines = promptAttachments
-      .filter((attachment) => attachment.kind === "document" && attachment.extractedText?.trim())
-      .map((attachment, index) => {
-        const snippet = trimAiEvidenceText(attachment.extractedText ?? "", 420);
-        return `- [A${index + 1}|Prompt attachment: ${attachment.name}] type=temporary attachment modified=now snippet=${snippet || "(none)"}`;
-      });
+    if (
+      readableDocumentNodes.length === 0 &&
+      groundedQuickAppSources.length === 0 &&
+      readablePromptAttachments.length === 0
+    ) {
+      throw new Error(t("assistant.doc_review_empty"));
+    }
 
     const selectedLabel = selectedNode
       ? `${scopedNumbering.get(selectedNode.id) ?? numbering.get(selectedNode.id) ?? "-"} ${selectedNode.name}`
       : "none";
+    const sourceContextLines: string[] = [];
+    const sourceLabels: string[] = [];
+    let sourceIndex = 1;
+
+    for (const node of readableDocumentNodes.slice(0, 100)) {
+      const contentText =
+        (typeof node.content === "string" ? node.content : "") ||
+        (typeof node.description === "string" ? node.description : "");
+      const snippet = trimAiEvidenceText(contentText, 420);
+      const modified = Number.isFinite(node.updatedAt) && node.updatedAt > 0
+        ? new Date(node.updatedAt).toISOString().slice(0, 10)
+        : "unknown";
+      sourceContextLines.push(
+        `- [${sourceIndex}|${node.name}] type=${node.type} modified=${modified} snippet=${snippet || "(none)"}`
+      );
+      sourceLabels.push(node.name);
+      sourceIndex += 1;
+    }
+
+    for (const source of groundedQuickAppSources) {
+      const title =
+        source.previewTitle ||
+        source.record.label ||
+        getPathFileName(source.record.launchTarget) ||
+        "Quick app";
+      sourceContextLines.push(
+        `- [${sourceIndex}|Quick app: ${title}] type=quick_app scope=${source.record.scope} evidence=${source.sourceKind} modified=live snippet=${trimAiEvidenceText(source.text, 420) || "(none)"}`
+      );
+      sourceLabels.push(title);
+      sourceIndex += 1;
+    }
+
+    for (const attachment of readablePromptAttachments) {
+      const snippet = trimAiEvidenceText(attachment.extractedText ?? "", 420);
+      sourceContextLines.push(
+        `- [${sourceIndex}|Prompt attachment: ${attachment.name}] type=temporary attachment modified=now snippet=${snippet || "(none)"}`
+      );
+      sourceLabels.push(attachment.name);
+      sourceIndex += 1;
+    }
+
+    const detailedQuickAppEvidenceLines =
+      groundedQuickAppSources.length > 0
+        ? groundedQuickAppSources
+            .map((source, index) => {
+              const title =
+                source.previewTitle ||
+                source.record.label ||
+                getPathFileName(source.record.launchTarget) ||
+                "Quick app";
+              return `[Q${index + 1}|${source.record.scope}|${source.sourceKind}|${title}]\n${trimAiEvidenceText(source.text, 1800)}`;
+            })
+            .join("\n\n")
+        : "No grounded quick-app evidence was available.";
 
     const systemPrompt = [
       "You are ODETool AI reviewer.",
-      "Use only provided document context.",
+      "Use only provided document and quick-app context.",
+      "Treat grounded quick-app evidence as readable source content.",
+      "A live quick-app HTML state that lists tasks, resources, documents, captured fields, or visible page text is sufficient evidence for summaries, action lists, team/resource lists, and reports.",
       "Do not hallucinate missing facts.",
       "Every finding, risk, and recommendation must include one or more citations in format [number|name].",
       "If evidence is insufficient, explicitly say 'Insufficient evidence'."
@@ -23226,18 +23993,25 @@ export default function App() {
       `Workspace: ${activeProject?.name ?? t("project.none")}`,
       `Selected node: ${selectedLabel}`,
       `Review goal: ${goal}`,
+      `Requested output: ${outputFormat === "pdf" ? "PDF report and clipboard text" : "Clipboard text"}`,
       "",
       "Return markdown with sections:",
       "1) Executive Summary",
       "2) Findings",
       "3) Risks / Gaps",
       "4) Recommended Actions",
+      "5) Teams / Stakeholders (when evidence supports it)",
+      "",
+      "If the goal asks for actions, teams, responsibilities, blockers, decisions, or dates, include those explicitly.",
       "",
       "Citation rule:",
       "- Attach citations as [number|name] for each claim.",
       "",
-      "Document context:",
-      [...lines, ...promptAttachmentLines].join("\n")
+      "Source context:",
+      sourceContextLines.join("\n"),
+      "",
+      "Detailed quick-app evidence:",
+      detailedQuickAppEvidenceLines
     ].join("\n");
     const promptInput = buildPromptAttachmentInput(baseUserPrompt, promptAttachments, "cloud");
 
@@ -23249,8 +24023,39 @@ export default function App() {
         userContent: promptInput.userContent,
         aiEngine: "cloud"
       });
-      await writePlainTextToClipboard(response.trim());
-      setProjectNotice("Document review copied to clipboard.");
+      const trimmedResponse = response.trim();
+      await writePlainTextToClipboard(trimmedResponse);
+
+      let savedPdfPath: string | null = null;
+      if (outputFormat === "pdf") {
+        const { buildAiReviewPdfBytes } = await import("@/lib/aiReviewPdf");
+        const pdfTitle =
+          reportTitleArg ||
+          `${selectedNode?.name ?? activeProject?.name ?? "ODETool"} AI Review`;
+        const bytes = buildAiReviewPdfBytes({
+          title: pdfTitle,
+          locale: navigator.language || "en-US",
+          workspaceName: activeProject?.name ?? t("project.none"),
+          selectedLabel,
+          goal,
+          sourceLabels: sourceLabels.slice(0, 16),
+          reviewText: trimmedResponse
+        });
+        const savedPath = await saveExportFile(
+          "Save AI review PDF",
+          `${normalizeAiReviewExportFileName(pdfTitle)}-${toIsoDateOnly(new Date())}.pdf`,
+          "PDF",
+          "pdf",
+          Array.from(bytes)
+        );
+        savedPdfPath = savedPath ?? null;
+      }
+
+      setProjectNotice(
+        savedPdfPath
+          ? `Document review copied to clipboard and saved to ${savedPdfPath}.`
+          : "Document review copied to clipboard."
+      );
       if (!options?.suppressTelemetry) {
         recordAiTelemetryEvent({
           flow: "document_review",
@@ -24511,16 +25316,15 @@ export default function App() {
   };
 
   const aiCommandExecutionHandlers: AiCommandExecutionHandlers = {
-    workspaceImport: handlePickAndImportProjectFolder,
-    workspaceResync: async () => {
-      if (!activeProjectId) {
-        throw new Error(t("command.workspace_required"));
-      }
-      if (!activeProject || isInternalWorkspaceRootPath(activeProject.rootPath)) {
-        throw new Error(t("command.workspace_resync_unavailable"));
-      }
-      await handleReSyncWorkspace();
-    },
+    workspaceImport: (args) => importWorkspaceFromCommand(args),
+    workspaceCreate: (args) => createWorkspaceFromCommand(args),
+    workspaceSwitch: (args) => switchWorkspaceFromCommand(args),
+    workspaceRename: (args) => renameWorkspaceFromCommand(args),
+    workspaceSetLocation: (args) => setWorkspaceLocationFromCommand(args),
+    workspaceSetDefault: (args) => setDefaultWorkspaceFromCommand(args),
+    workspaceOpenFolder: (args) => openWorkspaceFolderFromCommand(args),
+    workspaceDelete: (args) => deleteWorkspaceFromCommand(args),
+    workspaceResync: (args) => resyncWorkspaceFromCommand(args),
     planMyDay: runAssistantPlanMyDay,
     wbsGenerate: (args) => generateWbsFromCommand(args),
     wbsFromDocument: (args) => openDocumentTreeReviewFromCommand(args),
@@ -24540,6 +25344,9 @@ export default function App() {
     timelineSetSchedule: (args) => setTimelineScheduleFromCommand(args),
     timelineClearSchedule: () => clearTimelineScheduleFromCommand(),
     documentReview: (args) => reviewDocumentsFromCommand(args),
+    quickAppAdd: (args) => addQuickAppFromCommand(args),
+    quickAppRemove: (args) => removeQuickAppFromCommand(args),
+    quickAppOpen: (args) => openQuickAppFromCommand(args),
     ticketCreate: () => createTicketFromCommand(),
     ticketAnalyze: () => analyzeTicketFromCommand(),
     ticketDraftReply: (args) => draftTicketReplyFromCommand(args),
@@ -24589,16 +25396,22 @@ export default function App() {
         requiresConfirmation: forcedActionId === "wbs_from_document"
       };
     }
-    const plannerEvidenceScope = getAssistantEvidenceScopeLabel(resolveAssistantEvidenceScope(commandText));
+    const assistantEvidenceScope = resolveAssistantEvidenceScope(commandText);
+    const plannerEvidenceScope = getAssistantEvidenceScopeLabel(assistantEvidenceScope);
     const plannerDocumentSources = plannerSelectedNode
       ? await collectNodeAssistantTextSources(
           plannerSelectedNode,
           4,
           options?.selectedDocumentIds,
-          resolveAssistantEvidenceScope(commandText)
+          assistantEvidenceScope
         )
       : [];
-    const groundedQuickAppSources = await collectGroundedQuickAppSources(activeScopedQuickApps, 3);
+    const plannerScopedQuickApps = resolveScopedQuickAppsForRequest(
+      activeScopedQuickApps,
+      commandText,
+      assistantEvidenceScope
+    );
+    const groundedQuickAppSources = await collectGroundedQuickAppSources(plannerScopedQuickApps, 3);
     const context = buildAiCommandContext({
       date: toIsoDateOnly(new Date()),
       workspaceName: activeProject?.name ?? t("project.none"),
@@ -24611,7 +25424,7 @@ export default function App() {
         ? parseNodeTimelineSchedule(plannerSelectedNode)?.status?.replace(/_/g, " ") ?? null
         : null,
       documentLabels: plannerDocumentSources.map((source) => source.node.name),
-      quickAppCatalogLines: formatQuickAppCatalogLines(activeScopedQuickApps),
+      quickAppCatalogLines: formatQuickAppCatalogLines(plannerScopedQuickApps),
       groundedQuickAppEvidenceLines: formatGroundedQuickAppEvidenceLines(groundedQuickAppSources)
     });
     const {
@@ -26706,6 +27519,11 @@ export default function App() {
         t={t}
         hidden={quickAppsStudioOpen || workspaceSettingsOpen}
         activeWorkspaceLabel={activeProject?.name ?? activeWorkspaceRootNode?.name ?? null}
+        workspaceToolsInsetLeft={
+          isLargeLayout
+            ? Math.max((isSidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth) + 14, 184)
+            : 184
+        }
         workspaceMode={workspaceMode}
         workspaceFocusMode={workspaceFocusMode}
         documentationModeActive={documentationModeActive}
@@ -27072,6 +27890,19 @@ export default function App() {
                   scope: "function",
                   ownerId: activeWorkspaceRootNode?.id ?? null,
                   ownerLabel: activeWorkspaceRootNode?.name ?? null
+                });
+              }}
+              onOpenTabQuickApps={() => {
+                void openQuickAppsStudioForScope("tab");
+              }}
+              tabQuickAppsEnabled={Boolean(activeWorkspaceTabNode)}
+              tabQuickApps={tabQuickApps}
+              tabQuickAppsNodeLabel={activeWorkspaceTabNode?.name ?? null}
+              onLaunchTabQuickApp={(item) => {
+                void launchQuickApp(item, {
+                  scope: "tab",
+                  ownerId: activeWorkspaceTabNode?.id ?? null,
+                  ownerLabel: activeWorkspaceTabNode?.name ?? null
                 });
               }}
             />
@@ -27681,8 +28512,6 @@ export default function App() {
         workspaceEmptyOnly={workspaceEmptyOnly}
         quickAppNodeLabel={t("quick_apps.scope_general")}
         quickApps={footerQuickApps}
-        tabQuickAppNodeLabel={activeWorkspaceTabNode?.name ?? null}
-        tabQuickApps={tabQuickApps}
         onLaunchQuickApp={(item) => {
           void launchQuickApp(item, {
             scope: "general",
@@ -27695,19 +28524,6 @@ export default function App() {
         }}
         onManageQuickApps={() => {
           void openQuickAppsStudioForScope("general");
-        }}
-        onLaunchTabQuickApp={(item) => {
-          void launchQuickApp(item, {
-            scope: "tab",
-            ownerId: activeWorkspaceTabNode?.id ?? null,
-            ownerLabel: activeWorkspaceTabNode?.name ?? null
-          });
-        }}
-        onReorderTabQuickApps={(quickApps) => {
-          void reorderTabQuickApps(activeWorkspaceTabNode?.id ?? null, quickApps);
-        }}
-        onManageTabQuickApps={() => {
-          void openQuickAppsStudioForScope("tab");
         }}
         onSelectWorkspaceFocusMode={workspaceMode === "timeline" ? selectTimelineWorkspaceFocusMode : selectWorkspaceFocusMode}
         onToggleWorkspaceEmptyOnly={toggleWorkspaceEmptyOnly}

@@ -13,7 +13,11 @@ export default defineConfig({
         manualChunks(id) {
           const normalizedId = id.replace(/\\/g, "/");
           if (normalizedId.includes("/node_modules/")) {
-            if (normalizedId.includes("/react/") || normalizedId.includes("/react-dom/")) {
+            if (
+              normalizedId.includes("/react/") ||
+              normalizedId.includes("/react-dom/") ||
+              normalizedId.includes("/scheduler/")
+            ) {
               return "react-vendor";
             }
             if (normalizedId.includes("/@tauri-apps/")) {

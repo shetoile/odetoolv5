@@ -41,6 +41,11 @@ interface MainPaneHeaderProps {
   functionQuickAppsEnabled: boolean;
   functionQuickApps: NodeQuickAppItem[];
   onLaunchFunctionQuickApp: (item: NodeQuickAppItem) => void;
+  onOpenTabQuickApps: () => void;
+  tabQuickAppsEnabled: boolean;
+  tabQuickApps: NodeQuickAppItem[];
+  tabQuickAppsNodeLabel?: string | null;
+  onLaunchTabQuickApp: (item: NodeQuickAppItem) => void;
 }
 
 function QuickAppStrip({
@@ -48,16 +53,18 @@ function QuickAppStrip({
   scopeLabel,
   items,
   onLaunch,
-  onManage
+  onManage,
+  className = ""
 }: {
   t: TranslateFn;
   scopeLabel: string;
   items: NodeQuickAppItem[];
   onLaunch: (item: NodeQuickAppItem) => void;
   onManage: () => void;
+  className?: string;
 }) {
   return (
-    <div className="flex max-w-[360px] items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1">
+    <div className={`flex max-w-[360px] items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1 ${className}`.trim()}>
       {items.map((item) => (
         <OdeTooltip key={item.id} label={item.label || scopeLabel} side="bottom">
           <button
@@ -109,12 +116,22 @@ export function MainPaneHeader({
   onOpenFunctionQuickApps,
   functionQuickAppsEnabled,
   functionQuickApps,
-  onLaunchFunctionQuickApp
+  onLaunchFunctionQuickApp,
+  onOpenTabQuickApps,
+  tabQuickAppsEnabled,
+  tabQuickApps,
+  tabQuickAppsNodeLabel = null,
+  onLaunchTabQuickApp
 }: MainPaneHeaderProps) {
   const [filesMenuOpen, setFilesMenuOpen] = useState(false);
   const filesMenuRef = useRef<HTMLDivElement | null>(null);
   const canShowWorkspaceQuickApps =
     functionQuickAppsEnabled &&
+    !documentationModeActive &&
+    (!currentFolderNode ||
+      (!isFileLikeNode(currentFolderNode) && currentFolderNode.properties?.odeDashboardWidget !== true));
+  const canShowTabQuickApps =
+    tabQuickAppsEnabled &&
     !documentationModeActive &&
     (!currentFolderNode ||
       (!isFileLikeNode(currentFolderNode) && currentFolderNode.properties?.odeDashboardWidget !== true));
@@ -141,6 +158,7 @@ export function MainPaneHeader({
     showUploadAction ||
     workspaceSettingsEnabled ||
     canShowWorkspaceQuickApps;
+  const showFocusedTabQuickApps = canShowTabQuickApps;
 
   useEffect(() => {
     setFilesMenuOpen(false);
@@ -316,6 +334,20 @@ export function MainPaneHeader({
           </div>
         ) : null}
       </div>
+      {showFocusedTabQuickApps ? (
+        <div
+          className="flex items-center justify-end pb-2 pl-4 pr-2 text-[var(--ode-text-dim)]"
+        >
+          <QuickAppStrip
+            t={t}
+            scopeLabel={t("quick_apps.scope_tab")}
+            items={tabQuickApps}
+            onLaunch={onLaunchTabQuickApp}
+            onManage={onOpenTabQuickApps}
+            className="ml-auto max-w-[560px] bg-[rgba(6,31,49,0.58)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08)]"
+          />
+        </div>
+      ) : null}
       <input
         ref={uploadInputRef}
         type="file"

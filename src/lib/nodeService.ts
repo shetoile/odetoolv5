@@ -1,3 +1,4 @@
+import type { QuickAppHtmlStorageSnapshot } from "@/lib/quickAppHtmlSnapshot";
 import { callNative } from "@/lib/tauriApi";
 import type { TreeSpreadsheetPayload } from "@/lib/treeSpreadsheet";
 import { ROOT_PARENT_ID, type AppNode, type NodeType, type ProjectSummary } from "@/lib/types";
@@ -405,13 +406,28 @@ export async function prepareQuickAppHtmlInstance(
   options?: {
     templateBaseHref?: string | null;
     storageNamespace?: string | null;
+    snapshotSeed?: {
+      scope: string;
+      ownerId?: string | null;
+      ownerLabel?: string | null;
+      quickAppId: string;
+    } | null;
   }
 ): Promise<string> {
   return callNative<string>("prepare_quick_app_html_instance", {
     templatePath,
     instanceFileName,
     templateBaseHref: options?.templateBaseHref ?? null,
-    storageNamespace: options?.storageNamespace ?? null
+    storageNamespace: options?.storageNamespace ?? null,
+    snapshotSeed: options?.snapshotSeed ?? null
+  });
+}
+
+export async function getQuickAppHtmlStorageSnapshot(
+  namespace: string
+): Promise<QuickAppHtmlStorageSnapshot | null> {
+  return callNative<QuickAppHtmlStorageSnapshot | null>("get_quick_app_html_storage_snapshot", {
+    namespace
   });
 }
 

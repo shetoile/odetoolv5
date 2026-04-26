@@ -13,12 +13,12 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AI_SPEECH_LOCALES } from "@/ai/planning/outputLanguage";
 import {
   ArrowUpGlyphSmall,
+  ChecklistGlyphSmall,
   ClockGlyphSmall,
   DatabaseRootGlyph,
   FileGlyphSmall,
   FolderGlyph,
   ImageGlyphSmall,
-  PlusGlyphSmall,
   SparkGlyphSmall,
   TrashGlyphSmall,
   UploadGlyphSmall
@@ -334,8 +334,9 @@ function readStoredAiProviderKeyDrafts(): StoredAiProviderKey[] {
   return ensureAiProviderKeyDrafts(readStoredAiProviderKeys());
 }
 
-function readRecentCommands(storageKey: string): string[] {
+function readRecentCommands(storageKey: string | null): string[] {
   if (typeof window === "undefined") return [];
+  if (!storageKey) return [];
   try {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return [];
@@ -363,8 +364,9 @@ function createConversationEntryId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function readConversationEntries(storageKey: string): AiConversationEntry[] {
+function readConversationEntries(storageKey: string | null): AiConversationEntry[] {
   if (typeof window === "undefined") return [];
+  if (!storageKey) return [];
   try {
     const raw = localStorage.getItem(storageKey);
     if (!raw) return [];
@@ -416,8 +418,9 @@ function readConversationEntries(storageKey: string): AiConversationEntry[] {
   }
 }
 
-function writeConversationEntries(storageKey: string, entries: AiConversationEntry[]) {
+function writeConversationEntries(storageKey: string | null, entries: AiConversationEntry[]) {
   if (typeof window === "undefined") return;
+  if (!storageKey) return;
   try {
     if (entries.length === 0) {
       localStorage.removeItem(storageKey);
@@ -443,7 +446,7 @@ export function AiCommandBar({
   layout = "modal",
   chrome = "default",
   focusRequestKey = 0,
-  historyStorageKey = null,
+  historyStorageKey,
   initialSurface = "organization",
   onTriggerUpload = null,
   t,
@@ -469,8 +472,13 @@ export function AiCommandBar({
   onWindowMinimize,
   onWindowToggleMaximize
 }: AiCommandBarProps) {
-  const resolvedHistoryStorageKey = historyStorageKey?.trim() || AI_COMMAND_HISTORY_STORAGE_KEY;
-  const resolvedConversationStorageKey = `${resolvedHistoryStorageKey}.conversation`;
+  const resolvedHistoryStorageKey =
+    historyStorageKey === undefined
+      ? AI_COMMAND_HISTORY_STORAGE_KEY
+      : (historyStorageKey?.trim() || null);
+  const resolvedConversationStorageKey = resolvedHistoryStorageKey
+    ? `${resolvedHistoryStorageKey}.conversation`
+    : null;
   const [activeTab, setActiveTab] = useState<CommandBarTab>("command");
   const [assistantMode, setAssistantMode] = useState<AssistantMode>("command");
   const [activeSurface, setActiveSurface] = useState<AssistantSurface>(initialSurface);
@@ -497,8 +505,12 @@ export function AiCommandBar({
   const [recentCommands, setRecentCommands] = useState<string[]>(() =>
     readRecentCommands(resolvedHistoryStorageKey)
   );
+  const [loadedHistoryStorageKey, setLoadedHistoryStorageKey] = useState<string | null>(resolvedHistoryStorageKey);
   const [conversationEntries, setConversationEntries] = useState<AiConversationEntry[]>(() =>
     readConversationEntries(resolvedConversationStorageKey)
+  );
+  const [loadedConversationStorageKey, setLoadedConversationStorageKey] = useState<string | null>(
+    resolvedConversationStorageKey
   );
   const [providerKeys, setProviderKeys] = useState<StoredAiProviderKey[]>(() => readStoredAiProviderKeyDrafts());
   const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
@@ -517,6 +529,8 @@ export function AiCommandBar({
   const [isAttachPickerBusy, setIsAttachPickerBusy] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const attachInputRef = useRef<HTMLInputElement | null>(null);
+  const historyTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const historyPanelRef = useRef<HTMLDivElement | null>(null);
   const compactComposerRef = useRef<HTMLDivElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollConversationRef = useRef(true);
@@ -691,6 +705,20 @@ export function AiCommandBar({
   }, []);
 
   useEffect(() => {
+    if (!open) return;
+    setRecentCommands(readRecentCommands(resolvedHistoryStorageKey));
+    setLoadedHistoryStorageKey(resolvedHistoryStorageKey);
+  }, [open, resolvedHistoryStorageKey]);
+
+  useEffect(() => {
+    if (!open) return;
+    setConversationEntries(readConversationEntries(resolvedConversationStorageKey));
+    activePendingConversationIdRef.current = null;
+    setLoadedConversationStorageKey(resolvedConversationStorageKey);
+  }, [open, resolvedConversationStorageKey]);
+
+  useEffect(() => {
+    if (loadedHistoryStorageKey !== resolvedHistoryStorageKey || !resolvedHistoryStorageKey) return;
     if (typeof window === "undefined") return;
     try {
       if (recentCommands.length === 0) {
@@ -701,22 +729,12 @@ export function AiCommandBar({
     } catch {
       // Command history is best-effort only.
     }
-  }, [recentCommands, resolvedHistoryStorageKey]);
+  }, [loadedHistoryStorageKey, recentCommands, resolvedHistoryStorageKey]);
 
   useEffect(() => {
-    if (!open) return;
-    setRecentCommands(readRecentCommands(resolvedHistoryStorageKey));
-  }, [open, resolvedHistoryStorageKey]);
-
-  useEffect(() => {
-    if (!open) return;
-    setConversationEntries(readConversationEntries(resolvedConversationStorageKey));
-    activePendingConversationIdRef.current = null;
-  }, [open, resolvedConversationStorageKey]);
-
-  useEffect(() => {
+    if (loadedConversationStorageKey !== resolvedConversationStorageKey) return;
     writeConversationEntries(resolvedConversationStorageKey, conversationEntries);
-  }, [conversationEntries, resolvedConversationStorageKey]);
+  }, [conversationEntries, loadedConversationStorageKey, resolvedConversationStorageKey]);
 
   useEffect(() => {
     if (!historyOpen || filteredRecentCommands.length === 0) {
@@ -731,6 +749,20 @@ export function AiCommandBar({
   useEffect(() => {
     setSelectedHistoryCommands((current) => current.filter((command) => recentCommands.includes(command)));
   }, [recentCommands]);
+
+  useEffect(() => {
+    if (!open || !historyOpen) return;
+    const handleOutsideHistoryPointerDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (historyTriggerRef.current?.contains(target) || historyPanelRef.current?.contains(target)) {
+        return;
+      }
+      closeHistoryPicker();
+    };
+    window.addEventListener("mousedown", handleOutsideHistoryPointerDown, true);
+    return () => window.removeEventListener("mousedown", handleOutsideHistoryPointerDown, true);
+  }, [historyOpen, open]);
 
   if (!open) return null;
 
@@ -1115,6 +1147,10 @@ export function AiCommandBar({
   const compactUtilityButtonClass =
     "inline-flex h-10 items-center justify-center rounded-full bg-[rgba(5,28,46,0.72)] text-[var(--ode-accent)] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] transition hover:bg-[rgba(8,43,67,0.9)] disabled:cursor-not-allowed disabled:opacity-55";
   const compactUtilityIconButtonClass = `${compactUtilityButtonClass} w-10`;
+  const historyHeaderIconButtonClass =
+    "inline-flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(5,28,46,0.58)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(8,43,67,0.48)] hover:text-[var(--ode-text)] disabled:cursor-not-allowed disabled:opacity-40";
+  const historyDeleteIconButtonClass =
+    "inline-flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(5,28,46,0.58)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(66,20,25,0.42)] hover:text-[#ffd5d5] disabled:cursor-not-allowed disabled:opacity-40";
   const selectedHistoryCommandSet = useMemo(() => new Set(selectedHistoryCommands), [selectedHistoryCommands]);
   const selectedFilteredHistoryCount = filteredRecentCommands.filter((command) =>
     selectedHistoryCommandSet.has(command)
@@ -2333,12 +2369,20 @@ export function AiCommandBar({
         className={
           isEmbedded
             ? "flex h-full min-h-0 flex-1 flex-col overflow-hidden"
-            : "ode-modal my-auto flex h-[min(54rem,calc(100vh-1.5rem))] w-full max-w-[min(88rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[28px] border border-[var(--ode-border-strong)]"
+            : `ode-modal my-auto flex h-[min(54rem,calc(100vh-1.5rem))] w-full max-w-[min(88rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-[28px] ${
+                showWindowControls ? "border border-transparent" : "border border-[var(--ode-border-strong)]"
+              }`
         }
       >
         {showEmbeddedHeader ? (
           <header
-            className={`flex shrink-0 items-start justify-between gap-4 ${isEmbedded ? "px-5 py-4" : "border-b border-[var(--ode-border)] px-6 py-5"}`}
+            className={`flex shrink-0 items-start justify-between gap-4 ${
+              isEmbedded
+                ? "px-5 py-4"
+                : showWindowControls
+                  ? "border-b border-transparent px-6 py-5"
+                  : "border-b border-[var(--ode-border)] px-6 py-5"
+            }`}
             onMouseDown={handleWindowHeaderMouseDown}
             onDoubleClick={handleWindowHeaderDoubleClick}
           >
@@ -2911,6 +2955,7 @@ export function AiCommandBar({
                       <>
                         <div className="mt-2 flex items-center justify-start">
                           <button
+                            ref={historyTriggerRef}
                             type="button"
                             className={`relative inline-flex h-9 w-9 items-center justify-center rounded-full border transition ${
                               historyOpen
@@ -2941,6 +2986,7 @@ export function AiCommandBar({
                         </div>
                         {historyOpen ? (
                           <div
+                            ref={historyPanelRef}
                             className="absolute left-0 top-[calc(100%+0.45rem)] z-[4] w-full max-w-[34rem] rounded-xl border border-[var(--ode-border-strong)] bg-[rgba(4,24,40,0.98)] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.35)]"
                             onMouseDown={(event) => {
                               event.preventDefault();
@@ -2951,36 +2997,49 @@ export function AiCommandBar({
                               <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]">
                                 <ClockGlyphSmall />
                               </span>
-                              <div className="min-w-0 flex-1">
+                              <div className="min-w-0 flex-1 pt-[1px]">
                                 <div className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
                                   {t("command.ai_history")}
                                 </div>
-                                <div className="text-[0.74rem] text-[var(--ode-text-muted)]">
-                                  {selectedHistoryCommands.length > 0
-                                    ? t("command.ai_history_selected_count", { count: selectedHistoryCommands.length })
-                                    : t("command.ai_recent_hint")}
-                                </div>
                               </div>
                               {filteredRecentCommands.length > 0 ? (
+                                <OdeTooltip
+                                  label={
+                                    allFilteredHistorySelected
+                                      ? t("command.ai_history_clear_selection")
+                                      : t("command.ai_history_select_all")
+                                  }
+                                  side="top"
+                                  align="end"
+                                >
+                                  <button
+                                    type="button"
+                                    className={`${historyHeaderIconButtonClass} ${
+                                      allFilteredHistorySelected ? "bg-[rgba(8,43,67,0.86)] text-[var(--ode-text)]" : ""
+                                    }`}
+                                    onClick={toggleSelectAllFilteredHistory}
+                                    aria-label={
+                                      allFilteredHistorySelected
+                                        ? t("command.ai_history_clear_selection")
+                                        : t("command.ai_history_select_all")
+                                    }
+                                    aria-pressed={allFilteredHistorySelected}
+                                  >
+                                    <ChecklistGlyphSmall />
+                                  </button>
+                                </OdeTooltip>
+                              ) : null}
+                              <OdeTooltip label={t("command.ai_history_delete_selected")} side="top" align="end">
                                 <button
                                   type="button"
-                                  className="rounded-md px-2 py-1 text-[0.72rem] font-medium text-[var(--ode-text-dim)] transition hover:bg-[rgba(8,43,67,0.42)] hover:text-[var(--ode-text)]"
-                                  onClick={toggleSelectAllFilteredHistory}
+                                  className={historyDeleteIconButtonClass}
+                                  onClick={deleteSelectedHistoryCommands}
+                                  disabled={selectedHistoryCommands.length === 0}
+                                  aria-label={t("command.ai_history_delete_selected")}
                                 >
-                                  {allFilteredHistorySelected
-                                    ? t("command.ai_history_clear_selection")
-                                    : t("command.ai_history_select_all")}
+                                  <TrashGlyphSmall />
                                 </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(5,28,46,0.58)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(66,20,25,0.42)] hover:text-[#ffd5d5] disabled:cursor-not-allowed disabled:opacity-40"
-                                onClick={deleteSelectedHistoryCommands}
-                                disabled={selectedHistoryCommands.length === 0}
-                                aria-label={t("command.ai_history_delete_selected")}
-                              >
-                                <TrashGlyphSmall />
-                              </button>
+                              </OdeTooltip>
                             </div>
                             {filteredRecentCommands.length > 0 ? (
                               <div className="max-h-[16rem] space-y-1 overflow-y-auto pr-1">
@@ -3058,6 +3117,7 @@ export function AiCommandBar({
                   <div className="relative flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <button
+                        ref={historyTriggerRef}
                         type="button"
                         className={`${compactUtilityIconButtonClass} relative ${
                           historyOpen ? "bg-[rgba(8,43,67,0.92)] text-[var(--ode-text)]" : ""
@@ -3082,21 +3142,6 @@ export function AiCommandBar({
                             {recentCommands.length}
                           </span>
                         ) : null}
-                      </button>
-                      <button
-                        type="button"
-                        className={`${compactUtilityButtonClass} gap-1.5 px-3 text-[0.8rem] font-medium ${
-                          canStartNewChat ? "text-[var(--ode-text)]" : "text-[var(--ode-text-dim)]"
-                        }`}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                        }}
-                        onClick={startNewChat}
-                        disabled={!canStartNewChat}
-                        aria-label={t("command.ai_new_chat")}
-                      >
-                        <PlusGlyphSmall />
-                        <span>{t("command.ai_new_chat")}</span>
                       </button>
                     </div>
                     <div className="ml-auto flex items-center gap-1.5">
@@ -3176,46 +3221,60 @@ export function AiCommandBar({
                     </div>
                     {historyOpen ? (
                       <div
+                        ref={historyPanelRef}
                         className="absolute bottom-[calc(100%+0.55rem)] left-0 z-[4] w-full max-w-[34rem] rounded-xl border border-[var(--ode-border-strong)] bg-[rgba(4,24,40,0.98)] p-2 shadow-[0_18px_50px_rgba(0,0,0,0.35)]"
                         onMouseDown={(event) => {
                           event.preventDefault();
                           cancelHistoryClose();
                         }}
                       >
-                        <div className="mb-2 flex items-start gap-2 px-1">
+                        <div className="mb-2 flex items-center gap-2 px-1">
                           <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]">
                             <ClockGlyphSmall />
                           </span>
-                          <div className="min-w-0 flex-1">
+                          <div className="min-w-0 flex-1 pt-[1px]">
                             <div className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-dim)]">
                               {t("command.ai_history")}
                             </div>
-                            <div className="text-[0.74rem] text-[var(--ode-text-muted)]">
-                              {selectedHistoryCommands.length > 0
-                                ? t("command.ai_history_selected_count", { count: selectedHistoryCommands.length })
-                                : t("command.ai_recent_hint")}
-                            </div>
                           </div>
                           {filteredRecentCommands.length > 0 ? (
+                            <OdeTooltip
+                              label={
+                                allFilteredHistorySelected
+                                  ? t("command.ai_history_clear_selection")
+                                  : t("command.ai_history_select_all")
+                              }
+                              side="top"
+                              align="end"
+                            >
+                              <button
+                                type="button"
+                                className={`${historyHeaderIconButtonClass} ${
+                                  allFilteredHistorySelected ? "bg-[rgba(8,43,67,0.86)] text-[var(--ode-text)]" : ""
+                                }`}
+                                onClick={toggleSelectAllFilteredHistory}
+                                aria-label={
+                                  allFilteredHistorySelected
+                                    ? t("command.ai_history_clear_selection")
+                                    : t("command.ai_history_select_all")
+                                }
+                                aria-pressed={allFilteredHistorySelected}
+                              >
+                                <ChecklistGlyphSmall />
+                              </button>
+                            </OdeTooltip>
+                          ) : null}
+                          <OdeTooltip label={t("command.ai_history_delete_selected")} side="top" align="end">
                             <button
                               type="button"
-                              className="rounded-md px-2 py-1 text-[0.72rem] font-medium text-[var(--ode-text-dim)] transition hover:bg-[rgba(8,43,67,0.42)] hover:text-[var(--ode-text)]"
-                              onClick={toggleSelectAllFilteredHistory}
+                              className={historyDeleteIconButtonClass}
+                              onClick={deleteSelectedHistoryCommands}
+                              disabled={selectedHistoryCommands.length === 0}
+                              aria-label={t("command.ai_history_delete_selected")}
                             >
-                              {allFilteredHistorySelected
-                                ? t("command.ai_history_clear_selection")
-                                : t("command.ai_history_select_all")}
+                              <TrashGlyphSmall />
                             </button>
-                          ) : null}
-                          <button
-                            type="button"
-                            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[0.72rem] font-medium text-[var(--ode-text-dim)] transition hover:bg-[rgba(66,20,25,0.42)] hover:text-[#ffd5d5] disabled:cursor-not-allowed disabled:opacity-40"
-                            onClick={deleteSelectedHistoryCommands}
-                            disabled={selectedHistoryCommands.length === 0}
-                          >
-                            <TrashGlyphSmall />
-                            <span>{t("command.ai_history_delete_selected")}</span>
-                          </button>
+                          </OdeTooltip>
                         </div>
                         {filteredRecentCommands.length > 0 ? (
                           <div className="max-h-[16rem] space-y-1 overflow-y-auto pr-1">
