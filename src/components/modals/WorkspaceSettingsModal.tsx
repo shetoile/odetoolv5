@@ -25,27 +25,33 @@ interface WorkspaceSettingsModalProps {
   projects: ProjectSummary[];
   activeProjectId: string | null;
   defaultProjectId: string | null;
-  workspaceNameInput: string;
   isProjectImporting: boolean;
   isWorkspaceCreating: boolean;
   isProjectResyncing: boolean;
   isProjectDeleting: boolean;
-  workspaceCreateInlineOpen: boolean;
+  isWorkspaceDuplicating: boolean;
+  isWorkspacePackageExporting: boolean;
+  isWorkspacePackageImporting: boolean;
   workspaceExternalChangeCount: number;
   isWorkspaceExternalChangeChecking: boolean;
   workspaceError: string | null;
   workspaceNotice: string | null;
   onClose: () => void;
   onProjectSelectionChange: (projectId: string) => void;
-  onWorkspaceNameInputChange: (value: string) => void;
   onOpenCreateWorkspace: () => void;
-  onCancelCreateWorkspace: () => void;
-  onCreateWorkspace: () => void;
   onPickAndImportProjectFolder: () => void;
+  onDuplicateWorkspace: () => void;
+  onCopyWorkspaceSelection: (projectId: string) => void;
+  onPasteWorkspaceSelection: () => void;
+  onExportWorkspacePackage: () => void;
+  onImportWorkspacePackage: () => void;
   onReSyncWorkspace: () => void;
   onDeleteProjectWorkspace: () => void;
+  onSetActiveWorkspaceLocalPath: () => void;
   onSetDefaultWorkspace: () => void;
   onOpenWorkspaceFolderLocation: () => void;
+  workspaceNumberingVisible: boolean;
+  onWorkspaceNumberingVisibleChange: (enabled: boolean) => void;
   workspaceRootNumberingEnabled: boolean;
   onWorkspaceRootNumberingEnabledChange: (enabled: boolean) => void;
   aiRebuildStatus: AiRebuildStatus | null;
@@ -82,27 +88,33 @@ export function WorkspaceSettingsModal({
   projects,
   activeProjectId,
   defaultProjectId,
-  workspaceNameInput,
   isProjectImporting,
   isWorkspaceCreating,
   isProjectResyncing,
   isProjectDeleting,
-  workspaceCreateInlineOpen,
+  isWorkspaceDuplicating,
+  isWorkspacePackageExporting,
+  isWorkspacePackageImporting,
   workspaceExternalChangeCount,
   isWorkspaceExternalChangeChecking,
   workspaceError,
   workspaceNotice,
   onClose,
   onProjectSelectionChange,
-  onWorkspaceNameInputChange,
   onOpenCreateWorkspace,
-  onCancelCreateWorkspace,
-  onCreateWorkspace,
   onPickAndImportProjectFolder,
+  onDuplicateWorkspace,
+  onCopyWorkspaceSelection,
+  onPasteWorkspaceSelection,
+  onExportWorkspacePackage,
+  onImportWorkspacePackage,
   onReSyncWorkspace,
   onDeleteProjectWorkspace,
+  onSetActiveWorkspaceLocalPath,
   onSetDefaultWorkspace,
   onOpenWorkspaceFolderLocation,
+  workspaceNumberingVisible,
+  onWorkspaceNumberingVisibleChange,
   workspaceRootNumberingEnabled,
   onWorkspaceRootNumberingEnabledChange,
   aiRebuildStatus,
@@ -169,32 +181,38 @@ export function WorkspaceSettingsModal({
             </span>
           </OdeTooltip>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           <WorkspaceManageCard
             t={t}
             projects={projects}
             activeProjectId={activeProjectId}
             defaultProjectId={defaultProjectId}
-            workspaceNameInput={workspaceNameInput}
             isProjectImporting={isProjectImporting}
             isWorkspaceCreating={isWorkspaceCreating}
             isProjectResyncing={isProjectResyncing}
             isProjectDeleting={isProjectDeleting}
-            workspaceCreateInlineOpen={workspaceCreateInlineOpen}
+            isWorkspaceDuplicating={isWorkspaceDuplicating}
+            isWorkspacePackageExporting={isWorkspacePackageExporting}
+            isWorkspacePackageImporting={isWorkspacePackageImporting}
             workspaceExternalChangeCount={workspaceExternalChangeCount}
             isWorkspaceExternalChangeChecking={isWorkspaceExternalChangeChecking}
             workspaceError={workspaceError}
             workspaceNotice={workspaceNotice}
             onProjectSelectionChange={onProjectSelectionChange}
-            onWorkspaceNameInputChange={onWorkspaceNameInputChange}
             onOpenCreateWorkspace={onOpenCreateWorkspace}
-            onCancelCreateWorkspace={onCancelCreateWorkspace}
-            onCreateWorkspace={onCreateWorkspace}
             onPickAndImportProjectFolder={onPickAndImportProjectFolder}
+            onDuplicateWorkspace={onDuplicateWorkspace}
+            onCopyWorkspaceSelection={onCopyWorkspaceSelection}
+            onPasteWorkspaceSelection={onPasteWorkspaceSelection}
+            onExportWorkspacePackage={onExportWorkspacePackage}
+            onImportWorkspacePackage={onImportWorkspacePackage}
             onReSyncWorkspace={onReSyncWorkspace}
             onDeleteProjectWorkspace={onDeleteProjectWorkspace}
+            onSetActiveWorkspaceLocalPath={onSetActiveWorkspaceLocalPath}
             onSetDefaultWorkspace={onSetDefaultWorkspace}
             onOpenWorkspaceFolderLocation={onOpenWorkspaceFolderLocation}
+            workspaceNumberingVisible={workspaceNumberingVisible}
+            onWorkspaceNumberingVisibleChange={onWorkspaceNumberingVisibleChange}
             workspaceRootNumberingEnabled={workspaceRootNumberingEnabled}
             onWorkspaceRootNumberingEnabledChange={onWorkspaceRootNumberingEnabledChange}
           />

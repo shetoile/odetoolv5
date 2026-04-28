@@ -277,8 +277,36 @@ export async function importNodePackage(
   return callNative<AppNode>("import_node_package", { parentNodeId, packagePath });
 }
 
+export async function duplicateWorkspace(
+  projectId: string,
+  name?: string | null
+): Promise<ProjectSummary> {
+  return callNative<ProjectSummary>("duplicate_workspace", {
+    projectId,
+    name: name?.trim() ? name.trim() : null
+  });
+}
+
+export async function exportWorkspacePackage(projectId: string): Promise<string> {
+  return callNative<string>("export_workspace_package", { projectId });
+}
+
+export async function importWorkspacePackage(
+  packagePath: string,
+  name?: string | null
+): Promise<ProjectSummary> {
+  return callNative<ProjectSummary>("import_workspace_package", {
+    packagePath,
+    name: name?.trim() ? name.trim() : null
+  });
+}
+
 export async function pickWindowsNodePackageFile(): Promise<string | null> {
   return callNative<string | null>("pick_windows_node_package_file");
+}
+
+export async function pickWindowsWorkspacePackageFile(): Promise<string | null> {
+  return callNative<string | null>("pick_windows_workspace_package_file");
 }
 
 export async function pickWindowsProjectFolder(): Promise<string | null> {

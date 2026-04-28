@@ -10,6 +10,7 @@ import {
 import {
   getQuickAppTargetLeafName,
   resolveQuickAppFaviconUrl,
+  resolveQuickAppItemType,
   resolveQuickAppPreferredIconKey,
   type NodeQuickAppItem
 } from "@/lib/nodeQuickApps";
@@ -153,10 +154,12 @@ export function QuickAppIcon({
 
   const classes = VARIANT_CLASSES[variant];
   const dockVariant = variant === "dock";
+  const itemType = resolveQuickAppItemType(item);
   const preferredIconKey = resolveQuickAppPreferredIconKey(item);
   const customIconDataUrl = item.customIconDataUrl?.trim() || null;
-  const shouldTryLocalIcon = !customIconDataUrl && item.iconKey === "auto" && item.kind === "local_path";
-  const shouldTryFavicon = !customIconDataUrl && item.iconKey === "auto" && item.kind === "url";
+  const shouldTryLocalIcon =
+    !customIconDataUrl && item.iconKey === "auto" && item.kind === "local_path" && itemType !== "html";
+  const shouldTryFavicon = !customIconDataUrl && item.iconKey === "auto" && item.kind === "url" && itemType === "link";
   const quickAppLeafName = useMemo(() => getQuickAppTargetLeafName(item.target) || item.label, [item.label, item.target]);
   const localIconCacheKey = useMemo(
     () =>

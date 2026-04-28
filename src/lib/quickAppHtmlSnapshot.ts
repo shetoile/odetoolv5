@@ -94,17 +94,45 @@ function findScopedEntry(
   return readStringEntry(entries, (key) => key.startsWith(prefix));
 }
 
+function findScopedEntryByPrefixes(
+  entries: Record<string, string>,
+  prefixes: readonly string[],
+  chantierName: string | null
+): string | null {
+  for (const prefix of prefixes) {
+    const value = findScopedEntry(entries, prefix, chantierName);
+    if (value) return value;
+  }
+  return null;
+}
+
+function readCandidateString(candidate: Record<string, unknown>, keys: readonly string[]): string {
+  for (const key of keys) {
+    const value = candidate[key];
+    if (typeof value !== "string") continue;
+    const normalized = normalizeText(value);
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
 function parseTasks(snapshot: QuickAppHtmlStorageSnapshot, chantierName: string | null): QuickAppTaskSnapshot[] {
-  const raw = findScopedEntry(snapshot.entries, "taches__", chantierName);
+  const raw = findScopedEntryByPrefixes(
+    snapshot.entries,
+    ["taches__", "tasks__", "actions__", "taskList__", "listeTaches__", "liste-des-taches__"],
+    chantierName
+  );
   return parseJsonArray(raw)
     .map((entry) => {
       if (!entry || typeof entry !== "object") return null;
       const candidate = entry as Record<string, unknown>;
-      const title = normalizeText(typeof candidate.title === "string" ? candidate.title : "");
-      const description = stripSimpleHtml(typeof candidate.content === "string" ? candidate.content : "");
-      const start = normalizeText(typeof candidate.start === "string" ? candidate.start : "");
-      const end = normalizeText(typeof candidate.end === "string" ? candidate.end : "");
-      const priority = candidate.prioritaire === true;
+      const title = readCandidateString(candidate, ["title", "titre", "name", "nom", "task", "tache"]);
+      const description = stripSimpleHtml(
+        readCandidateString(candidate, ["content", "description", "details", "detail", "note", "notes"])
+      );
+      const start = readCandidateString(candidate, ["start", "dateDebut", "date_debut", "startDate", "debut"]);
+      const end = readCandidateString(candidate, ["end", "dateFin", "date_fin", "endDate", "fin"]);
+      const priority = candidate.prioritaire === true || candidate.priority === true || candidate.isPriority === true;
       if (!title && !description && !start && !end) return null;
       return {
         title: title || "Untitled task",
@@ -118,24 +146,44 @@ function parseTasks(snapshot: QuickAppHtmlStorageSnapshot, chantierName: string 
 }
 
 function parseResources(snapshot: QuickAppHtmlStorageSnapshot, chantierName: string | null): string[] {
-  const raw = findScopedEntry(snapshot.entries, "agenda-resources__", chantierName);
+  const raw = findScopedEntryByPrefixes(
+    snapshot.entries,
+    [
+      "agenda-resources__",
+      "resources__",
+      "ressources__",
+      "teams__",
+      "equipes__",
+      "teamMembers__",
+      "listeRessources__"
+    ],
+    chantierName
+  );
   return Array.from(
     new Set(
       parseJsonArray(raw)
-        .map((entry) => normalizeText(typeof entry === "string" ? entry : ""))
+        .map((entry) => {
+          if (typeof entry === "string") return normalizeText(entry);
+          if (!entry || typeof entry !== "object") return "";
+          return readCandidateString(entry as Record<string, unknown>, ["name", "nom", "label", "title", "resource"]);
+        })
         .filter((entry) => entry.length > 0)
     )
   );
 }
 
 function parseDocuments(snapshot: QuickAppHtmlStorageSnapshot, chantierName: string | null): QuickAppDocumentSnapshot[] {
-  const raw = findScopedEntry(snapshot.entries, "documents__", chantierName);
+  const raw = findScopedEntryByPrefixes(
+    snapshot.entries,
+    ["documents__", "docs__", "attachments__", "piecesJointes__", "fichiers__", "linkedDocuments__"],
+    chantierName
+  );
   return parseJsonArray(raw)
     .map((entry) => {
       if (!entry || typeof entry !== "object") return null;
       const candidate = entry as Record<string, unknown>;
-      const name = normalizeText(typeof candidate.nom === "string" ? candidate.nom : "");
-      const fileName = normalizeText(typeof candidate.fichier === "string" ? candidate.fichier : "");
+      const name = readCandidateString(candidate, ["nom", "name", "title", "label", "document"]);
+      const fileName = readCandidateString(candidate, ["fichier", "fileName", "filename", "path", "url", "target"]);
       if (!name && !fileName) return null;
       return {
         name: name || fileName || "Document",

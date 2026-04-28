@@ -1405,6 +1405,25 @@ fn is_reserved_mirror_entry(name: &str) -> bool {
         || name.eq_ignore_ascii_case(ODE_CONTEXT_FILE_NAME)
 }
 
+fn is_documentation_projection_node(node: &NodeRecord, is_top_level_project_child: bool) -> bool {
+    let is_documentation_scope = node
+        .properties
+        .get("odeWorkspaceScopeKind")
+        .and_then(|value| value.as_str())
+        .map(|value| value.eq_ignore_ascii_case("documentation_root"))
+        .unwrap_or(false);
+    if is_documentation_scope {
+        return true;
+    }
+
+    if !is_top_level_project_child {
+        return false;
+    }
+
+    let normalized_name = node.name.trim().to_ascii_lowercase();
+    normalized_name == "database" || normalized_name == "documentation"
+}
+
 fn should_ignore_external_entry_name(name: &str) -> bool {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -1841,6 +1860,9 @@ fn sync_desktop_projection_recursive(
     let mut created_entry_names: Vec<String> = Vec::new();
     let mut folder_index = 0usize;
     for child in children.iter() {
+        if is_documentation_projection_node(child, numbering_prefix.is_empty()) {
+            continue;
+        }
         let expects_file = child.node_type.eq_ignore_ascii_case("file");
         let number_label = if expects_file {
             String::new()
@@ -4063,12 +4085,56 @@ struct NodePackage {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct WorkspacePackageMetadata {
+    name: String,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    root_path: Option<String>,
+    #[serde(default)]
+    root_node_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspacePackage {
+    version: i64,
+    exported_at: i64,
+    #[serde(default)]
+    workspace: Option<WorkspacePackageMetadata>,
+    root: NodePackageNode,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PackageOutputKind {
+    Node,
+    Workspace,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorkspaceMaterializeMode {
+    Duplicate,
+    Import,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct NodePackageNode {
+    #[serde(default)]
+    source_id: Option<String>,
     name: String,
     #[serde(rename = "type")]
     node_type: String,
     #[serde(default)]
     properties: Value,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    content_type: Option<String>,
+    #[serde(default)]
+    ai_draft: Option<Value>,
+    #[serde(default)]
+    content: Option<String>,
     #[serde(default)]
     children: Vec<NodePackageNode>,
     #[serde(default)]
@@ -4115,13 +4181,21 @@ fn find_unique_node_name(desired_name: &str, taken_node_names: &HashSet<String>)
     format!("{base}-{}", now_ms())
 }
 
-fn build_unique_package_output_path(base_dir: &Path, base_name: &str) -> PathBuf {
+fn build_unique_package_output_path(
+    base_dir: &Path,
+    base_name: &str,
+    output_kind: PackageOutputKind,
+) -> PathBuf {
     let safe = sanitize_file_name_component(base_name);
     let ts = now_ms();
-    let mut candidate = base_dir.join(format!("{safe}_{ts}.odepkg"));
+    let extension = match output_kind {
+        PackageOutputKind::Node => "odepkg",
+        PackageOutputKind::Workspace => "odewsp",
+    };
+    let mut candidate = base_dir.join(format!("{safe}_{ts}.{extension}"));
     let mut index = 1usize;
     while candidate.exists() && index < 5000 {
-        candidate = base_dir.join(format!("{safe}_{ts}_{index}.odepkg"));
+        candidate = base_dir.join(format!("{safe}_{ts}_{index}.{extension}"));
         index += 1;
     }
     candidate
@@ -4166,6 +4240,58 @@ fn strip_file_path_properties(raw: &Value) -> serde_json::Map<String, Value> {
     map.remove("importedFromPath");
     map.remove("sizeBytes");
     map
+}
+
+fn remap_string_ids(raw: &str, id_map: &HashMap<String, String>) -> String {
+    if raw.is_empty() || id_map.is_empty() {
+        return raw.to_string();
+    }
+    if let Some(mapped) = id_map.get(raw) {
+        return mapped.clone();
+    }
+    let mut next = raw.to_string();
+    for (source_id, target_id) in id_map {
+        if source_id.is_empty() || source_id == target_id {
+            continue;
+        }
+        if next.contains(source_id) {
+            next = next.replace(source_id, target_id);
+        }
+    }
+    next
+}
+
+fn remap_json_ids(value: &Value, id_map: &HashMap<String, String>) -> Value {
+    match value {
+        Value::String(raw) => Value::String(remap_string_ids(raw, id_map)),
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|item| remap_json_ids(item, id_map)).collect())
+        }
+        Value::Object(map) => {
+            let mut next = serde_json::Map::with_capacity(map.len());
+            for (key, item) in map {
+                next.insert(key.clone(), remap_json_ids(item, id_map));
+            }
+            Value::Object(next)
+        }
+        _ => value.clone(),
+    }
+}
+
+fn collect_package_source_id_map(node: &NodePackageNode, id_map: &mut HashMap<String, String>) {
+    if let Some(source_id) = node
+        .source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        id_map
+            .entry(source_id.to_string())
+            .or_insert_with(|| uuid::Uuid::new_v4().to_string());
+    }
+    for child in &node.children {
+        collect_package_source_id_map(child, id_map);
+    }
 }
 
 fn zip_directory_windows(source_dir: &Path, destination_file: &Path) -> Result<(), String> {
@@ -6364,9 +6490,14 @@ fn build_package_node_recursive(
     file_index: &mut usize,
 ) -> Result<NodePackageNode, String> {
     let mut package_node = NodePackageNode {
+        source_id: Some(node.node_id.clone()),
         name: node.name.clone(),
         node_type: node.node_type.clone(),
         properties: Value::Object(strip_file_path_properties(&node.properties)),
+        description: node.description.clone(),
+        content_type: node.content_type.clone(),
+        ai_draft: node.ai_draft.clone(),
+        content: node.content.clone(),
         children: Vec::new(),
         file_rel_path: None,
     };
@@ -6420,6 +6551,9 @@ async fn create_node_from_package(
     parent_id: &str,
     package_node: &NodePackageNode,
     extracted_root: &Path,
+    id_map: &HashMap<String, String>,
+    name_override: Option<String>,
+    properties_override: Option<serde_json::Map<String, Value>>,
 ) -> Result<NodeRecord, String> {
     let siblings = fetch_nodes_by_parent(db, parent_id).await?;
     let mut taken_node_names: HashSet<String> = siblings
@@ -6437,6 +6571,37 @@ async fn create_node_from_package(
     } else {
         package_node.node_type.trim().to_string()
     };
+    let source_id = package_node
+        .source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let node_id = source_id
+        .and_then(|id| id_map.get(id))
+        .cloned()
+        .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+    let desired_node_name = name_override
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(package_node.name.trim());
+    let remapped_package_properties = remap_json_ids(&package_node.properties, id_map);
+    let remapped_description = package_node
+        .description
+        .as_deref()
+        .map(|value| remap_string_ids(value, id_map));
+    let remapped_content_type = package_node
+        .content_type
+        .as_deref()
+        .map(|value| remap_string_ids(value, id_map));
+    let remapped_ai_draft = package_node
+        .ai_draft
+        .as_ref()
+        .map(|value| remap_json_ids(value, id_map));
+    let remapped_content = package_node
+        .content
+        .as_deref()
+        .map(|value| remap_string_ids(value, id_map));
 
     if is_file {
         let target_dir = ensure_node_files_dir(app, parent_id)?;
@@ -6449,13 +6614,13 @@ async fn create_node_from_package(
             }
         }
 
-        let desired_name = sanitize_file_name_component(&package_node.name);
+        let desired_name = sanitize_file_name_component(desired_node_name);
         let final_name =
             find_unique_import_name(&desired_name, &taken_node_names, &taken_file_names);
         taken_node_names.insert(final_name.to_lowercase());
         let destination = target_dir.join(&final_name);
 
-        let mut properties_map = strip_file_path_properties(&package_node.properties);
+        let mut properties_map = strip_file_path_properties(&remapped_package_properties);
         if let Some(rel) = package_node.file_rel_path.as_deref() {
             let source = extracted_root.join(split_relative_package_path(rel));
             if source.exists() && source.is_file() {
@@ -6479,20 +6644,23 @@ async fn create_node_from_package(
                 properties_map.insert("sizeBytes".to_string(), Value::from(size));
             }
         }
+        if let Some(override_map) = properties_override {
+            properties_map.extend(override_map);
+        }
 
         let record = NodeRecord {
-            node_id: uuid::Uuid::new_v4().to_string(),
+            node_id,
             parent_id: parent_id.to_string(),
             name: final_name,
             node_type,
             properties: Value::Object(properties_map),
-            description: None,
+            description: remapped_description,
             order: next_order,
             created_at: now,
             updated_at: now,
-            content_type: None,
-            ai_draft: None,
-            content: None,
+            content_type: remapped_content_type,
+            ai_draft: remapped_ai_draft,
+            content: remapped_content,
         };
 
         db.query("CREATE node CONTENT $record;")
@@ -6502,23 +6670,27 @@ async fn create_node_from_package(
         return Ok(record);
     }
 
-    let final_name = find_unique_node_name(&package_node.name, &taken_node_names);
+    let final_name = find_unique_node_name(desired_node_name, &taken_node_names);
+    let mut properties_map = match remapped_package_properties {
+        Value::Object(obj) => obj,
+        _ => serde_json::Map::new(),
+    };
+    if let Some(override_map) = properties_override {
+        properties_map.extend(override_map);
+    }
     let record = NodeRecord {
-        node_id: uuid::Uuid::new_v4().to_string(),
+        node_id,
         parent_id: parent_id.to_string(),
         name: final_name,
         node_type,
-        properties: match &package_node.properties {
-            Value::Object(obj) => Value::Object(obj.clone()),
-            _ => Value::Object(serde_json::Map::new()),
-        },
-        description: None,
+        properties: Value::Object(properties_map),
+        description: remapped_description,
         order: next_order,
         created_at: now,
         updated_at: now,
-        content_type: None,
-        ai_draft: None,
-        content: None,
+        content_type: remapped_content_type,
+        ai_draft: remapped_ai_draft,
+        content: remapped_content,
     };
 
     db.query("CREATE node CONTENT $record;")
@@ -6579,7 +6751,8 @@ async fn export_node_package(app: tauri::AppHandle, node_id: String) -> Result<S
             )
         })?;
 
-        let output_path = build_unique_package_output_path(&package_root, &root.name);
+        let output_path =
+            build_unique_package_output_path(&package_root, &root.name, PackageOutputKind::Node);
         zip_directory_windows(&stage_dir, &output_path)?;
         Ok(output_path.to_string_lossy().to_string())
     })();
@@ -6643,11 +6816,22 @@ async fn import_node_package(
         let package: NodePackage = serde_json::from_str(&manifest_raw)
             .map_err(|err| format!("invalid package manifest: {err}"))?;
 
+        let mut id_map = HashMap::new();
+        collect_package_source_id_map(&package.root, &mut id_map);
         let mut stack: Vec<(NodePackageNode, String)> = vec![(package.root, target_parent.clone())];
         let mut created_root: Option<NodeRecord> = None;
         while let Some((current, parent_id)) = stack.pop() {
-            let created =
-                create_node_from_package(&app, &db, &parent_id, &current, &stage_dir).await?;
+            let created = create_node_from_package(
+                &app,
+                &db,
+                &parent_id,
+                &current,
+                &stage_dir,
+                &id_map,
+                None,
+                None,
+            )
+            .await?;
             if created_root.is_none() {
                 created_root = Some(created.clone());
                 created_root_id = Some(created.node_id.clone());
@@ -6679,6 +6863,333 @@ async fn import_node_package(
             eprintln!("desktop mirror sync failed after import_node_package: {err}");
         }
     }
+    result
+}
+
+fn normalize_optional_workspace_name(name: Option<String>) -> Option<String> {
+    name.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(sanitize_file_name_component(trimmed))
+        }
+    })
+}
+
+fn resolve_workspace_package_name(
+    package: &WorkspacePackage,
+    name_override: Option<String>,
+) -> String {
+    normalize_optional_workspace_name(name_override)
+        .or_else(|| {
+            package
+                .workspace
+                .as_ref()
+                .map(|metadata| sanitize_file_name_component(&metadata.name))
+        })
+        .or_else(|| Some(sanitize_file_name_component(&package.root.name)))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "Workspace".to_string())
+}
+
+async fn materialize_workspace_package(
+    app: &tauri::AppHandle,
+    db: &Surreal<Db>,
+    mut package: WorkspacePackage,
+    extracted_root: &Path,
+    name_override: Option<String>,
+    mode: WorkspaceMaterializeMode,
+) -> Result<ProjectSummary, String> {
+    if package.root.source_id.as_deref().unwrap_or("").trim().is_empty() {
+        package.root.source_id = Some(format!("workspace-root-{}", uuid::Uuid::new_v4()));
+    }
+
+    let mut id_map = HashMap::new();
+    collect_package_source_id_map(&package.root, &mut id_map);
+    let root_source_id = package
+        .root
+        .source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "workspace package root is missing an identity".to_string())?
+        .to_string();
+    let root_node_id = id_map
+        .get(&root_source_id)
+        .cloned()
+        .ok_or_else(|| "workspace package root identity could not be remapped".to_string())?;
+    let workspace_name = resolve_workspace_package_name(&package, name_override);
+    let now = now_ms();
+    let root_path = build_internal_workspace_root_path(&root_node_id);
+    let mut root_properties = serde_json::Map::new();
+    root_properties.insert(
+        "workspaceKind".to_string(),
+        Value::String("internal".to_string()),
+    );
+    root_properties.insert(
+        "workspacePath".to_string(),
+        Value::String(root_path.clone()),
+    );
+    root_properties.insert("workspaceCreatedAt".to_string(), Value::from(now));
+    root_properties.insert("workspacePackageImportedAt".to_string(), Value::from(now));
+    if matches!(mode, WorkspaceMaterializeMode::Duplicate) {
+        root_properties.insert("workspacePackageDuplicatedAt".to_string(), Value::from(now));
+    }
+    if let Some(metadata) = &package.workspace {
+        if let Some(source_project_id) = metadata.project_id.as_deref() {
+            root_properties.insert(
+                "workspacePackageSourceProjectId".to_string(),
+                Value::String(source_project_id.to_string()),
+            );
+        }
+        if let Some(source_root_node_id) = metadata.root_node_id.as_deref() {
+            root_properties.insert(
+                "workspacePackageSourceRootNodeId".to_string(),
+                Value::String(source_root_node_id.to_string()),
+            );
+        }
+        if let Some(source_root_path) = metadata.root_path.as_deref() {
+            root_properties.insert(
+                "workspacePackageSourceRootPath".to_string(),
+                Value::String(source_root_path.to_string()),
+            );
+        }
+    }
+
+    let mut created_root_id: Option<String> = None;
+    let result: Result<ProjectSummary, String> = async {
+        let mut stack: Vec<(NodePackageNode, String)> =
+            vec![(package.root.clone(), ROOT_PARENT_ID.to_string())];
+        let mut created_root: Option<NodeRecord> = None;
+
+        while let Some((current, parent_id)) = stack.pop() {
+            let is_root = created_root.is_none();
+            let created = create_node_from_package(
+                app,
+                db,
+                &parent_id,
+                &current,
+                extracted_root,
+                &id_map,
+                if is_root {
+                    Some(workspace_name.clone())
+                } else {
+                    None
+                },
+                if is_root {
+                    Some(root_properties.clone())
+                } else {
+                    None
+                },
+            )
+            .await?;
+
+            if is_root {
+                created_root_id = Some(created.node_id.clone());
+                created_root = Some(created.clone());
+            }
+            for child in current.children.iter().rev() {
+                stack.push((child.clone(), created.node_id.clone()));
+            }
+        }
+
+        let root_record =
+            created_root.ok_or_else(|| "workspace package did not create a root node".to_string())?;
+        let project_record = ProjectRecord {
+            project_id: uuid::Uuid::new_v4().to_string(),
+            name: root_record.name.clone(),
+            root_path: build_internal_workspace_root_path(&root_record.node_id),
+            root_node_id: root_record.node_id,
+            created_at: now,
+            updated_at: now,
+        };
+        db.query("CREATE project CONTENT $record;")
+            .bind(("record", project_record.clone()))
+            .await
+            .map_err(db_err)?;
+        Ok(ProjectSummary::from(project_record))
+    }
+    .await;
+
+    if result.is_err() {
+        if let Some(root_id) = created_root_id.as_deref() {
+            if let Err(cleanup_err) =
+                rollback_created_subtree(app, root_id, "workspace package import").await
+            {
+                eprintln!("{cleanup_err}");
+            }
+        }
+    } else if let Err(err) = sync_desktop_projection_from_db(app, db).await {
+        eprintln!("desktop mirror sync failed after workspace package import: {err}");
+    }
+
+    result
+}
+
+fn create_workspace_package_for_project(
+    project: &ProjectRecord,
+    package_root_node: NodePackageNode,
+) -> WorkspacePackage {
+    WorkspacePackage {
+        version: 1,
+        exported_at: now_ms(),
+        workspace: Some(WorkspacePackageMetadata {
+            name: project.name.clone(),
+            project_id: Some(project.project_id.clone()),
+            root_path: Some(project.root_path.clone()),
+            root_node_id: Some(project.root_node_id.clone()),
+        }),
+        root: package_root_node,
+    }
+}
+
+#[tauri::command]
+async fn duplicate_workspace(
+    app: tauri::AppHandle,
+    project_id: String,
+    name: Option<String>,
+) -> Result<ProjectSummary, String> {
+    let db = get_db(&app).await?;
+    let project = fetch_project_record(&db, &project_id)
+        .await?
+        .ok_or_else(|| format!("Project not found: {project_id}"))?;
+    let all_nodes = fetch_all_nodes(&db).await?;
+    let root = all_nodes
+        .iter()
+        .find(|node| node.node_id == project.root_node_id)
+        .ok_or_else(|| format!("workspace root not found: {}", project.root_node_id))?
+        .clone();
+    let children_map = build_children_map(&all_nodes);
+
+    let state_root = ensure_internal_state_root_exists(&app)?;
+    let stage_dir = state_root
+        .join(MIRROR_SHARE_PACKAGES_DIR_NAME)
+        .join(".duplicate_stage")
+        .join(format!("pkg_{}", uuid::Uuid::new_v4().simple()));
+    let stage_files_dir = stage_dir.join("files");
+    fs::create_dir_all(&stage_files_dir).map_err(|err| {
+        format!(
+            "failed to create workspace duplicate staging directory {:?}: {err}",
+            stage_files_dir
+        )
+    })?;
+
+    let result = async {
+        let mut file_index = 0usize;
+        let package_root_node =
+            build_package_node_recursive(&root, &children_map, &stage_files_dir, &mut file_index)?;
+        let package = create_workspace_package_for_project(&project, package_root_node);
+        materialize_workspace_package(&app, &db, package, &stage_dir, name, WorkspaceMaterializeMode::Duplicate)
+            .await
+    }
+    .await;
+    let _ = fs::remove_dir_all(&stage_dir);
+    result
+}
+
+#[tauri::command]
+async fn export_workspace_package(app: tauri::AppHandle, project_id: String) -> Result<String, String> {
+    let db = get_db(&app).await?;
+    let project = fetch_project_record(&db, &project_id)
+        .await?
+        .ok_or_else(|| format!("Project not found: {project_id}"))?;
+    let all_nodes = fetch_all_nodes(&db).await?;
+    let root = all_nodes
+        .iter()
+        .find(|node| node.node_id == project.root_node_id)
+        .ok_or_else(|| format!("workspace root not found: {}", project.root_node_id))?
+        .clone();
+    let children_map = build_children_map(&all_nodes);
+
+    let state_root = ensure_internal_state_root_exists(&app)?;
+    let package_root = state_root.join(MIRROR_SHARE_PACKAGES_DIR_NAME);
+    fs::create_dir_all(&package_root).map_err(|err| {
+        format!(
+            "failed to create package directory {:?}: {err}",
+            package_root
+        )
+    })?;
+
+    let stage_dir = package_root
+        .join(".stage")
+        .join(format!("wsp_{}", uuid::Uuid::new_v4().simple()));
+    let stage_files_dir = stage_dir.join("files");
+    fs::create_dir_all(&stage_files_dir).map_err(|err| {
+        format!(
+            "failed to create workspace package staging directory {:?}: {err}",
+            stage_files_dir
+        )
+    })?;
+
+    let result = (|| -> Result<String, String> {
+        let mut file_index = 0usize;
+        let package_root_node =
+            build_package_node_recursive(&root, &children_map, &stage_files_dir, &mut file_index)?;
+        let package = create_workspace_package_for_project(&project, package_root_node);
+        let manifest_path = stage_dir.join("manifest.json");
+        let manifest_json = serde_json::to_string_pretty(&package)
+            .map_err(|err| format!("failed to encode workspace package manifest: {err}"))?;
+        fs::write(&manifest_path, manifest_json).map_err(|err| {
+            format!(
+                "failed to write workspace package manifest {:?}: {err}",
+                manifest_path
+            )
+        })?;
+
+        let output_path = build_unique_package_output_path(
+            &package_root,
+            &project.name,
+            PackageOutputKind::Workspace,
+        );
+        zip_directory_windows(&stage_dir, &output_path)?;
+        Ok(output_path.to_string_lossy().to_string())
+    })();
+
+    let _ = fs::remove_dir_all(&stage_dir);
+    result
+}
+
+#[tauri::command]
+async fn import_workspace_package(
+    app: tauri::AppHandle,
+    package_path: String,
+    name: Option<String>,
+) -> Result<ProjectSummary, String> {
+    let db = get_db(&app).await?;
+    let package_file = PathBuf::from(package_path.trim());
+    if !package_file.exists() || !package_file.is_file() {
+        return Err(format!("workspace package file not found: {:?}", package_file));
+    }
+
+    let state_root = ensure_internal_state_root_exists(&app)?;
+    let stage_dir = state_root
+        .join(MIRROR_SHARE_PACKAGES_DIR_NAME)
+        .join(".workspace_import_stage")
+        .join(format!("wsp_{}", uuid::Uuid::new_v4().simple()));
+    fs::create_dir_all(&stage_dir).map_err(|err| {
+        format!(
+            "failed to create workspace import staging directory {:?}: {err}",
+            stage_dir
+        )
+    })?;
+
+    let result = async {
+        unzip_file_windows(&package_file, &stage_dir)?;
+        let manifest_path = stage_dir.join("manifest.json");
+        if !manifest_path.exists() {
+            return Err("workspace package manifest.json is missing".to_string());
+        }
+        let manifest_raw = fs::read_to_string(&manifest_path)
+            .map_err(|err| format!("failed to read workspace package manifest {:?}: {err}", manifest_path))?;
+        let package: WorkspacePackage = serde_json::from_str(&manifest_raw)
+            .map_err(|err| format!("invalid workspace package manifest: {err}"))?;
+        materialize_workspace_package(&app, &db, package, &stage_dir, name, WorkspaceMaterializeMode::Import)
+            .await
+    }
+    .await;
+
+    let _ = fs::remove_dir_all(&stage_dir);
     result
 }
 
@@ -8278,7 +8789,23 @@ async fn pick_windows_node_package_file() -> Result<Option<String>, String> {
             .map(|path| path.to_string_lossy().to_string())
     })
     .await
-    .map_err(|err| format!("failed to open package file picker: {err}"))?;
+        .map_err(|err| format!("failed to open package file picker: {err}"))?;
+    Ok(picked)
+}
+
+#[tauri::command]
+async fn pick_windows_workspace_package_file() -> Result<Option<String>, String> {
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        rfd::FileDialog::new()
+            .set_title("Select workspace package")
+            .add_filter("ODE workspace package", &["odewsp"])
+            .add_filter("ODE package", &["odepkg"])
+            .pick_file()
+            .map(normalize_windows_extended_path)
+            .map(|path| path.to_string_lossy().to_string())
+    })
+    .await
+    .map_err(|err| format!("failed to open workspace package picker: {err}"))?;
     Ok(picked)
 }
 
@@ -11097,6 +11624,9 @@ pub fn run() {
             import_file_payloads_to_node,
             export_node_package,
             import_node_package,
+            duplicate_workspace,
+            export_workspace_package,
+            import_workspace_package,
             open_node_file,
             extract_document_text,
             sync_quick_app_html_storage_snapshot,
@@ -11134,6 +11664,7 @@ pub fn run() {
             extract_document_text_from_payload,
             export_powerpoint_slides,
             pick_windows_node_package_file,
+            pick_windows_workspace_package_file,
             pick_windows_project_folder,
             get_mirror_root,
             sync_external_mirror_entries,

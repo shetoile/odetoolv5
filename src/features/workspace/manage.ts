@@ -100,6 +100,7 @@ export function buildWorkspaceCreateInlineOpenState() {
   return {
     workspaceSettingsOpen: true,
     workspaceCreateInlineOpen: true,
+    workspaceNameInput: "",
     workspaceLocalPathInput: "",
     workspaceManageError: null as string | null,
     workspaceManageNotice: null as string | null
@@ -117,7 +118,7 @@ export function buildWorkspaceCreateInlineCancelState() {
 export function buildWorkspaceCreateInlineSubmitSuccessState() {
   return {
     workspaceCreateInlineOpen: false,
-    workspaceSettingsOpen: false
+    workspaceSettingsOpen: true
   };
 }
 

@@ -329,7 +329,6 @@ import {
   resolveTreeMoveOutPlans as resolveTreeMoveOutPlansState,
 } from "@/features/workspace/treeMove";
 import {
-  buildSelectionSignature,
   normalizeSelectionState,
   resolveKeyboardSurfaceAfterProcedure,
   resolvePreferredKeyboardSurface,
@@ -426,6 +425,8 @@ import { ReleaseNotesModal } from "@/components/modals/ReleaseNotesModal";
 import { TaskScheduleModal } from "@/components/modals/TaskScheduleModal";
 import { UserAccountsModal } from "@/components/modals/UserAccountsModal";
 import { WorkspaceSettingsModal } from "@/components/modals/WorkspaceSettingsModal";
+import { WorkspaceCreateModal } from "@/components/modals/WorkspaceCreateModal";
+import { WorkspaceDuplicateModal } from "@/components/modals/WorkspaceDuplicateModal";
 import {
   CreateChantierModal,
   type ChantierLibraryModelOption
@@ -461,16 +462,20 @@ import {
   deleteProjectWorkspace,
   detectProjectWorkspaceExternalChanges,
   deleteNode,
+  duplicateWorkspace,
   extractDocumentText,
   exportNodePackage,
+  exportWorkspacePackage,
   exportTreeStructureExcel,
   fetchQuickAppUrlPreview,
   getQuickAppHtmlStorageSnapshot,
   getAllNodes,
   getChildren,
   getProjects,
+  importWorkspacePackage,
   pickWindowsFilesForImport,
   pickWindowsNodePackageFile,
+  pickWindowsWorkspacePackageFile,
   pickWindowsTreeSpreadsheetFile,
   getWindowsFileIcon,
   importNodePackage,
@@ -515,6 +520,7 @@ import {
   normalizeNodeQuickApps,
   readStoredGeneralQuickApps,
   readStoredQuickAppLibrary,
+  resolveQuickAppItemType,
   resolveQuickAppLocalPath,
   resolveQuickAppLaunchTarget,
   shouldOpenQuickAppInsideOdeBrowser,
@@ -1100,6 +1106,7 @@ const FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGro
 const ACTIVE_FAVORITE_GROUP_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroup.activeByObjective.v2");
 const SELECTED_FAVORITE_GROUPS_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroup.selectedByObjective.v2");
 const FAVORITE_GROUP_TREE_FILTER_BY_OBJECTIVE_STORAGE_KEY = buildAppStorageKey("favoriteGroup.treeFilterByObjective.v2");
+const WORKSPACE_NUMBERING_VISIBLE_STORAGE_KEY = buildAppStorageKey("workspaceNumberingVisible.v1");
 const WORKSPACE_ROOT_NUMBERING_STORAGE_KEY = buildAppStorageKey("workspaceRootNumbering.v1");
 const NODE_TOOLTIP_VISIBILITY_STORAGE_KEY = buildAppStorageKey("nodeTooltips.visible.v1");
 const WORKSPACE_NODE_TABS_STORAGE_KEY = buildAppStorageKey("workspaceNodeTabs.v1");
@@ -2332,6 +2339,28 @@ function extractFileExtensionLower(fileName: string): string {
   return trimmed.slice(lastDot + 1).toLowerCase();
 }
 
+function buildQuickAppBrowseTargetPatch(
+  item: NodeQuickAppItem,
+  pickedPath: string
+): Partial<NodeQuickAppItem> | null {
+  const target = pickedPath.trim();
+  if (!target) return null;
+
+  const currentType = resolveQuickAppItemType(item);
+  const nextType = /\.(?:html?|xhtml)$/i.test(target)
+    ? "html"
+    : currentType === "link"
+      ? "local_app"
+      : currentType;
+
+  return {
+    target,
+    type: nextType,
+    kind: "local_path",
+    openInOdeBrowser: nextType === "html"
+  };
+}
+
 function normalizeProcedureExportFileName(value: string): string {
   const normalized = value
     .trim()
@@ -2613,6 +2642,11 @@ export default function App() {
   );
   const [hasInitializedProjects, setHasInitializedProjects] = useState(false);
   const [hasResolvedInitialWorkspaceView, setHasResolvedInitialWorkspaceView] = useState(false);
+  const [workspaceNumberingVisible, setWorkspaceNumberingVisible] = useState<boolean>(() => {
+    const raw = localStorage.getItem(WORKSPACE_NUMBERING_VISIBLE_STORAGE_KEY);
+    if (raw === null) return true;
+    return raw === "1" || raw.toLowerCase() === "true";
+  });
   const [workspaceRootNumberingEnabled, setWorkspaceRootNumberingEnabled] = useState<boolean>(() => {
     const raw = localStorage.getItem(WORKSPACE_ROOT_NUMBERING_STORAGE_KEY);
     if (raw === null) return false;
@@ -2765,6 +2799,12 @@ export default function App() {
   const odeImportPreviewResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
   const [workspaceNameInput, setWorkspaceNameInput] = useState("");
   const [workspaceLocalPathInput, setWorkspaceLocalPathInput] = useState("");
+  const [workspaceDuplicatePrompt, setWorkspaceDuplicatePrompt] = useState<{
+    projectId: string;
+    defaultName: string;
+  } | null>(null);
+  const [workspaceDuplicateNameInput, setWorkspaceDuplicateNameInput] = useState("");
+  const [copiedWorkspaceProjectId, setCopiedWorkspaceProjectId] = useState<string | null>(null);
   const [workspaceCreateInlineOpen, setWorkspaceCreateInlineOpen] = useState(false);
   const [projectPathInput, setProjectPathInput] = useState("");
 
@@ -2914,6 +2954,9 @@ export default function App() {
   const [isProjectResyncing, setIsProjectResyncing] = useState(false);
   const [isWorkspaceRepairing, setIsWorkspaceRepairing] = useState(false);
   const [isProjectDeleting, setIsProjectDeleting] = useState(false);
+  const [isWorkspaceDuplicating, setIsWorkspaceDuplicating] = useState(false);
+  const [isWorkspacePackageExporting, setIsWorkspacePackageExporting] = useState(false);
+  const [isWorkspacePackageImporting, setIsWorkspacePackageImporting] = useState(false);
   const [workspaceExternalChangeCount, setWorkspaceExternalChangeCount] = useState(0);
   const [isWorkspaceExternalChangeChecking, setIsWorkspaceExternalChangeChecking] = useState(false);
   const [projectError, setProjectError] = useState<string | null>(null);
@@ -3017,8 +3060,6 @@ export default function App() {
   const currentFolderIdRef = useRef<string | null>(store.currentFolderId);
   const selectedNodeIdRef = useRef<string | null>(store.selectedNodeId);
   const selectedNodeIdsRef = useRef<Set<string>>(new Set(selectedNodeIds));
-  const favoriteGroupAssignmentSignatureRef = useRef<string | null>(null);
-  const favoriteGroupAssignmentConsumedSignatureRef = useRef<string | null>(null);
   const workspaceModeRef = useRef<WorkspaceMode>(workspaceMode);
   const desktopViewModeRef = useRef<DesktopViewMode>(desktopViewMode);
   const desktopBrowseViewModeRef = useRef<DesktopViewMode>(
@@ -6524,6 +6565,13 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem(
+      WORKSPACE_NUMBERING_VISIBLE_STORAGE_KEY,
+      workspaceNumberingVisible ? "1" : "0"
+    );
+  }, [workspaceNumberingVisible]);
+
+  useEffect(() => {
+    localStorage.setItem(
       WORKSPACE_ROOT_NUMBERING_STORAGE_KEY,
       workspaceRootNumberingEnabled ? "1" : "0"
     );
@@ -7224,6 +7272,7 @@ export default function App() {
   }, [activeWorkspaceRootId, byParent, documentationWorkspaceRootId]);
   useEffect(() => {
     if (!activeProjectRootId || !activeProjectRootExists) return;
+    if (!documentationModeActive) return;
     if (documentationWorkspaceRootNode && !documentationWorkspaceRootNeedsMigration) {
       documentationRootProvisioningRef.current.delete(activeProjectRootId);
       return;
@@ -7272,6 +7321,7 @@ export default function App() {
     activeProjectRootExists,
     activeProjectRootId,
     createNode,
+    documentationModeActive,
     documentationWorkspaceRootNeedsMigration,
     documentationWorkspaceRootNode,
     store.refreshTree,
@@ -10233,15 +10283,6 @@ export default function App() {
     (row) => row.hasChildren && expandedIds.has(row.id)
   );
 
-  useEffect(() => {
-    if (!hasActiveFavoriteGroupTreeFiltering) return;
-    const visibleRowIds = new Set(displayedTreeRows.map((row) => row.id));
-    if (visibleRowIds.size === 0) return;
-    if (store.selectedNodeId && visibleRowIds.has(store.selectedNodeId)) return;
-    const fallbackId = displayedTreeRows[0]?.id ?? null;
-    if (!fallbackId) return;
-    setPrimarySelection(fallbackId, "tree");
-  }, [displayedTreeRows, hasActiveFavoriteGroupTreeFiltering, store.selectedNodeId]);
   displayedTimelineRowsRef.current = displayedTimelineRows;
   const displayedTreeIndexById = useMemo(() => {
     const map = new Map<string, number>();
@@ -10986,6 +11027,20 @@ export default function App() {
     [updateScopedQuickAppsDraft]
   );
 
+  const browseQuickAppsStudioItemTarget = useCallback(
+    async (scope: QuickAppScope, itemId: string, item: NodeQuickAppItem) => {
+      const [pickedPath] = await pickWindowsFilesForImport();
+      const patch = pickedPath ? buildQuickAppBrowseTargetPatch(item, pickedPath) : null;
+      if (!patch) return;
+      updateScopedQuickAppsDraft(scope, (current) =>
+        current.map((currentItem) =>
+          currentItem.id === itemId ? applyQuickAppItemPatch(currentItem, patch) : currentItem
+        )
+      );
+    },
+    [updateScopedQuickAppsDraft]
+  );
+
   const moveQuickAppsStudioItem = useCallback(
     (scope: QuickAppScope, itemId: string, direction: "up" | "down") => {
       updateScopedQuickAppsDraft(scope, (current) => {
@@ -11470,20 +11525,6 @@ export default function App() {
     workspaceNodeTabSessions
   ]);
 
-  useEffect(() => {
-    const signature = buildSelectionSignature(selectedNodeIds, selectionSurface);
-    if (!signature) {
-      favoriteGroupAssignmentSignatureRef.current = null;
-      favoriteGroupAssignmentConsumedSignatureRef.current = null;
-      return;
-    }
-    if (favoriteGroupAssignmentConsumedSignatureRef.current === signature) {
-      favoriteGroupAssignmentSignatureRef.current = null;
-      return;
-    }
-    favoriteGroupAssignmentSignatureRef.current = signature;
-  }, [selectedNodeIds, selectionSurface]);
-
   const toggleNodeStateFilter = (filter: NodeStateFilter) => {
     setActiveNodeStateFilters((prev) => toggleNodeStateFilterSelection(prev, filter));
   };
@@ -11893,7 +11934,6 @@ export default function App() {
   const {
     handleProjectSelectionChange,
     handlePickAndImportProjectFolder,
-    handlePickWorkspaceLocalFolder,
     handleCreateWorkspace,
     handleSetActiveWorkspaceLocalPath,
     handleReSyncWorkspace,
@@ -11936,6 +11976,7 @@ export default function App() {
     setWorkspaceManageNotice(nextState.workspaceManageNotice);
     setWorkspaceSettingsOpen(nextState.workspaceSettingsOpen);
     setWorkspaceCreateInlineOpen(nextState.workspaceCreateInlineOpen);
+    setWorkspaceNameInput(nextState.workspaceNameInput);
     setWorkspaceLocalPathInput(nextState.workspaceLocalPathInput);
   }, []);
 
@@ -12015,6 +12056,108 @@ export default function App() {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       setWorkspaceManageError(t("project.open_location_failed", { reason }));
+    }
+  };
+
+  const openDuplicateWorkspaceModal = (projectId?: string | null) => {
+    const project =
+      projects.find((candidate) => candidate.id === (projectId ?? activeProjectId)) ?? activeProject;
+    if (!project || isWorkspaceDuplicating || isProjectDeleting) return;
+    const defaultName = `${project.name} Copy`;
+    setWorkspaceDuplicatePrompt({ projectId: project.id, defaultName });
+    setWorkspaceDuplicateNameInput(defaultName);
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(null);
+  };
+
+  const cancelDuplicateWorkspaceModal = () => {
+    if (isWorkspaceDuplicating) return;
+    setWorkspaceDuplicatePrompt(null);
+    setWorkspaceDuplicateNameInput("");
+  };
+
+  const confirmDuplicateWorkspace = async () => {
+    const prompt = workspaceDuplicatePrompt;
+    if (!prompt || isWorkspaceDuplicating || isProjectDeleting) return;
+    const requestedName = workspaceDuplicateNameInput.trim() || prompt.defaultName;
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(null);
+    setIsWorkspaceDuplicating(true);
+    try {
+      const duplicated = await duplicateWorkspace(prompt.projectId, requestedName);
+      await store.refreshTree();
+      await loadProjectsSnapshot(duplicated.id);
+      await focusWorkspaceProject(duplicated);
+      setWorkspaceDuplicatePrompt(null);
+      setWorkspaceDuplicateNameInput("");
+      setWorkspaceManageNotice(t("project.duplicate_done", { name: duplicated.name }));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setWorkspaceManageError(t("project.duplicate_failed", { reason }));
+    } finally {
+      setIsWorkspaceDuplicating(false);
+    }
+  };
+
+  const copyWorkspaceSelection = (projectId: string) => {
+    const project = projects.find((candidate) => candidate.id === projectId) ?? null;
+    if (!project) return;
+    setCopiedWorkspaceProjectId(project.id);
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(t("project.copy_workspace_done", { name: project.name }));
+  };
+
+  const pasteWorkspaceSelection = () => {
+    if (!copiedWorkspaceProjectId) {
+      setWorkspaceManageError(t("project.copy_workspace_empty"));
+      setWorkspaceManageNotice(null);
+      return;
+    }
+    openDuplicateWorkspaceModal(copiedWorkspaceProjectId);
+  };
+
+  const exportSelectedWorkspacePackage = async () => {
+    const project = activeProject;
+    if (!project || isWorkspacePackageExporting) return;
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(null);
+    setIsWorkspacePackageExporting(true);
+    try {
+      const packagePath = await exportWorkspacePackage(project.id);
+      if (isTauri()) {
+        try {
+          await writeClipboardText(packagePath);
+        } catch {
+          // Export still succeeds if the clipboard is unavailable.
+        }
+      }
+      setWorkspaceManageNotice(t("project.export_workspace_done", { path: packagePath }));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setWorkspaceManageError(t("project.export_workspace_failed", { reason }));
+    } finally {
+      setIsWorkspacePackageExporting(false);
+    }
+  };
+
+  const importWorkspacePackageFromPicker = async () => {
+    if (isWorkspacePackageImporting || isWorkspaceCreating || isProjectImporting) return;
+    setWorkspaceManageError(null);
+    setWorkspaceManageNotice(null);
+    setIsWorkspacePackageImporting(true);
+    try {
+      const packagePath = await pickWindowsWorkspacePackageFile();
+      if (!packagePath) return;
+      const imported = await importWorkspacePackage(packagePath);
+      await store.refreshTree();
+      await loadProjectsSnapshot(imported.id);
+      await focusWorkspaceProject(imported);
+      setWorkspaceManageNotice(t("project.import_workspace_package_done", { name: imported.name }));
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      setWorkspaceManageError(t("project.import_workspace_package_failed", { reason }));
+    } finally {
+      setIsWorkspacePackageImporting(false);
     }
   };
 
@@ -14165,11 +14308,11 @@ export default function App() {
     options?: { toggle?: boolean }
   ) => {
     const targetNodeIds = resolveExplicitFavoriteActionNodeIds(sourceNodeId, selectionSurface);
-    const selectionSignature = buildSelectionSignature(new Set(targetNodeIds), selectionSurface);
+    const hasExplicitAssignmentSource = typeof sourceNodeId === "string" && sourceNodeId.length > 0;
     const shouldAssignSelection =
       groupId !== FAVORITE_ALL_GROUP_ID &&
       targetNodeIds.length > 0 &&
-      favoriteGroupAssignmentSignatureRef.current === selectionSignature;
+      hasExplicitAssignmentSource;
     const nodesToAssign = targetNodeIds
       .map((nodeId) => nodeById.get(nodeId) ?? null)
       .filter((node): node is AppNode => Boolean(node))
@@ -14186,11 +14329,6 @@ export default function App() {
           : targetNodeIds[0] ?? null,
         selectionSurface
       );
-    }
-
-    if (shouldAssignSelection) {
-      favoriteGroupAssignmentSignatureRef.current = null;
-      favoriteGroupAssignmentConsumedSignatureRef.current = selectionSignature;
     }
 
     if (groupId === FAVORITE_ALL_GROUP_ID) {
@@ -15554,6 +15692,17 @@ export default function App() {
   const updateQuickAppDraftItem = useCallback((itemId: string, patch: Partial<NodeQuickAppItem>) => {
     setQuickAppsDraftItems((current) =>
       current.map((item) => (item.id === itemId ? applyQuickAppItemPatch(item, patch) : item))
+    );
+  }, []);
+
+  const browseQuickAppDraftTarget = useCallback(async (itemId: string, item: NodeQuickAppItem) => {
+    const [pickedPath] = await pickWindowsFilesForImport();
+    const patch = pickedPath ? buildQuickAppBrowseTargetPatch(item, pickedPath) : null;
+    if (!patch) return;
+    setQuickAppsDraftItems((current) =>
+      current.map((currentItem) =>
+        currentItem.id === itemId ? applyQuickAppItemPatch(currentItem, patch) : currentItem
+      )
     );
   }, []);
 
@@ -26434,12 +26583,13 @@ export default function App() {
           projects={projects}
           activeProjectId={activeProjectId}
           defaultProjectId={defaultProjectId}
-          workspaceNameInput={workspaceNameInput}
           isProjectImporting={isProjectImporting}
           isWorkspaceCreating={isWorkspaceCreating}
           isProjectResyncing={isProjectResyncing}
           isProjectDeleting={isProjectDeleting}
-          workspaceCreateInlineOpen={workspaceCreateInlineOpen}
+          isWorkspaceDuplicating={isWorkspaceDuplicating}
+          isWorkspacePackageExporting={isWorkspacePackageExporting}
+          isWorkspacePackageImporting={isWorkspacePackageImporting}
           workspaceExternalChangeCount={workspaceExternalChangeCount}
           isWorkspaceExternalChangeChecking={isWorkspaceExternalChangeChecking}
           workspaceError={workspaceManageError}
@@ -26457,14 +26607,20 @@ export default function App() {
           onProjectSelectionChange={(projectId) => {
             void handleProjectSelectionChange(projectId);
           }}
-          onWorkspaceNameInputChange={setWorkspaceNameInput}
           onOpenCreateWorkspace={openWorkspaceCreateInline}
-          onCancelCreateWorkspace={cancelWorkspaceCreateInline}
-          onCreateWorkspace={() => {
-            void submitWorkspaceCreateInline();
-          }}
           onPickAndImportProjectFolder={() => {
             void handlePickAndImportProjectFolder();
+          }}
+          onDuplicateWorkspace={() => {
+            openDuplicateWorkspaceModal();
+          }}
+          onCopyWorkspaceSelection={copyWorkspaceSelection}
+          onPasteWorkspaceSelection={pasteWorkspaceSelection}
+          onExportWorkspacePackage={() => {
+            void exportSelectedWorkspacePackage();
+          }}
+          onImportWorkspacePackage={() => {
+            void importWorkspacePackageFromPicker();
           }}
           onReSyncWorkspace={() => {
             void (async () => {
@@ -26475,10 +26631,15 @@ export default function App() {
           onDeleteProjectWorkspace={() => {
             void handleDeleteProjectWorkspace();
           }}
+          onSetActiveWorkspaceLocalPath={() => {
+            void handleSetActiveWorkspaceLocalPath();
+          }}
           onSetDefaultWorkspace={setActiveWorkspaceAsDefault}
           onOpenWorkspaceFolderLocation={() => {
             void openSelectedWorkspaceFolderLocation();
           }}
+          workspaceNumberingVisible={workspaceNumberingVisible}
+          onWorkspaceNumberingVisibleChange={setWorkspaceNumberingVisible}
           workspaceRootNumberingEnabled={workspaceRootNumberingEnabled}
           onWorkspaceRootNumberingEnabledChange={setWorkspaceRootNumberingEnabled}
           aiRebuildStatus={aiRebuildStatus}
@@ -26995,6 +27156,9 @@ export default function App() {
           onRemove={(itemId) => removeQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId)}
           onMove={(itemId, direction) => moveQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId, direction)}
           onChange={(itemId, patch) => updateQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId, patch)}
+          onBrowseTarget={(itemId, item) => {
+            void browseQuickAppsStudioItemTarget(quickAppsStudioFocusedScope, itemId, item);
+          }}
           onClose={closeQuickAppsStudio}
           onSave={saveQuickAppsStudio}
         />
@@ -27266,6 +27430,28 @@ export default function App() {
           message={deleteConfirmMessage}
           onCancel={() => resolveDeleteConfirmation(false)}
           onConfirm={() => resolveDeleteConfirmation(true)}
+        />
+        <WorkspaceCreateModal
+          open={workspaceCreateInlineOpen}
+          t={t}
+          value={workspaceNameInput}
+          busy={isWorkspaceCreating}
+          onChange={setWorkspaceNameInput}
+          onCancel={cancelWorkspaceCreateInline}
+          onConfirm={() => {
+            void submitWorkspaceCreateInline();
+          }}
+        />
+        <WorkspaceDuplicateModal
+          open={Boolean(workspaceDuplicatePrompt)}
+          t={t}
+          value={workspaceDuplicateNameInput}
+          busy={isWorkspaceDuplicating}
+          onChange={setWorkspaceDuplicateNameInput}
+          onCancel={cancelDuplicateWorkspaceModal}
+          onConfirm={() => {
+            void confirmDuplicateWorkspace();
+          }}
         />
         <ReleaseNotesModal
           open={releaseNotesOpen}
@@ -27656,7 +27842,7 @@ export default function App() {
               folderNodeStateById={folderNodeStateById}
               executionOwnerNodeIds={executionOwnerNodeIds}
               scopedNumbering={scopedNumbering}
-              hideTreeNumbering={documentationModeActive || desktopViewMode === "library"}
+              hideTreeNumbering={!workspaceNumberingVisible || documentationModeActive || desktopViewMode === "library"}
               editActionInFlightRef={editActionInFlightRef}
               isNodeProvisionalInlineCreate={(nodeId) =>
                 provisionalInlineCreateByNodeIdRef.current.has(nodeId)
@@ -28068,6 +28254,7 @@ export default function App() {
                 executionOwnerNodeIds={executionOwnerNodeIds}
                 nodeLevelById={nodeLevelById}
                 scopedNumbering={scopedNumbering}
+                showNodeNumbering={workspaceNumberingVisible}
                 isNodeProvisionalInlineCreate={(nodeId) =>
                   provisionalInlineCreateByNodeIdRef.current.has(nodeId)
                 }

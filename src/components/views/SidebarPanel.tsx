@@ -270,7 +270,6 @@ export function SidebarPanel({
   onReviewFile
 }: SidebarPanelProps) {
   void quickAccessScopeLabel;
-  void onToggleFavoriteTreeFilter;
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
   const [treeScrollTop, setTreeScrollTop] = useState(0);
   const [treeViewportHeight, setTreeViewportHeight] = useState(0);
@@ -567,6 +566,54 @@ export function SidebarPanel({
     </>
   );
 
+  const renderTreeToggleButton = () => (
+    <OdeTooltip label={treeToggleLabel} side="bottom">
+      <button
+        type="button"
+        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
+          canToggleAllTreeNodes
+            ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+            : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
+        }`}
+        onClick={() => {
+          if (!canToggleAllTreeNodes) return;
+          if (shouldCollapseAllTreeNodes) {
+            onCollapseAllTreeNodes();
+            return;
+          }
+          onExpandAllTreeNodes();
+        }}
+        onKeyDown={handleFavoriteUiKeyDown}
+        aria-label={treeToggleLabel}
+        aria-disabled={!canToggleAllTreeNodes}
+      >
+        {shouldCollapseAllTreeNodes ? <CollapseAllGlyphSmall /> : <ExpandAllGlyphSmall />}
+      </button>
+    </OdeTooltip>
+  );
+
+  const renderOrganizationTreeButton = () => (
+    <OdeTooltip label={t("tabs.desktop")} side="bottom">
+      <button
+        type="button"
+        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
+          effectiveFavoriteTreeFilterEnabled
+            ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
+            : "border-[var(--ode-border-accent)] bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
+        }`}
+        onClick={() => {
+          onToggleFavoriteTreeFilter();
+          focusTreeKeyboardSurface();
+        }}
+        onKeyDown={handleFavoriteUiKeyDown}
+        aria-label={t("tabs.desktop")}
+        aria-pressed={!effectiveFavoriteTreeFilterEnabled}
+      >
+        <FolderGlyph active={!effectiveFavoriteTreeFilterEnabled} state="filled" />
+      </button>
+    </OdeTooltip>
+  );
+
   return (
     <aside
       className="ode-pane flex min-h-0 flex-col bg-[linear-gradient(180deg,rgba(3,20,33,0.98),rgba(2,15,26,1))] lg:shrink-0"
@@ -643,39 +690,17 @@ export function SidebarPanel({
                 </div>
               </div>
 
-              <div
-                className="mt-3 flex items-center gap-2"
-                data-ode-ignore-shortcuts="true"
-                onKeyDownCapture={handleFavoriteUiKeyDownCapture}
-              >
-                {!showFavoriteQuickAccess ? renderTooltipControlButtons() : null}
-
-                {!showFavoriteQuickAccess && workspaceManageCard ? (
-                  <OdeTooltip label={treeToggleLabel} side="bottom">
-                    <button
-                      type="button"
-                      className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
-                        canToggleAllTreeNodes
-                          ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
-                          : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
-                      }`}
-                      onClick={() => {
-                        if (!canToggleAllTreeNodes) return;
-                        if (shouldCollapseAllTreeNodes) {
-                          onCollapseAllTreeNodes();
-                          return;
-                        }
-                        onExpandAllTreeNodes();
-                      }}
-                      onKeyDown={handleFavoriteUiKeyDown}
-                      aria-label={treeToggleLabel}
-                      aria-disabled={!canToggleAllTreeNodes}
-                    >
-                      {shouldCollapseAllTreeNodes ? <CollapseAllGlyphSmall /> : <ExpandAllGlyphSmall />}
-                    </button>
-                  </OdeTooltip>
-                ) : null}
-              </div>
+              {!showFavoriteQuickAccess ? (
+                <div
+                  className="mt-3 flex items-center gap-2"
+                  data-ode-ignore-shortcuts="true"
+                  onKeyDownCapture={handleFavoriteUiKeyDownCapture}
+                >
+                  {renderOrganizationTreeButton()}
+                  {renderTreeToggleButton()}
+                  {renderTooltipControlButtons()}
+                </div>
+              ) : null}
 
               {showFavoriteQuickAccess ? (
                 <div className={`mt-3 overflow-hidden ${SIDEBAR_SURFACE_PANEL_CLASS}`}>
@@ -684,30 +709,9 @@ export function SidebarPanel({
                       data-ode-ignore-shortcuts="true"
                       onKeyDownCapture={handleFavoriteUiKeyDownCapture}
                     >
-                    <div className="flex items-center gap-2">
-                      <OdeTooltip label={treeToggleLabel} side="bottom">
-                        <button
-                          type="button"
-                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
-                            canToggleAllTreeNodes
-                              ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
-                              : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
-                          }`}
-                          onClick={() => {
-                            if (!canToggleAllTreeNodes) return;
-                            if (shouldCollapseAllTreeNodes) {
-                              onCollapseAllTreeNodes();
-                              return;
-                            }
-                            onExpandAllTreeNodes();
-                          }}
-                          onKeyDown={handleFavoriteUiKeyDown}
-                          aria-label={treeToggleLabel}
-                          aria-disabled={!canToggleAllTreeNodes}
-                        >
-                          {shouldCollapseAllTreeNodes ? <CollapseAllGlyphSmall /> : <ExpandAllGlyphSmall />}
-                        </button>
-                      </OdeTooltip>
+                    <div className="flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto">
+                      {renderOrganizationTreeButton()}
+                      {renderTreeToggleButton()}
                       {renderTooltipControlButtons()}
                       {!libraryModeActive ? (
                         <>

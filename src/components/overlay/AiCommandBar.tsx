@@ -11,6 +11,7 @@ import {
 } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AI_SPEECH_LOCALES } from "@/ai/planning/outputLanguage";
+import { buildAiEvidenceCenterSummary } from "@/features/ai/evidenceCenter";
 import {
   ArrowUpGlyphSmall,
   ChecklistGlyphSmall,
@@ -604,7 +605,7 @@ export function AiCommandBar({
     setActiveSurface(initialSurface);
     setIsDocumentPickerOpen(false);
     setActiveQuickActionId(null);
-    setSelectedDocumentIds([]);
+    setSelectedDocumentIds(nodeContext?.documents.map((document) => document.id) ?? []);
     setDraftAttachments([]);
     setDragActive(false);
     dragDepthRef.current = 0;
@@ -1006,7 +1007,7 @@ export function AiCommandBar({
     setActiveQuickActionId(null);
     setDraftAttachments([]);
     setAttachmentPanelOpen(false);
-    setSelectedDocumentIds([]);
+    setSelectedDocumentIds(nodeContext?.documents.map((document) => document.id) ?? []);
     setIsDocumentPickerOpen(false);
     setDragActive(false);
     dragDepthRef.current = 0;
@@ -1139,6 +1140,28 @@ export function AiCommandBar({
         total: availableDocuments.length
       })
     : t("command.ai_files_none");
+  const aiEvidenceSummary = useMemo(
+    () =>
+      buildAiEvidenceCenterSummary({
+        documentCount: availableDocuments.length,
+        selectedDocumentCount: normalizedSelectedDocumentIds.length,
+        sourceLabelCount: nodeContext?.sourceLabels.length ?? 0,
+        quickAppScopes
+      }),
+    [availableDocuments.length, normalizedSelectedDocumentIds.length, nodeContext?.sourceLabels.length, quickAppScopes]
+  );
+  const aiEvidenceStatusLabel =
+    aiEvidenceSummary.status === "grounded"
+      ? t("command.ai_evidence_grounded")
+      : aiEvidenceSummary.status === "metadata_only"
+        ? t("command.ai_evidence_metadata")
+        : t("command.ai_evidence_empty");
+  const aiEvidenceStatusClass =
+    aiEvidenceSummary.status === "grounded"
+      ? "border-[rgba(58,181,116,0.34)] bg-[rgba(31,96,66,0.34)] text-[#9af0bd]"
+      : aiEvidenceSummary.status === "metadata_only"
+        ? "border-[rgba(247,190,82,0.34)] bg-[rgba(96,73,31,0.28)] text-[#f8d58a]"
+        : "border-[rgba(105,140,165,0.28)] bg-[rgba(6,32,51,0.5)] text-[var(--ode-text-dim)]";
   const readyDraftAttachments = draftAttachments.filter((attachment) => attachment.status === "ready");
   const sendableDraftAttachments = readyDraftAttachments;
   const draftAttachmentCount = draftAttachments.length;
@@ -2617,6 +2640,63 @@ export function AiCommandBar({
                     </div>
                   ) : null}
 
+                  <div className="rounded-xl border border-[rgba(73,140,184,0.24)] bg-[linear-gradient(180deg,rgba(6,32,51,0.68),rgba(3,18,30,0.58))] px-4 py-4 shadow-[inset_0_1px_0_rgba(128,226,255,0.04)]">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-[0.78rem] uppercase tracking-[0.14em] text-[var(--ode-accent)]">
+                          {t("command.ai_evidence_title")}
+                        </p>
+                        <p className="mt-1 max-w-3xl text-[0.84rem] text-[var(--ode-text-dim)]">
+                          {t("command.ai_evidence_hint")}
+                        </p>
+                      </div>
+                      <span className={`rounded-full border px-3 py-1 text-[0.74rem] uppercase tracking-[0.11em] ${aiEvidenceStatusClass}`}>
+                        {aiEvidenceStatusLabel}
+                      </span>
+                    </div>
+                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                      <div className="rounded-xl border border-[rgba(73,140,184,0.18)] bg-[rgba(3,18,30,0.44)] px-3 py-3">
+                        <p className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)]">
+                          {t("command.ai_evidence_documents")}
+                        </p>
+                        <p className="mt-1 text-[1.25rem] font-semibold text-[var(--ode-text)]">{aiEvidenceSummary.documentCount}</p>
+                        <p className="mt-1 text-[0.76rem] text-[var(--ode-text-dim)]">
+                          {t("command.ai_evidence_selected", {
+                            count: aiEvidenceSummary.selectedDocumentCount
+                          })}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-[rgba(73,140,184,0.18)] bg-[rgba(3,18,30,0.44)] px-3 py-3">
+                        <p className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)]">
+                          {t("command.ai_evidence_quick_apps")}
+                        </p>
+                        <p className="mt-1 text-[1.25rem] font-semibold text-[var(--ode-text)]">{aiEvidenceSummary.groundedQuickApps}</p>
+                        <p className="mt-1 text-[0.76rem] text-[var(--ode-text-dim)]">
+                          {t("command.ai_evidence_quick_app_detail", {
+                            local: aiEvidenceSummary.readableLocalResources,
+                            links: aiEvidenceSummary.previewableLinks
+                          })}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-[rgba(73,140,184,0.18)] bg-[rgba(3,18,30,0.44)] px-3 py-3">
+                        <p className="text-[0.74rem] uppercase tracking-[0.12em] text-[var(--ode-text-muted)]">
+                          {t("command.ai_evidence_metadata_only")}
+                        </p>
+                        <p className="mt-1 text-[1.25rem] font-semibold text-[var(--ode-text)]">{aiEvidenceSummary.metadataOnlyQuickApps}</p>
+                        <p className="mt-1 text-[0.76rem] text-[var(--ode-text-dim)]">
+                          {t("command.ai_evidence_total_apps", {
+                            count: aiEvidenceSummary.totalQuickApps
+                          })}
+                        </p>
+                      </div>
+                    </div>
+                    {aiEvidenceSummary.status === "empty" ? (
+                      <p className="mt-3 rounded-lg border border-[rgba(247,190,82,0.2)] bg-[rgba(96,73,31,0.16)] px-3 py-2 text-[0.78rem] text-[#f8d58a]">
+                        {t("command.ai_evidence_empty_tip")}
+                      </p>
+                    ) : null}
+                  </div>
+
                   <div className="space-y-3">
                     <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-[var(--ode-border)] bg-[rgba(3,18,30,0.5)] p-1">
                       {surfaceTabs.map((surface) => {
@@ -2871,10 +2951,9 @@ export function AiCommandBar({
                   multiple
                   onChange={handleAttachInputChange}
                 />
-                {compactEmbeddedMode && attachmentPanelOpen ? (
+                {compactEmbeddedMode && attachmentPanelOpen && draftAttachments.length > 0 ? (
                   <div className="mb-2 max-h-[10rem] space-y-2 overflow-y-auto rounded-[18px] bg-[rgba(4,24,40,0.62)] p-2 shadow-[inset_0_1px_0_rgba(128,226,255,0.03)]">
-                    {draftAttachments.length > 0 ? (
-                      draftAttachments.map((attachment) => {
+                    {draftAttachments.map((attachment) => {
                         const attachmentErrored =
                           attachment.status === "error" || attachment.status === "unsupported";
                         const attachmentBusy = attachment.status === "loading";
@@ -2920,12 +2999,7 @@ export function AiCommandBar({
                             </button>
                           </div>
                         );
-                      })
-                    ) : (
-                      <div className="rounded-[14px] bg-[rgba(6,31,49,0.56)] px-3 py-3 text-[0.82rem] text-[var(--ode-text-dim)]">
-                        {t("command.ai_attachment_empty_state")}
-                      </div>
-                    )}
+                      })}
                   </div>
                 ) : null}
                 <div className={`flex ${compactEmbeddedMode ? "flex-col gap-1.5" : "flex-wrap items-center gap-2"}`}>

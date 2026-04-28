@@ -3,6 +3,7 @@ import {
   ArrowDownGlyphSmall,
   ArrowUpGlyphSmall,
   ImageGlyphSmall,
+  OpenGlyphSmall,
   PlusGlyphSmall,
   SearchGlyphSmall,
   TrashGlyphSmall,
@@ -35,6 +36,7 @@ interface NodeQuickAppsModalProps {
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onChange: (id: string, patch: Partial<NodeQuickAppItem>) => void;
+  onBrowseTarget?: (id: string, item: NodeQuickAppItem) => void | Promise<void>;
   onClose: () => void;
   onSave: () => void | Promise<void>;
 }
@@ -103,6 +105,7 @@ export function NodeQuickAppsModal({
   onRemove,
   onMove,
   onChange,
+  onBrowseTarget,
   onClose,
   onSave
 }: NodeQuickAppsModalProps) {
@@ -182,9 +185,18 @@ export function NodeQuickAppsModal({
   };
 
   const handleTypeChange = (itemId: string, item: NodeQuickAppItem, nextType: NodeQuickAppType) => {
+    const currentType = resolveQuickAppItemType(item);
+    const typeChanged = currentType !== nextType;
     onChange(itemId, {
       type: nextType,
       kind: nextType === "link" ? "url" : "local_path",
+      ...(typeChanged
+        ? {
+            target: "",
+            iconKey: "auto" as const,
+            customIconDataUrl: null
+          }
+        : {}),
       openInOdeBrowser: nextType === "html" ? true : nextType === "link" ? Boolean(item.openInOdeBrowser) : false
     });
   };
@@ -328,9 +340,9 @@ export function NodeQuickAppsModal({
                 (() => {
                   const itemType = resolveQuickAppItemType(item);
                   const opensInsideOde = shouldOpenQuickAppInsideOdeBrowser(item);
-                  const canOpenInsideOdeBrowser = itemType !== "local_app";
                   const odeBrowserChecked = itemType === "html" ? true : opensInsideOde;
-                  const odeBrowserDisabled = itemType !== "link";
+                  const showOdeBrowserToggle = itemType !== "local_app";
+                  const odeBrowserToggleable = itemType === "link";
                   const targetPlaceholder =
                     itemType === "link"
                       ? t("quick_apps.target_placeholder_url")
@@ -375,11 +387,62 @@ export function NodeQuickAppsModal({
                           }}
                         >
                           <option value="link">{t("quick_apps.kind_link")}</option>
-                          <option value="local_app">{t("quick_apps.kind_local_app")}</option>
                           <option value="html">{t("quick_apps.kind_html")}</option>
+                          <option value="local_app">{t("quick_apps.kind_local_app")}</option>
                         </select>
 
                         <div className="flex items-center gap-1.5">
+                          {showOdeBrowserToggle ? (
+                          <OdeTooltip label="Browser" side="top" align="start">
+                            <span className="block">
+                              <button
+                                type="button"
+                                className={`ode-icon-btn inline-flex h-12 w-12 items-center justify-center border transition ${
+                                  odeBrowserChecked
+                                    ? "border-[rgba(69,201,255,0.7)] bg-[rgba(18,92,131,0.48)] text-[var(--ode-accent)] shadow-[0_0_0_1px_rgba(69,201,255,0.18),0_0_18px_rgba(69,201,255,0.18)]"
+                                    : "border-transparent text-[var(--ode-text-dim)]"
+                                }`}
+                                onClick={() => {
+                                  if (!odeBrowserToggleable) {
+                                    onChange(item.id, { openInOdeBrowser: true });
+                                    return;
+                                  }
+                                  onChange(item.id, { openInOdeBrowser: !odeBrowserChecked });
+                                }}
+                                aria-label={t("quick_apps.open_inside_ode_browser")}
+                                aria-pressed={odeBrowserChecked}
+                                aria-disabled={saving || (!odeBrowserToggleable && itemType !== "html")}
+                                disabled={saving}
+                              >
+                                <img
+                                  src="/ode-logo-ui.png"
+                                  alt=""
+                                  className={`h-7 w-7 object-contain transition ${
+                                    odeBrowserChecked
+                                      ? "scale-105 opacity-100 drop-shadow-[0_0_10px_rgba(69,201,255,0.55)]"
+                                      : "opacity-45 grayscale"
+                                  }`}
+                                  aria-hidden
+                                />
+                              </button>
+                            </span>
+                          </OdeTooltip>
+                          ) : null}
+                          {item.customIconDataUrl ? (
+                            <OdeTooltip label={t("quick_apps.use_auto_icon")} side="top" align="start">
+                              <span className="block">
+                                <button
+                                  type="button"
+                                  className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
+                                  onClick={() => onChange(item.id, { customIconDataUrl: null })}
+                                  disabled={saving}
+                                  aria-label={t("quick_apps.use_auto_icon")}
+                                >
+                                  <ImageGlyphSmall />
+                                </button>
+                              </span>
+                            </OdeTooltip>
+                          ) : null}
                           <button
                             type="button"
                             className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
@@ -412,59 +475,55 @@ export function NodeQuickAppsModal({
                         </div>
                       </div>
 
-                      <input
-                        className="ode-input h-12 w-full rounded-[18px] px-4 text-[0.98rem]"
-                        value={item.target}
-                        placeholder={targetPlaceholder}
-                        onChange={(event) => onChange(item.id, { target: event.target.value })}
-                      />
-
-                      <div className="min-h-10 flex items-center">
-                        <OdeTooltip label={t("quick_apps.open_inside_ode_browser")} side="top" align="start">
-                          <label
-                            className={`inline-flex items-center gap-3 rounded-[14px] px-1 py-1 text-[0.92rem] ${
-                              canOpenInsideOdeBrowser
-                                ? "text-[var(--ode-text)]"
-                                : "cursor-default text-[var(--ode-text-dim)] opacity-50"
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-[var(--ode-accent)]"
-                              checked={odeBrowserChecked}
-                              disabled={odeBrowserDisabled}
-                              onChange={(event) => onChange(item.id, { openInOdeBrowser: event.target.checked })}
-                            />
-                            <span className="font-medium">{t("quick_apps.open_inside_ode_browser")}</span>
-                          </label>
-                        </OdeTooltip>
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                        <input
+                          className="ode-input h-12 w-full rounded-[18px] px-4 text-[0.98rem]"
+                          value={item.target}
+                          placeholder={targetPlaceholder}
+                          onChange={(event) => onChange(item.id, { target: event.target.value })}
+                        />
+                        <div className="flex items-center gap-1.5">
+                          {onBrowseTarget ? (
+                            <OdeTooltip label={t("project.browse_btn")} side="top" align="end">
+                              <span className="block">
+                                <button
+                                  type="button"
+                                  className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
+                                  onClick={() => {
+                                    void onBrowseTarget(item.id, item);
+                                  }}
+                                  disabled={saving}
+                                  aria-label={t("project.browse_btn")}
+                                >
+                                  <OpenGlyphSmall />
+                                </button>
+                              </span>
+                            </OdeTooltip>
+                          ) : null}
+                          <OdeTooltip label={t("quick_apps.upload_icon")} side="top" align="end">
+                            <span className="block">
+                              <label
+                                className={`ode-icon-btn inline-flex h-12 w-12 items-center justify-center ${
+                                  saving ? "cursor-not-allowed opacity-45" : "cursor-pointer"
+                                }`}
+                                aria-label={t("quick_apps.upload_icon")}
+                              >
+                                <UploadGlyphSmall />
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  disabled={saving}
+                                  onChange={(event) => {
+                                    void handleIconFileChange(item.id, event);
+                                  }}
+                                />
+                              </label>
+                            </span>
+                          </OdeTooltip>
+                        </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2">
-                        <label className="ode-text-btn inline-flex h-10 cursor-pointer items-center gap-2 px-4">
-                          <UploadGlyphSmall />
-                          <span>{t("quick_apps.upload_icon")}</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            onChange={(event) => {
-                              void handleIconFileChange(item.id, event);
-                            }}
-                          />
-                        </label>
-
-                        {item.customIconDataUrl ? (
-                          <button
-                            type="button"
-                            className="ode-text-btn inline-flex h-10 items-center gap-2 px-4"
-                            onClick={() => onChange(item.id, { customIconDataUrl: null })}
-                          >
-                            <ImageGlyphSmall />
-                            <span>{t("quick_apps.use_auto_icon")}</span>
-                          </button>
-                        ) : null}
-                      </div>
                     </div>
                   </div>
                     </div>

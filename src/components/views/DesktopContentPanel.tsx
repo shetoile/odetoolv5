@@ -696,6 +696,7 @@ interface DesktopContentPanelProps {
   executionOwnerNodeIds: Set<string>;
   nodeLevelById: Map<string, number>;
   scopedNumbering: Map<string, string>;
+  showNodeNumbering: boolean;
   isNodeProvisionalInlineCreate: (nodeId: string) => boolean;
   showEmptyState: boolean;
   emptyStateMessage: string;
@@ -801,6 +802,7 @@ export function DesktopContentPanel({
   executionOwnerNodeIds,
   nodeLevelById,
   scopedNumbering,
+  showNodeNumbering,
   isNodeProvisionalInlineCreate,
   showEmptyState,
   emptyStateMessage,
@@ -1555,6 +1557,8 @@ export function DesktopContentPanel({
 
   const resolveNodeMindMapLevel = (node: AppNode, fallbackLevel: number) =>
     nodeLevelById.get(node.id) ?? fallbackLevel;
+  const getNodeNumberLabel = (nodeId: string) =>
+    showNodeNumbering ? scopedNumbering.get(nodeId) ?? "" : "";
 
   useLayoutEffect(() => {
     if (desktopViewMode !== "mindmap" || mindMapOrientation !== "vertical") {
@@ -1878,7 +1882,7 @@ export function DesktopContentPanel({
   const renderChantierGovernanceJumpRow = (node: AppNode) => {
     const chantierProfile = readChantierProfile(node);
     const linkedNA = getChantierLinkedNADisplay(node);
-    const numberLabel = scopedNumbering.get(node.id) ?? "";
+    const numberLabel = getNodeNumberLabel(node.id);
 
     return (
       <button
@@ -2317,7 +2321,7 @@ export function DesktopContentPanel({
           {filteredWorkspacePortfolioNodes.map((node) => {
             const chantierProfile = readChantierProfile(node);
             const linkedNA = getChantierLinkedNADisplay(node);
-            const numberLabel = scopedNumbering.get(node.id) ?? "";
+            const numberLabel = getNodeNumberLabel(node.id);
             const signalPills = getChantierSignalPills(node);
             const readinessGaps = getChantierReadinessGapLabels(node);
             const valueStatement = getChantierValueStatement(node);
@@ -2721,7 +2725,7 @@ export function DesktopContentPanel({
     className = "",
     fallbackLevel = quickAccessGroupLevel + 1
   ) => {
-    const numberLabel = scopedNumbering.get(node.id) ?? "";
+    const numberLabel = getNodeNumberLabel(node.id);
     const selected = selectedNodeIds.has(node.id);
     const focused = selectedNodeId === node.id;
     const themeStyle = buildMindMapThemeStyle(resolveNodeMindMapLevel(node, fallbackLevel));
@@ -2773,7 +2777,7 @@ export function DesktopContentPanel({
   };
 
   const renderNodeTreeMindNodeCard = (node: AppNode, className = "") => {
-    const numberLabel = scopedNumbering.get(node.id) ?? "";
+    const numberLabel = getNodeNumberLabel(node.id);
     const selected = selectedNodeIds.has(node.id);
     const focused = selectedNodeId === node.id;
     const nodeLevel = resolveNodeMindMapLevel(node, nodeTreeMindMapRootLevel + 1);
@@ -2871,7 +2875,7 @@ export function DesktopContentPanel({
   };
 
   const renderDesktopGridCard = (node: AppNode) => {
-    const numberLabel = scopedNumbering.get(node.id) ?? "";
+    const numberLabel = getNodeNumberLabel(node.id);
     const selected = selectedNodeIds.has(node.id);
     const focused = selectedNodeId === node.id;
     const nodeIsFileLike = isFileLikeNode(node);
