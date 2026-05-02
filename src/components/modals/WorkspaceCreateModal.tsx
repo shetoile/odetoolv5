@@ -25,6 +25,11 @@ export function WorkspaceCreateModal({
 }: WorkspaceCreateModalProps) {
   const { surfaceRef, surfaceStyle, handlePointerDown } = useDraggableModalSurface({ open });
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const onCancelRef = useRef(onCancel);
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +42,7 @@ export function WorkspaceCreateModal({
         event.preventDefault();
         event.stopPropagation();
         event.stopImmediatePropagation();
-        onCancel();
+        onCancelRef.current();
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -45,7 +50,7 @@ export function WorkspaceCreateModal({
       window.cancelAnimationFrame(focusRafId);
       window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open) return null;
 

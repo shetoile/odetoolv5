@@ -83,6 +83,7 @@ export function TopBar({
   const workspaceLabel = activeWorkspaceLabel?.trim() ?? "";
   const showWorkspaceTools = workspaceSettingsEnabled || workspaceQuickAppsEnabled;
   const workspaceQuickAppsLabel = t("quick_apps.scope_function");
+  const workspaceQuickAppsManageLabel = t("quick_apps.manage_workspace_tooltip");
   const workspaceToolsLeft = Math.max(168, Math.round(workspaceToolsInsetLeft));
   const workspaceToolsRightInset = 176;
 
@@ -138,7 +139,6 @@ export function TopBar({
             if (!brandClickable) return;
             onBrandClick?.();
           }}
-          title={brandTitle}
           aria-label={brandTitle}
         >
           <span className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[rgba(6,29,47,0.9)] shadow-[inset_0_1px_0_rgba(121,219,255,0.06)]">
@@ -208,7 +208,7 @@ export function TopBar({
                   </OdeTooltip>
                 ))}
                 <OdeTooltip
-                  label={workspaceQuickApps.length > 0 ? t("quick_apps.manage") : workspaceQuickAppsLabel}
+                  label={workspaceQuickAppsManageLabel}
                   side="bottom"
                   align="start"
                 >
@@ -218,7 +218,7 @@ export function TopBar({
                     data-tauri-drag-region="false"
                     className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-[rgba(7,36,57,0.28)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.38)] hover:text-[var(--ode-text)]"
                     onClick={() => onManageWorkspaceQuickApps?.()}
-                    aria-label={workspaceQuickApps.length > 0 ? t("quick_apps.manage") : workspaceQuickAppsLabel}
+                    aria-label={workspaceQuickAppsManageLabel}
                     disabled={hasBlockingOverlayOpen}
                   >
                     {workspaceQuickApps.length > 0 ? <EditGlyphSmall /> : <PlusGlyphSmall />}

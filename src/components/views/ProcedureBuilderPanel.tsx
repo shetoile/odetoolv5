@@ -2836,7 +2836,7 @@ function inlineProcedureTextToEditorHtml(
           sourceNodeName: token.sourceNodeName ?? null,
           workspaceName: token.workspaceName ?? null
         });
-        return `<a href="${escapeProcedureEditorHtml(href)}" data-ode-link-type="app" data-link-label="${escapeProcedureEditorHtml(appLabel)}" title="${escapeProcedureEditorHtml(appLabel)}" contenteditable="false" draggable="false" style="${buildProcedureEditorAppLinkStyle()}">${buildProcedureAppLinkBadgeHtml({
+      return `<a href="${escapeProcedureEditorHtml(href)}" data-ode-link-type="app" data-link-label="${escapeProcedureEditorHtml(appLabel)}" aria-label="${escapeProcedureEditorHtml(appLabel)}" contenteditable="false" draggable="false" style="${buildProcedureEditorAppLinkStyle()}">${buildProcedureAppLinkBadgeHtml({
           label: appLabel,
           kind: token.kind,
           target: token.target,
@@ -9471,7 +9471,6 @@ export function ProcedureBuilderPanel({
           {visibleEntries.map((item) => (
             <div
               key={`${entry.node.id}-${item.column}`}
-              title={`${item.column}: ${item.value}`}
               className={`rounded-[14px] border border-[rgba(95,220,255,0.16)] bg-[rgba(7,39,61,0.46)] px-3 py-2 ${
                 compact ? "max-w-[180px] min-w-[112px]" : "max-w-[220px] min-w-[132px]"
               }`}
@@ -11300,7 +11299,6 @@ export function ProcedureBuilderPanel({
                                     className={`${SECTION_EDITOR_INPUT_CLASS} text-center`}
                                     style={SECTION_EDITOR_INPUT_STYLE}
                                     value={`${sectionEditorDraft.numberingStartAt}`}
-                                    title="Start at"
                                     onFocus={() => {
                                       setSectionEditorFocusTarget("panel");
                                     }}
@@ -11802,7 +11800,6 @@ export function ProcedureBuilderPanel({
                                       <button
                                         key={`recent-${color}`}
                                         type="button"
-                                        title={`Recent color ${color.toUpperCase()}`}
                                         aria-label={`Recent color ${color.toUpperCase()}`}
                                         className={`h-8 w-8 rounded-[10px] border transition hover:scale-[1.03] ${
                                           sectionEditorTextColor === color
@@ -11833,7 +11830,6 @@ export function ProcedureBuilderPanel({
                                     <button
                                       key={`theme-${color.value}`}
                                       type="button"
-                                      title={`${color.label} ${color.value.toUpperCase()}`}
                                       aria-label={`${color.label} ${color.value.toUpperCase()}`}
                                       className={`h-8 w-8 rounded-[10px] border transition hover:scale-[1.03] ${
                                         sectionEditorTextColor === color.value
@@ -11859,7 +11855,6 @@ export function ProcedureBuilderPanel({
                                     <button
                                       key={`solid-${color.value}`}
                                       type="button"
-                                      title={`${color.label} ${color.value.toUpperCase()}`}
                                       aria-label={`${color.label} ${color.value.toUpperCase()}`}
                                       className={`h-8 w-8 rounded-[10px] border transition hover:scale-[1.03] ${
                                         sectionEditorTextColor === color.value
@@ -12245,7 +12240,6 @@ export function ProcedureBuilderPanel({
                                         <button
                                           key={`table-grid-${nextRows}-${nextColumns}`}
                                           type="button"
-                                          title={`${nextColumns} x ${nextRows}`}
                                           aria-label={`Insert ${nextColumns} by ${nextRows} table`}
                                           className={`h-4 w-4 rounded-[3px] border transition ${
                                             selected

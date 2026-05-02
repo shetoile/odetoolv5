@@ -51,6 +51,7 @@ interface MainPaneHeaderProps {
 function QuickAppStrip({
   t,
   scopeLabel,
+  manageLabel,
   items,
   onLaunch,
   onManage,
@@ -58,13 +59,15 @@ function QuickAppStrip({
 }: {
   t: TranslateFn;
   scopeLabel: string;
+  manageLabel?: string;
   items: NodeQuickAppItem[];
   onLaunch: (item: NodeQuickAppItem) => void;
   onManage: () => void;
   className?: string;
 }) {
+  const resolvedManageLabel = manageLabel?.trim() || (items.length > 0 ? t("quick_apps.manage") : scopeLabel);
   return (
-    <div className={`flex max-w-[360px] items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1 ${className}`.trim()}>
+    <div className={`flex max-w-[360px] shrink-0 items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1 ${className}`.trim()}>
       {items.map((item) => (
         <OdeTooltip key={item.id} label={item.label || scopeLabel} side="bottom">
           <button
@@ -77,12 +80,12 @@ function QuickAppStrip({
           </button>
         </OdeTooltip>
       ))}
-      <OdeTooltip label={items.length > 0 ? t("quick_apps.manage") : scopeLabel} side="bottom" align="end">
+      <OdeTooltip label={resolvedManageLabel} side="bottom" align="end">
         <button
           type="button"
           className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-[rgba(7,36,57,0.28)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.38)] hover:text-[var(--ode-text)]"
           onClick={onManage}
-          aria-label={items.length > 0 ? t("quick_apps.manage") : scopeLabel}
+          aria-label={resolvedManageLabel}
         >
           {items.length > 0 ? <EditGlyphSmall /> : <PlusGlyphSmall />}
         </button>
@@ -152,13 +155,14 @@ export function MainPaneHeader({
       ? null
       : currentFolderNode?.name || t("main.desktop");
   const filesLabel = `${t("desktop.mindmap_files")} [${visibleFileItems.length}]`;
+  const showFocusedTabQuickApps = canShowTabQuickApps;
   const hasHeaderActions =
     canShowAiAction ||
     canShowFilesAction ||
     showUploadAction ||
     workspaceSettingsEnabled ||
-    canShowWorkspaceQuickApps;
-  const showFocusedTabQuickApps = canShowTabQuickApps;
+    canShowWorkspaceQuickApps ||
+    showFocusedTabQuickApps;
 
   useEffect(() => {
     setFilesMenuOpen(false);
@@ -189,11 +193,7 @@ export function MainPaneHeader({
 
   return (
     <>
-      <div
-        className={`flex items-center gap-3 py-2.5 pl-4 text-[1.02rem] text-[var(--ode-text-dim)] ${
-          isDesktopRuntime && hasHeaderActions ? "pr-[11rem]" : "pr-4"
-        }`}
-      >
+      <div className="flex items-center gap-3 py-2.5 pl-4 pr-4 text-[1.02rem] text-[var(--ode-text-dim)]">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             {breadcrumbNodes.length > 0 ? (
@@ -233,7 +233,7 @@ export function MainPaneHeader({
           </div>
         </div>
         {hasHeaderActions ? (
-          <div className="flex min-w-0 shrink-0 items-center gap-2">
+          <div className="ml-auto flex min-w-0 shrink-0 items-center justify-end gap-2">
             {canShowAiAction ? (
               <OdeTooltip label={t("command.title")} side="bottom" align="end">
                 <button
@@ -326,28 +326,30 @@ export function MainPaneHeader({
               <QuickAppStrip
                 t={t}
                 scopeLabel={t("quick_apps.scope_function")}
+                manageLabel={t("quick_apps.manage_workspace_tooltip")}
                 items={functionQuickApps}
                 onLaunch={onLaunchFunctionQuickApp}
                 onManage={onOpenFunctionQuickApps}
               />
             ) : null}
+            {showFocusedTabQuickApps ? (
+              <QuickAppStrip
+                t={t}
+                scopeLabel={t("quick_apps.scope_tab")}
+                manageLabel={t("quick_apps.manage_tab_tooltip")}
+                items={tabQuickApps}
+                onLaunch={onLaunchTabQuickApp}
+                onManage={onOpenTabQuickApps}
+                className={
+                  isDesktopRuntime
+                    ? "fixed right-4 top-[5.2rem] z-[205] max-w-[420px] bg-[rgba(6,31,49,0.78)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08),0_14px_34px_rgba(0,0,0,0.24)]"
+                    : "max-w-[420px] bg-[rgba(6,31,49,0.58)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08)]"
+                }
+              />
+            ) : null}
           </div>
         ) : null}
       </div>
-      {showFocusedTabQuickApps ? (
-        <div
-          className="flex items-center justify-end pb-2 pl-4 pr-2 text-[var(--ode-text-dim)]"
-        >
-          <QuickAppStrip
-            t={t}
-            scopeLabel={t("quick_apps.scope_tab")}
-            items={tabQuickApps}
-            onLaunch={onLaunchTabQuickApp}
-            onManage={onOpenTabQuickApps}
-            className="ml-auto max-w-[560px] bg-[rgba(6,31,49,0.58)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08)]"
-          />
-        </div>
-      ) : null}
       <input
         ref={uploadInputRef}
         type="file"

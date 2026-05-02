@@ -18,7 +18,6 @@ import {
   InfoGlyphSmall,
   LockGlyphSmall,
   NodeGlyph,
-  QuickAccessGlyphSmall,
   SearchGlyph,
   SidebarMenuGlyphSmall,
   TrashGlyphSmall,
@@ -66,6 +65,20 @@ const TREE_ROW_LABEL_CLAMP_STYLE = {
   WebkitLineClamp: 2,
   overflow: "hidden"
 };
+
+function FavoriteGroupStar({ active = false }: { active?: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" aria-hidden>
+      <path
+        d="m12 4.1 2.35 4.76 5.25.76-3.8 3.7.9 5.23L12 16.1l-4.7 2.47.9-5.23-3.8-3.7 5.25-.76Z"
+        fill={active ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 function resolveSidebarTreeIndent(level: number): number {
   if (level <= 0) return 12;
@@ -320,6 +333,7 @@ export function SidebarPanel({
     () => new Set(effectiveSelectedFavoriteGroupIds),
     [effectiveSelectedFavoriteGroupIds]
   );
+  const favoriteGroupSelectionActive = effectiveSelectedFavoriteGroupIdSet.size > 0;
   const getNodeDisplayLabel = (node: AppNode) => {
     if (editingNodeId === node.id) {
       return editingValue.length > 0 ? editingValue : "\u00A0";
@@ -653,7 +667,7 @@ export function SidebarPanel({
         </div>
       ) : (
         <>
-          <div className="px-3 py-3">
+          <div className="px-3 py-2">
             <div className="relative">
               {isLargeLayout ? (
                 <OdeTooltip label={t("sidebar.collapse")} side="bottom" align="end">
@@ -666,8 +680,8 @@ export function SidebarPanel({
                   </button>
                 </OdeTooltip>
               ) : null}
-              <div className={`${SIDEBAR_SURFACE_PANEL_CLASS} px-3 py-3`}>
-                <div className="flex items-center gap-2 rounded-[18px] py-2.5 pl-3 pr-10">
+              <div className={`${SIDEBAR_SURFACE_PANEL_CLASS} px-2 py-2`}>
+                <div className="flex items-center gap-2 rounded-[16px] py-1.5 pl-3 pr-10">
                   <span className="ode-sidebar-search-accent text-[0.95rem]">
                     <SearchGlyph />
                   </span>
@@ -692,7 +706,7 @@ export function SidebarPanel({
 
               {!showFavoriteQuickAccess ? (
                 <div
-                  className="mt-3 flex items-center gap-2"
+                  className="mt-2 flex items-center gap-2"
                   data-ode-ignore-shortcuts="true"
                   onKeyDownCapture={handleFavoriteUiKeyDownCapture}
                 >
@@ -703,9 +717,9 @@ export function SidebarPanel({
               ) : null}
 
               {showFavoriteQuickAccess ? (
-                <div className={`mt-3 overflow-hidden ${SIDEBAR_SURFACE_PANEL_CLASS}`}>
+                <div className={`mt-2 overflow-hidden ${SIDEBAR_SURFACE_PANEL_CLASS}`}>
                     <div
-                      className="px-3 py-3"
+                      className="px-3 py-2"
                       data-ode-ignore-shortcuts="true"
                       onKeyDownCapture={handleFavoriteUiKeyDownCapture}
                     >
@@ -731,8 +745,8 @@ export function SidebarPanel({
                               type="button"
                               className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition ${
                                 hasSelectedNodes
-                                  ? "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
-                                  : "border-[var(--ode-border)] text-[var(--ode-text-subtle)] opacity-45 cursor-not-allowed"
+                                  ? "border-[rgba(255,216,77,0.42)] bg-[rgba(58,45,8,0.14)] text-[#ffd84d] hover:border-[rgba(255,216,77,0.72)] hover:bg-[rgba(58,45,8,0.24)]"
+                                  : "cursor-not-allowed border-[rgba(255,216,77,0.18)] bg-[rgba(58,45,8,0.08)] text-[#8f7a3c] opacity-45"
                               }`}
                               onClick={() => {
                                 if (!hasSelectedNodes) return;
@@ -742,7 +756,7 @@ export function SidebarPanel({
                               aria-label={t("context.assign_favorite_group")}
                               aria-disabled={!hasSelectedNodes}
                             >
-                              <QuickAccessGlyphSmall />
+                              <FavoriteGroupStar active={favoriteGroupSelectionActive} />
                             </button>
                           </OdeTooltip>
                           {effectiveFavoriteGroups.length > 0 ? (
@@ -795,94 +809,101 @@ export function SidebarPanel({
                     </div>
                     {effectiveFavoriteGroups.length > 0 ? (
                         <div
-                          className="mt-3 border-t border-dashed border-[rgba(74,165,212,0.4)] pt-3"
+                          className="mt-2 border-t border-dashed border-[rgba(74,165,212,0.4)] pt-2"
                           data-ode-ignore-shortcuts="true"
                           onKeyDownCapture={handleFavoriteUiKeyDownCapture}
                         >
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    {effectiveFavoriteGroups.map((group) => (
-                      <button
-                        key={`sidebar-favorite-group-${group.id}`}
-                        type="button"
-                        draggable
-                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-[0.72rem] ${
-                          effectiveSelectedFavoriteGroupIdSet.has(group.id)
-                            ? "border-[var(--ode-border-accent)] bg-[rgba(31,129,188,0.22)] text-[var(--ode-text)]"
-                            : "border-[var(--ode-border)] text-[var(--ode-text-dim)] hover:border-[var(--ode-border-accent)] hover:text-[var(--ode-text)]"
-                        }`}
-                        onClick={(event) =>
-                          {
-                            event.currentTarget.focus();
-                            onSelectFavoriteGroup(group.id, {
-                              toggle: event.ctrlKey || event.metaKey
-                            });
-                          }
-                        }
-                        onDoubleClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          onEditFavoriteGroup(group.id);
-                        }}
-                        onDragStart={(event) => {
-                          event.dataTransfer.effectAllowed = "move";
-                          event.dataTransfer.setData(FAVORITE_GROUP_DRAG_MIME, group.id);
-                          event.dataTransfer.setData("text/plain", group.id);
-                          draggingFavoriteGroupIdRef.current = group.id;
-                          setDraggingFavoriteGroupId(group.id);
-                        }}
-                        onDragEnd={() => {
-                          draggingFavoriteGroupIdRef.current = null;
-                          setDraggingFavoriteGroupId(null);
-                          setFavoriteGroupDropTargetId(null);
-                        }}
-                        onDragOver={(event) => {
-                          if (resolveDraggedFavoriteGroupId(event)) return;
-                          const sourceNodeId = onResolveActiveDragSourceId(event);
-                          if (!sourceNodeId) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          event.dataTransfer.dropEffect = "move";
-                          if (favoriteGroupDropTargetId !== group.id) {
-                            setFavoriteGroupDropTargetId(group.id);
-                          }
-                        }}
-                        onDragLeave={(event) => {
-                          if (favoriteGroupDropTargetId !== group.id) return;
-                          event.stopPropagation();
-                          const relatedTarget = event.relatedTarget as Node | null;
-                          if (relatedTarget && event.currentTarget.contains(relatedTarget)) return;
-                          setFavoriteGroupDropTargetId(null);
-                        }}
-                        onDrop={(event) => {
-                          if (resolveDraggedFavoriteGroupId(event)) {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            setFavoriteGroupDropTargetId(null);
-                            return;
-                          }
-                          const sourceNodeId = onResolveActiveDragSourceId(event);
-                          if (!sourceNodeId) return;
-                          event.preventDefault();
-                          event.stopPropagation();
-                          setFavoriteGroupDropTargetId(null);
-                          onAssignNodesToFavoriteGroup(group.id, sourceNodeId);
-                        }}
-                        onKeyDown={(event) => handleFavoriteGroupKeyDown(event, group.id)}
-                        aria-label={`${group.name} - ${t("favorites.panel_title")}`}
-                        aria-pressed={effectiveSelectedFavoriteGroupIdSet.has(group.id)}
-                        style={
-                          favoriteGroupDropTargetId === group.id
-                            ? {
-                                borderColor: "var(--ode-border-accent)",
-                                background: "rgba(31,129,188,0.22)",
-                                color: "var(--ode-text)"
+                    {effectiveFavoriteGroups.map((group) => {
+                      const selected = effectiveSelectedFavoriteGroupIdSet.has(group.id);
+                      return (
+                        <OdeTooltip key={`sidebar-favorite-group-${group.id}`} label={`${t("favorites.group_select_label")}: ${group.name}`} side="bottom">
+                          <button
+                            type="button"
+                            draggable
+                            className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 text-[0.72rem] transition ${
+                              selected
+                                ? "border-[rgba(255,216,77,0.58)] bg-[linear-gradient(180deg,rgba(31,129,188,0.36),rgba(10,64,98,0.54))] text-[var(--ode-text)] shadow-[0_0_0_1px_rgba(255,216,77,0.12),0_8px_20px_rgba(0,0,0,0.18)]"
+                                : "border-[rgba(255,216,77,0.24)] bg-[rgba(8,40,61,0.18)] text-[var(--ode-text-dim)] hover:border-[rgba(255,216,77,0.42)] hover:bg-[rgba(8,52,82,0.32)] hover:text-[var(--ode-text)]"
+                            }`}
+                            onClick={(event) =>
+                              {
+                                event.currentTarget.focus();
+                                onSelectFavoriteGroup(group.id, {
+                                  toggle: event.ctrlKey || event.metaKey
+                                });
                               }
-                            : undefined
-                        }
-                      >
-                        {group.name}
-                      </button>
-                    ))}
+                            }
+                            onDoubleClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              onEditFavoriteGroup(group.id);
+                            }}
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData(FAVORITE_GROUP_DRAG_MIME, group.id);
+                              event.dataTransfer.setData("text/plain", group.id);
+                              draggingFavoriteGroupIdRef.current = group.id;
+                              setDraggingFavoriteGroupId(group.id);
+                            }}
+                            onDragEnd={() => {
+                              draggingFavoriteGroupIdRef.current = null;
+                              setDraggingFavoriteGroupId(null);
+                              setFavoriteGroupDropTargetId(null);
+                            }}
+                            onDragOver={(event) => {
+                              if (resolveDraggedFavoriteGroupId(event)) return;
+                              const sourceNodeId = onResolveActiveDragSourceId(event);
+                              if (!sourceNodeId) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              event.dataTransfer.dropEffect = "move";
+                              if (favoriteGroupDropTargetId !== group.id) {
+                                setFavoriteGroupDropTargetId(group.id);
+                              }
+                            }}
+                            onDragLeave={(event) => {
+                              if (favoriteGroupDropTargetId !== group.id) return;
+                              event.stopPropagation();
+                              const relatedTarget = event.relatedTarget as Node | null;
+                              if (relatedTarget && event.currentTarget.contains(relatedTarget)) return;
+                              setFavoriteGroupDropTargetId(null);
+                            }}
+                            onDrop={(event) => {
+                              if (resolveDraggedFavoriteGroupId(event)) {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                setFavoriteGroupDropTargetId(null);
+                                return;
+                              }
+                              const sourceNodeId = onResolveActiveDragSourceId(event);
+                              if (!sourceNodeId) return;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              setFavoriteGroupDropTargetId(null);
+                              onAssignNodesToFavoriteGroup(group.id, sourceNodeId);
+                            }}
+                            onKeyDown={(event) => handleFavoriteGroupKeyDown(event, group.id)}
+                            aria-label={`${t("favorites.group_select_label")}: ${group.name}`}
+                            aria-pressed={selected}
+                            style={
+                              favoriteGroupDropTargetId === group.id
+                                ? {
+                                    borderColor: "var(--ode-border-accent)",
+                                    background: "rgba(31,129,188,0.22)",
+                                    color: "var(--ode-text)"
+                                  }
+                                : undefined
+                            }
+                          >
+                            <span className={selected ? "text-[#ffd84d]" : "text-[#c9ac56]"}>
+                              <FavoriteGroupStar active={selected} />
+                            </span>
+                            <span>{group.name}</span>
+                          </button>
+                        </OdeTooltip>
+                      );
+                    })}
                         </div>
                       </div>
                     ) : null}
@@ -936,7 +957,7 @@ export function SidebarPanel({
 
           <div
             ref={treeScrollRef}
-            className="flex-1 overflow-auto px-3 pb-4 pt-3 focus:outline-none"
+            className="flex-1 overflow-auto px-3 pb-4 pt-2 focus:outline-none"
             data-ode-surface="tree"
             tabIndex={0}
             onMouseDownCapture={activateTreeKeyboardSurface}

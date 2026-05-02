@@ -135,7 +135,8 @@ export function writeStoredAiProviderKeys(entries: StoredAiProviderKey[]) {
 }
 
 export function getPrimaryStoredAiProviderKey(): StoredAiProviderKey | null {
-  return readStoredAiProviderKeys().find((entry) => entry.providerId !== "unknown") ?? null;
+  const keys = readStoredAiProviderKeys();
+  return keys.find((entry) => entry.providerId !== "unknown") ?? keys[0] ?? null;
 }
 
 export function createEmptyStoredAiProviderKey(): StoredAiProviderKey {

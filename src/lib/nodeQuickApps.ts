@@ -12,6 +12,8 @@ export interface QuickAppLaunchContext {
   scope?: QuickAppScope | null;
   ownerId?: string | null;
   ownerLabel?: string | null;
+  workspaceId?: string | null;
+  workspaceLabel?: string | null;
 }
 
 export type NodeQuickAppKind = "url" | "local_path";
@@ -59,6 +61,11 @@ export interface QuickAppLibraryItem {
   iconKey: NodeQuickAppIconKey;
   customIconDataUrl?: string | null;
   openInOdeBrowser?: boolean;
+  scope: QuickAppScope;
+  ownerId: string | null;
+  ownerLabel: string;
+  workspaceId?: string | null;
+  workspaceLabel?: string | null;
   addedAt: number;
   lastUsedAt: number;
 }
@@ -67,6 +74,8 @@ export interface ScopedQuickAppRecord extends NodeQuickAppItem {
   scope: QuickAppScope;
   ownerId: string | null;
   ownerLabel: string;
+  workspaceId?: string | null;
+  workspaceLabel?: string | null;
   launchTarget: string;
   readabilityStatus:
     | "metadata_only"
@@ -128,6 +137,10 @@ function isQuickAppKind(value: unknown): value is NodeQuickAppKind {
 
 function isQuickAppType(value: unknown): value is NodeQuickAppType {
   return value === "link" || value === "local_app" || value === "html";
+}
+
+function isQuickAppScope(value: unknown): value is QuickAppScope {
+  return value === "general" || value === "function" || value === "tab";
 }
 
 function isQuickAppIconKey(value: unknown): value is NodeQuickAppIconKey {
@@ -195,7 +208,7 @@ function mapQuickAppTypeToKind(type: NodeQuickAppType): NodeQuickAppKind {
   return type === "link" ? "url" : "local_path";
 }
 
-function buildQuickAppLibraryFingerprint(item: Pick<NodeQuickAppItem, "type" | "kind" | "target">): string {
+export function buildQuickAppTargetFingerprint(item: Pick<NodeQuickAppItem, "type" | "kind" | "target">): string {
   const type = resolveQuickAppTypeCandidate(item);
   const target = normalizeQuickAppTarget(mapQuickAppTypeToKind(type), trimString(item.target));
   if (!target) return `${type}|`;
@@ -211,6 +224,92 @@ function buildQuickAppLibraryFingerprint(item: Pick<NodeQuickAppItem, "type" | "
 
   const localPath = resolveQuickAppLocalPath(target) ?? stripWrappingQuotes(target).replace(/\//g, "\\");
   return `${type}|${localPath.toLowerCase()}`;
+}
+
+function buildQuickAppLibraryFingerprint(
+  item: Pick<QuickAppLibraryItem, "type" | "kind" | "target" | "scope">
+): string {
+  const targetFingerprint = buildQuickAppTargetFingerprint(item);
+  return `${item.scope}|${targetFingerprint}`;
+}
+
+function stripKnownQuickAppContextSuffixes(label: string, contextLabels: readonly unknown[]): string {
+  let nextLabel = label.trim();
+  const suffixes = contextLabels
+    .map((contextLabel) => trimString(contextLabel))
+    .filter(Boolean)
+    .map((contextLabel) => ` [${contextLabel}]`);
+  if (!nextLabel || suffixes.length === 0) return nextLabel;
+
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const suffix of suffixes) {
+      if (nextLabel.endsWith(suffix)) {
+        nextLabel = nextLabel.slice(0, -suffix.length).trim();
+        stripped = true;
+        break;
+      }
+    }
+  }
+  return nextLabel;
+}
+
+function normalizeQuickAppLibraryLabel(item: NodeQuickAppItem, contextLabels: readonly unknown[] = []): NodeQuickAppItem {
+  if (resolveQuickAppItemType(item) !== "html") return item;
+  const baseLabel = stripKnownQuickAppContextSuffixes(item.label, contextLabels) || deriveQuickAppLabel("html", item.target);
+  return {
+    ...item,
+    label: baseLabel
+  };
+}
+
+function getQuickAppContextLabelParts(context?: QuickAppLaunchContext | null): string[] {
+  if (!context || context.scope === "general") return [];
+  const parts =
+    context.scope === "tab"
+      ? [context.workspaceLabel, context.ownerLabel]
+      : [context.ownerLabel ?? context.workspaceLabel];
+  const seen = new Set<string>();
+  return parts
+    .map((part) => trimString(part))
+    .filter((part) => {
+      if (!part) return false;
+      const key = part.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function applyQuickAppLibraryContextLabel(
+  item: NodeQuickAppItem,
+  context?: QuickAppLaunchContext | null,
+  previousOwnerLabel?: string | null
+): NodeQuickAppItem {
+  if (resolveQuickAppItemType(item) !== "html") return item;
+  const contextLabels = getQuickAppContextLabelParts(context);
+  if (contextLabels.length === 0) return item;
+  const baseLabel = stripKnownQuickAppContextSuffixes(item.label, [previousOwnerLabel, ...contextLabels]);
+  const suffix = contextLabels.map((label) => ` [${label}]`).join("");
+  return {
+    ...item,
+    label: baseLabel.endsWith(suffix) ? baseLabel : `${baseLabel || deriveQuickAppLabel("html", item.target)}${suffix}`
+  };
+}
+
+function normalizeQuickAppLibraryContext(context?: QuickAppLaunchContext | null): Pick<
+  QuickAppLibraryItem,
+  "scope" | "ownerId" | "ownerLabel" | "workspaceId" | "workspaceLabel"
+> {
+  const scope = isQuickAppScope(context?.scope) ? context.scope : "general";
+  return {
+    scope,
+    ownerId: trimString(context?.ownerId) || null,
+    ownerLabel: trimString(context?.ownerLabel),
+    workspaceId: trimString(context?.workspaceId) || null,
+    workspaceLabel: trimString(context?.workspaceLabel)
+  };
 }
 
 function resolveQuickAppTypeCandidate(candidate: Partial<Pick<NodeQuickAppItem, "type" | "kind" | "target">>): NodeQuickAppType {
@@ -290,8 +389,11 @@ export function createNodeQuickAppItem(seed?: Partial<NodeQuickAppItem>): NodeQu
   };
 }
 
-export function createQuickAppItemFromLibraryItem(item: QuickAppLibraryItem): NodeQuickAppItem {
-  return createNodeQuickAppItem({
+export function createQuickAppItemFromLibraryItem(
+  item: QuickAppLibraryItem,
+  context?: QuickAppLaunchContext | null
+): NodeQuickAppItem {
+  return applyQuickAppLibraryContextLabel(createNodeQuickAppItem({
     label: item.label,
     kind: item.kind,
     type: item.type,
@@ -299,7 +401,7 @@ export function createQuickAppItemFromLibraryItem(item: QuickAppLibraryItem): No
     iconKey: item.iconKey,
     customIconDataUrl: item.customIconDataUrl,
     openInOdeBrowser: item.openInOdeBrowser
-  });
+  }), context, item.ownerLabel);
 }
 
 export function applyQuickAppItemPatch(
@@ -360,6 +462,7 @@ export function applyQuickAppItemPatch(
 export function normalizeNodeQuickApps(raw: unknown): NodeQuickAppItem[] {
   if (!Array.isArray(raw)) return [];
   const seenIds = new Set<string>();
+  const seenFingerprints = new Set<string>();
   const items: NodeQuickAppItem[] = [];
   for (const candidate of raw) {
     if (!candidate || typeof candidate !== "object") continue;
@@ -378,6 +481,9 @@ export function normalizeNodeQuickApps(raw: unknown): NodeQuickAppItem[] {
     if (seenIds.has(next.id)) {
       next.id = createQuickAppId();
     }
+    const fingerprint = buildQuickAppTargetFingerprint(next);
+    if (fingerprint && seenFingerprints.has(fingerprint)) continue;
+    seenFingerprints.add(fingerprint);
     seenIds.add(next.id);
     items.push(next);
   }
@@ -456,9 +562,20 @@ function normalizeQuickAppLibrary(raw: unknown): QuickAppLibraryItem[] {
   for (const candidate of raw) {
     if (!candidate || typeof candidate !== "object") continue;
     const partial = candidate as Partial<QuickAppLibraryItem>;
-    const item = createNodeQuickAppItem(partial);
+    const item = normalizeQuickAppLibraryLabel(createNodeQuickAppItem(partial), [
+      partial.workspaceLabel,
+      partial.ownerLabel
+    ]);
     if (!item.target) continue;
-    const fingerprint = buildQuickAppLibraryFingerprint(item);
+    const scope = isQuickAppScope(partial.scope) ? partial.scope : "general";
+    const ownerId = trimString(partial.ownerId) || null;
+    const ownerLabel = trimString(partial.ownerLabel);
+    const workspaceId = trimString(partial.workspaceId) || null;
+    const workspaceLabel = trimString(partial.workspaceLabel);
+    const fingerprint = buildQuickAppLibraryFingerprint({
+      ...item,
+      scope
+    });
     if (!fingerprint || seenFingerprints.has(fingerprint)) continue;
     seenFingerprints.add(fingerprint);
     const fallbackTimestamp = Date.now();
@@ -473,6 +590,11 @@ function normalizeQuickAppLibrary(raw: unknown): QuickAppLibraryItem[] {
       iconKey: item.iconKey,
       customIconDataUrl: item.customIconDataUrl,
       openInOdeBrowser: item.openInOdeBrowser,
+      scope,
+      ownerId,
+      ownerLabel,
+      workspaceId,
+      workspaceLabel,
       addedAt,
       lastUsedAt
     });
@@ -509,12 +631,20 @@ export function writeStoredQuickAppLibrary(items: QuickAppLibraryItem[]): void {
 export function upsertQuickAppLibraryItems(
   library: QuickAppLibraryItem[],
   quickApps: readonly NodeQuickAppItem[],
+  context?: QuickAppLaunchContext | null,
   timestamp = Date.now()
 ): QuickAppLibraryItem[] {
   const nextByFingerprint = new Map<string, QuickAppLibraryItem>();
-  for (const item of library) {
-    const normalized = createNodeQuickAppItem(item);
-    const fingerprint = buildQuickAppLibraryFingerprint(normalized);
+  for (const item of normalizeQuickAppLibrary(library)) {
+    const itemContext = normalizeQuickAppLibraryContext(item);
+    const normalized = normalizeQuickAppLibraryLabel(createNodeQuickAppItem(item), [
+      itemContext.workspaceLabel,
+      itemContext.ownerLabel
+    ]);
+    const fingerprint = buildQuickAppLibraryFingerprint({
+      ...normalized,
+      ...itemContext
+    });
     if (!fingerprint) continue;
     nextByFingerprint.set(fingerprint, {
       ...item,
@@ -525,15 +655,25 @@ export function upsertQuickAppLibraryItems(
       iconKey: normalized.iconKey,
       customIconDataUrl: normalized.customIconDataUrl,
       openInOdeBrowser: normalized.openInOdeBrowser,
+      scope: itemContext.scope,
+      ownerId: itemContext.ownerId,
+      ownerLabel: itemContext.ownerLabel,
+      workspaceId: itemContext.workspaceId,
+      workspaceLabel: itemContext.workspaceLabel,
       addedAt: normalizeTimestamp(item.addedAt, timestamp),
       lastUsedAt: normalizeTimestamp(item.lastUsedAt, normalizeTimestamp(item.addedAt, timestamp))
     });
   }
 
+  const libraryContext = normalizeQuickAppLibraryContext(context);
+  const libraryContextLabels = getQuickAppContextLabelParts(context);
   for (const quickApp of quickApps) {
-    const normalized = createNodeQuickAppItem(quickApp);
+    const normalized = normalizeQuickAppLibraryLabel(createNodeQuickAppItem(quickApp), libraryContextLabels);
     if (!normalized.target) continue;
-    const fingerprint = buildQuickAppLibraryFingerprint(normalized);
+    const fingerprint = buildQuickAppLibraryFingerprint({
+      ...normalized,
+      ...libraryContext
+    });
     if (!fingerprint) continue;
     const current = nextByFingerprint.get(fingerprint);
     nextByFingerprint.set(fingerprint, {
@@ -545,6 +685,11 @@ export function upsertQuickAppLibraryItems(
       iconKey: normalized.iconKey,
       customIconDataUrl: normalized.customIconDataUrl,
       openInOdeBrowser: normalized.openInOdeBrowser,
+      scope: libraryContext.scope,
+      ownerId: libraryContext.ownerId,
+      ownerLabel: libraryContext.ownerLabel,
+      workspaceId: libraryContext.workspaceId,
+      workspaceLabel: libraryContext.workspaceLabel,
       addedAt: current?.addedAt ?? timestamp,
       lastUsedAt: timestamp
     });
@@ -568,6 +713,13 @@ export function touchQuickAppLibraryItem(
         : item
     )
   );
+}
+
+export function getQuickAppLibraryItemsForScope(
+  library: QuickAppLibraryItem[],
+  scope: QuickAppScope
+): QuickAppLibraryItem[] {
+  return normalizeQuickAppLibrary(library).filter((item) => item.scope === scope);
 }
 
 export function resolveQuickAppFaviconUrl(target: string): string | null {
@@ -672,11 +824,15 @@ export function buildQuickAppHtmlInstanceFileName(
   const stem = leafName.endsWith(`.${extension}`) ? leafName.slice(0, -(extension.length + 1)) : leafName;
   const templateToken = slugifyQuickAppInstanceToken(stem || item.label || "template", "template");
   const scopeToken = mapQuickAppScopeToInstanceToken(context?.scope);
-  const ownerTokenSource = context?.ownerId ?? context?.ownerLabel ?? "";
+  const contextTokens = getQuickAppContextLabelParts(context).map((label) =>
+    slugifyQuickAppInstanceToken(label, "context")
+  );
+  const ownerTokenSource = context?.ownerId && context.scope !== "general" ? context.ownerId : "";
   const ownerToken = ownerTokenSource ? slugifyQuickAppInstanceToken(ownerTokenSource, "owner") : "";
-  const appToken = slugifyQuickAppInstanceToken(item.label || stem || "app", "app");
+  const appLabel = stripKnownQuickAppContextSuffixes(item.label, getQuickAppContextLabelParts(context));
+  const appToken = slugifyQuickAppInstanceToken(appLabel || stem || "app", "app");
   const idToken = slugifyQuickAppInstanceToken(item.id, "quick-app").slice(-8);
-  const segments = [templateToken, scopeToken, ownerToken, appToken, idToken].filter(Boolean);
+  const segments = [templateToken, scopeToken, ...contextTokens, ownerToken, appToken, idToken].filter(Boolean);
   return `${segments.join("--")}.${extension}`;
 }
 

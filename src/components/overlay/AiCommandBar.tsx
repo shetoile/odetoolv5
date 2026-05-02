@@ -25,7 +25,6 @@ import {
   UploadGlyphSmall
 } from "@/components/Icons";
 import { WindowControls } from "@/components/layout/WindowControls";
-import { AiSettingsModal } from "@/components/modals/AiSettingsModal";
 import { OdeAiMark } from "@/components/OdeAiMark";
 import { DocumentTreeProposalEditor } from "@/components/overlay/DocumentTreeProposalEditor";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
@@ -70,14 +69,6 @@ import {
   parseSpreadsheetPayloadToWbsNodes
 } from "@/lib/treeSpreadsheet";
 import type { QuickAppScope } from "@/lib/nodeQuickApps";
-import {
-  createEmptyStoredAiProviderKey,
-  detectAndNormalizeAiProviderKeys,
-  ensureAiProviderKeyDrafts,
-  readStoredAiProviderKeys,
-  writeStoredAiProviderKeys,
-  type StoredAiProviderKey
-} from "@/lib/aiProviderKeys";
 
 export type AiCommandPlan = {
   intent: string;
@@ -162,7 +153,7 @@ export type AiCommandRequestOptions = {
 };
 
 type TranslateFn = (key: string, params?: TranslationParams) => string;
-type CommandBarTab = "command" | "memory" | "activity" | "settings";
+type CommandBarTab = "command" | "memory" | "activity";
 type AssistantMode = "ask" | "command";
 type ProposalKind = "deliverables" | "integrated";
 export type AssistantSurface = "organization" | "workarea";
@@ -329,10 +320,6 @@ async function readFileAsDataUrl(file: File): Promise<string> {
     };
     reader.readAsDataURL(file);
   });
-}
-
-function readStoredAiProviderKeyDrafts(): StoredAiProviderKey[] {
-  return ensureAiProviderKeyDrafts(readStoredAiProviderKeys());
 }
 
 function readRecentCommands(storageKey: string | null): string[] {
@@ -513,15 +500,10 @@ export function AiCommandBar({
   const [loadedConversationStorageKey, setLoadedConversationStorageKey] = useState<string | null>(
     resolvedConversationStorageKey
   );
-  const [providerKeys, setProviderKeys] = useState<StoredAiProviderKey[]>(() => readStoredAiProviderKeyDrafts());
-  const [settingsMessage, setSettingsMessage] = useState<string | null>(null);
-  const [isTestingKeys, setIsTestingKeys] = useState(false);
-  const [isSavingKeys, setIsSavingKeys] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [selectedHistoryCommands, setSelectedHistoryCommands] = useState<string[]>([]);
   const [highlightedHistoryIndex, setHighlightedHistoryIndex] = useState(-1);
   const [isDocumentPickerOpen, setIsDocumentPickerOpen] = useState(false);
-  const [apiSetupOpen, setApiSetupOpen] = useState(false);
   const [attachmentPanelOpen, setAttachmentPanelOpen] = useState(false);
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [activeQuickActionId, setActiveQuickActionId] = useState<string | null>(null);
@@ -610,8 +592,6 @@ export function AiCommandBar({
     setDragActive(false);
     dragDepthRef.current = 0;
     setLastSubmittedCommandText("");
-    setProviderKeys(readStoredAiProviderKeyDrafts());
-    setSettingsMessage(null);
   }, [open, nodeContext, initialSurface]);
 
   useEffect(() => {
@@ -1337,70 +1317,6 @@ export function AiCommandBar({
       /^(build|create|open|set|clear|move|rename|import|export|sync)\b/.test(normalized) ||
       /\b(timeline|schedule|tree structure|work breakdown|wbs)\b/.test(normalized);
     return looksLikeCommand ? "command" : "ask";
-  };
-
-  const updateKeyList = (next: StoredAiProviderKey[]) => {
-    setProviderKeys(ensureAiProviderKeyDrafts(next));
-  };
-
-  const updateProviderKeyDraft = (index: number, apiKey: string) => {
-    setProviderKeys((current) =>
-      ensureAiProviderKeyDrafts(
-        current.map((entry, entryIndex) =>
-          entryIndex === index
-            ? {
-                providerId: "unknown",
-                providerLabel: "Auto-detect",
-                apiKey
-              }
-            : entry
-        )
-      )
-    );
-  };
-
-  const formatDetectedProviderMessage = (entries: StoredAiProviderKey[]): string => {
-    const known = entries.filter((entry) => entry.providerId !== "unknown");
-    if (known.length === 0) {
-      return t("settings.msg_no_keys");
-    }
-    const labels = Array.from(new Set(known.map((entry) => entry.providerLabel)));
-    const unknownCount = entries.filter((entry) => entry.providerId === "unknown").length;
-    return unknownCount > 0
-      ? `Detected ${known.length} key(s): ${labels.join(", ")}. ${unknownCount} key(s) could not be identified.`
-      : `Detected ${known.length} key(s): ${labels.join(", ")}.`;
-  };
-
-  const saveProviderKeys = async () => {
-    setIsSavingKeys(true);
-    try {
-      const detected = await detectAndNormalizeAiProviderKeys(providerKeys);
-      writeStoredAiProviderKeys(detected);
-      setProviderKeys(ensureAiProviderKeyDrafts(detected));
-      setSettingsMessage(t("settings.msg_saved_local"));
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      setSettingsMessage(reason);
-    } finally {
-      setIsSavingKeys(false);
-    }
-  };
-
-  const runKeyCheck = async () => {
-    setSettingsMessage(null);
-    setIsTestingKeys(true);
-    try {
-      const detected = await detectAndNormalizeAiProviderKeys(providerKeys);
-      if (detected.length === 0) {
-        setProviderKeys([createEmptyStoredAiProviderKey()]);
-        setSettingsMessage(t("settings.msg_no_keys"));
-      } else {
-        updateKeyList(detected);
-        setSettingsMessage(formatDetectedProviderMessage(detected));
-      }
-    } finally {
-      setIsTestingKeys(false);
-    }
   };
 
   const closeHistoryPicker = () => {
@@ -2533,17 +2449,6 @@ export function AiCommandBar({
                 >
                   {t("assistant.activity_title")}
                 </button>
-                <button
-                  type="button"
-                  className={`rounded-full border px-4 py-2 text-[0.78rem] uppercase tracking-[0.12em] transition ${
-                    activeTab === "settings"
-                      ? "border-[var(--ode-border-strong)] bg-[rgba(12,77,117,0.34)] text-[var(--ode-accent)]"
-                      : "border-[var(--ode-border)] bg-[rgba(7,36,57,0.4)] text-[var(--ode-text-dim)]"
-                  }`}
-                  onClick={() => setActiveTab("settings")}
-                >
-                  {t("settings.ai_title_short")}
-                </button>
               </>
             ) : null}
           </div>
@@ -3219,19 +3124,6 @@ export function AiCommandBar({
                       </button>
                     </div>
                     <div className="ml-auto flex items-center gap-1.5">
-                      <OdeTooltip label={t("settings.api_setup")} side="top" align="end">
-                        <button
-                          type="button"
-                          className={compactUtilityIconButtonClass}
-                          onMouseDown={(event) => {
-                            event.preventDefault();
-                          }}
-                          onClick={() => setApiSetupOpen(true)}
-                          aria-label={t("settings.api_setup")}
-                        >
-                          <SparkGlyphSmall />
-                        </button>
-                      </OdeTooltip>
                       <OdeTooltip label={compactAttachmentButtonLabel} side="top" align="end">
                         <button
                           type="button"
@@ -3832,85 +3724,7 @@ export function AiCommandBar({
                 </div>
               )}
             </div>
-          ) : (
-            <div className="space-y-5">
-              <div className="rounded-xl border border-[var(--ode-border)] bg-[rgba(5,28,46,0.58)] px-4 py-4">
-                <p className="text-[1rem] font-semibold uppercase tracking-[0.1em] text-[var(--ode-accent)]">
-                  {t("settings.ai_provider_keys_title")}
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                {providerKeys.map((entry, idx) => (
-                  <div key={`command-bar-provider-${idx}`} className="flex items-center gap-2">
-                    <span className="min-w-[9rem] rounded-lg border border-[var(--ode-border)] bg-[rgba(7,36,57,0.32)] px-3 py-3 text-center text-[0.78rem] font-medium text-[var(--ode-text-dim)]">
-                      {entry.providerLabel}
-                    </span>
-                    <input
-                      type="password"
-                      value={entry.apiKey}
-                      onChange={(event) => {
-                        updateProviderKeyDraft(idx, event.target.value);
-                        setSettingsMessage(null);
-                      }}
-                      className="ode-input h-12 w-full rounded-lg px-4 text-[0.98rem]"
-                      placeholder={t("settings.ai_provider_placeholder").replace("{index}", String(idx + 1))}
-                    />
-                    <button
-                      type="button"
-                      className="ode-icon-btn h-12 w-12"
-                      onClick={() => {
-                        updateKeyList(providerKeys.filter((_, itemIdx) => itemIdx !== idx));
-                        setSettingsMessage(null);
-                      }}
-                    >
-                      -
-                    </button>
-                  </div>
-                ))}
-              </div>
-
-              <button
-                type="button"
-                className="ode-action-btn h-12 w-full rounded-xl border border-dashed border-[var(--ode-border-accent)] text-[var(--ode-text-dim)]"
-                onClick={() => {
-                  updateKeyList([...providerKeys, createEmptyStoredAiProviderKey()]);
-                  setSettingsMessage(null);
-                }}
-              >
-                {t("settings.add_key")}
-              </button>
-
-              {settingsMessage ? (
-                <p className="rounded-xl border border-[var(--ode-border)] bg-[rgba(7,40,66,0.45)] px-4 py-2.5 text-sm text-[var(--ode-accent)]">
-                  {settingsMessage}
-                </p>
-              ) : null}
-
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--ode-border)] pt-5">
-                <button
-                  type="button"
-                  className="ode-mini-btn h-11 px-4"
-                  onClick={() => {
-                    void runKeyCheck();
-                  }}
-                  disabled={isTestingKeys || isSavingKeys}
-                >
-                  {isTestingKeys ? t("settings.testing") : t("settings.test_keys")}
-                </button>
-                <button
-                  type="button"
-                  className="ode-primary-btn h-11 px-6"
-                  onClick={() => {
-                    void saveProviderKeys();
-                  }}
-                  disabled={isSavingKeys || isTestingKeys}
-                >
-                  {isSavingKeys ? t("settings.saving_keys") : t("settings.save")}
-                </button>
-              </div>
-            </div>
-          )}
+          ) : null}
         </div>
 
         {minimalChrome && compactEmbeddedMode ? null : (
@@ -3964,7 +3778,6 @@ export function AiCommandBar({
             )}
           </footer>
         )}
-        <AiSettingsModal open={apiSetupOpen} onClose={() => setApiSetupOpen(false)} language={language} />
       </section>
     </div>
   );

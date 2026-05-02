@@ -629,6 +629,7 @@ export function StatusBar({
           onLaunchQuickApp={onLaunchQuickApp}
           onReorderQuickApps={onReorderQuickApps}
           onManageQuickApps={onManageQuickApps}
+          manageTooltipLabel={t("quick_apps.manage_general_tooltip")}
           leadingSlot={userProfileMenu}
         />
 
@@ -641,6 +642,7 @@ export function StatusBar({
               onLaunchQuickApp={onLaunchTabQuickApp}
               onReorderQuickApps={onReorderTabQuickApps}
               onManageQuickApps={onManageTabQuickApps}
+              manageTooltipLabel={t("quick_apps.manage_tab_tooltip")}
               compact
             />
           ) : null}

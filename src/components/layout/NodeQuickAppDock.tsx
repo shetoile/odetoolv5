@@ -14,6 +14,7 @@ interface NodeQuickAppDockProps {
   onLaunchQuickApp: (item: NodeQuickAppItem) => void;
   onReorderQuickApps: (quickApps: NodeQuickAppItem[]) => void;
   onManageQuickApps: () => void;
+  manageTooltipLabel?: string | null;
   leadingSlot?: ReactNode;
   compact?: boolean;
 }
@@ -116,6 +117,7 @@ export function NodeQuickAppDock({
   onLaunchQuickApp,
   onReorderQuickApps,
   onManageQuickApps,
+  manageTooltipLabel = null,
   leadingSlot,
   compact = false
 }: NodeQuickAppDockProps) {
@@ -133,6 +135,7 @@ export function NodeQuickAppDock({
   const hasLeadingSlot = Boolean(leadingSlot);
   const showDock = quickApps.length > 0 || showManageButton || hasLeadingSlot;
   const canDragQuickApps = orderedQuickApps.length > 1;
+  const manageLabel = manageTooltipLabel?.trim() || nodeLabel || (quickApps.length > 0 ? t("quick_apps.manage") : t("quick_apps.add_new"));
   const handleOpenQuickApp = useCallback(
     (item: NodeQuickAppItem) => {
       if (suppressLaunchRef.current) {
@@ -254,12 +257,12 @@ export function NodeQuickAppDock({
 
         {showManageButton ? (
           <div className="ml-1 flex shrink-0 items-center pl-1.5">
-            <OdeTooltip label={quickApps.length > 0 ? t("quick_apps.manage") : t("quick_apps.add_new")} side="top">
+            <OdeTooltip label={manageLabel} side="top">
               <button
                 type="button"
                 className="inline-flex h-9 w-9 items-center justify-center rounded-[10px] bg-transparent text-[var(--ode-text-dim)] transition hover:bg-[rgba(18,75,108,0.22)] hover:text-[var(--ode-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[rgba(110,198,244,0.28)]"
                 onClick={onManageQuickApps}
-                aria-label={quickApps.length > 0 ? t("quick_apps.manage") : t("quick_apps.add_new")}
+                aria-label={manageLabel}
               >
                 {quickApps.length > 0 ? <EditGlyphSmall /> : <PlusGlyphSmall />}
               </button>

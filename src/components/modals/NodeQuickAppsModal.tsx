@@ -13,7 +13,6 @@ import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { QuickAppIcon } from "@/components/quick-apps/QuickAppIcon";
 import {
   resolveQuickAppItemType,
-  shouldOpenQuickAppInsideOdeBrowser,
   type NodeQuickAppItem,
   type QuickAppLibraryItem,
   type NodeQuickAppType
@@ -33,6 +32,7 @@ interface NodeQuickAppsModalProps {
   saving?: boolean;
   onAdd: () => void;
   onAddFromLibrary: (libraryItemId: string) => void;
+  onRemoveFromLibrary?: (libraryItemIds: string[]) => void;
   onRemove: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onChange: (id: string, patch: Partial<NodeQuickAppItem>) => void;
@@ -102,6 +102,7 @@ export function NodeQuickAppsModal({
   saving = false,
   onAdd,
   onAddFromLibrary,
+  onRemoveFromLibrary,
   onRemove,
   onMove,
   onChange,
@@ -112,6 +113,7 @@ export function NodeQuickAppsModal({
   const [uploadingItemId, setUploadingItemId] = useState<string | null>(null);
   const [libraryQuery, setLibraryQuery] = useState("");
   const [libraryPickerOpen, setLibraryPickerOpen] = useState(false);
+  const [selectedLibraryItemIds, setSelectedLibraryItemIds] = useState<string[]>([]);
   const libraryPickerRef = useRef<HTMLDivElement | null>(null);
 
   const normalizedLibraryQuery = libraryQuery.trim().toLowerCase();
@@ -121,12 +123,22 @@ export function NodeQuickAppsModal({
         return haystack.includes(normalizedLibraryQuery);
       })
     : libraryItems;
+  const selectedLibraryItemIdSet = new Set(selectedLibraryItemIds);
+  const libraryItemIds = libraryItems.map((item) => item.id);
+  const allLibraryItemsSelected =
+    libraryItemIds.length > 0 && libraryItemIds.every((id) => selectedLibraryItemIdSet.has(id));
 
   useEffect(() => {
     if (open) return;
     setLibraryPickerOpen(false);
     setLibraryQuery("");
+    setSelectedLibraryItemIds([]);
   }, [open]);
+
+  useEffect(() => {
+    const availableIds = new Set(libraryItems.map((item) => item.id));
+    setSelectedLibraryItemIds((current) => current.filter((id) => availableIds.has(id)));
+  }, [libraryItems]);
 
   useEffect(() => {
     if (!libraryPickerOpen) return;
@@ -162,10 +174,40 @@ export function NodeQuickAppsModal({
     }
   };
 
-  const handleLibraryUse = (libraryItemId: string) => {
-    onAddFromLibrary(libraryItemId);
+  const toggleLibrarySelection = (libraryItemId: string) => {
+    setSelectedLibraryItemIds((current) =>
+      current.includes(libraryItemId)
+        ? current.filter((id) => id !== libraryItemId)
+        : [...current, libraryItemId]
+    );
+  };
+
+  const toggleAllLibrarySelection = () => {
+    setSelectedLibraryItemIds((current) => {
+      const currentSet = new Set(current);
+      if (allLibraryItemsSelected) {
+        return [];
+      }
+      for (const id of libraryItemIds) {
+        currentSet.add(id);
+      }
+      return Array.from(currentSet);
+    });
+  };
+
+  const handleSelectedLibraryUse = () => {
+    for (const libraryItemId of selectedLibraryItemIds) {
+      onAddFromLibrary(libraryItemId);
+    }
+    setSelectedLibraryItemIds([]);
     setLibraryPickerOpen(false);
     setLibraryQuery("");
+  };
+
+  const handleSelectedLibraryDelete = () => {
+    if (!onRemoveFromLibrary || selectedLibraryItemIds.length === 0) return;
+    onRemoveFromLibrary(selectedLibraryItemIds);
+    setSelectedLibraryItemIds([]);
   };
 
   const handleIconFileChange = async (itemId: string, event: ChangeEvent<HTMLInputElement>) => {
@@ -276,6 +318,71 @@ export function NodeQuickAppsModal({
                   </span>
                 </button>
 
+                {libraryItems.length > 0 ? (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-[rgba(71,145,185,0.16)] bg-[rgba(5,24,39,0.34)] px-3 py-2">
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-2 rounded-[12px] px-2 py-1 text-[0.82rem] text-[var(--ode-text-dim)] transition hover:bg-[rgba(14,61,88,0.36)] hover:text-[var(--ode-text)] disabled:opacity-45"
+                      onClick={toggleAllLibrarySelection}
+                      disabled={saving || libraryItems.length === 0}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={allLibraryItemsSelected}
+                        readOnly
+                        tabIndex={-1}
+                        className="h-4 w-4"
+                      />
+                      <span>{t("quick_apps.library_select_all")}</span>
+                    </button>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedLibraryItemIds.length > 0 ? (
+                        <span className="rounded-full border border-[rgba(88,183,225,0.24)] bg-[rgba(12,70,101,0.28)] px-3 py-1 text-[0.78rem] font-medium text-[var(--ode-accent)]">
+                          {t("quick_apps.library_selected_count", { count: selectedLibraryItemIds.length })}
+                        </span>
+                      ) : null}
+                      <OdeTooltip label={t("quick_apps.use_selected")} side="top" align="end">
+                        <span className="block">
+                          <button
+                            type="button"
+                            className="ode-icon-btn h-9 w-9 text-[var(--ode-accent)]"
+                            onClick={handleSelectedLibraryUse}
+                            disabled={saving || selectedLibraryItemIds.length === 0}
+                            aria-label={t("quick_apps.use_selected")}
+                          >
+                            <PlusGlyphSmall />
+                          </button>
+                        </span>
+                      </OdeTooltip>
+                      {onRemoveFromLibrary ? (
+                        <OdeTooltip label={t("quick_apps.delete_selected")} side="top" align="end">
+                          <span className="block">
+                            <button
+                              type="button"
+                              className="ode-icon-btn h-9 w-9 border-[rgba(217,114,114,0.3)] text-[#ffc7c7] hover:border-[rgba(244,157,157,0.52)] hover:text-[#fff0f0]"
+                              onClick={handleSelectedLibraryDelete}
+                              disabled={saving || selectedLibraryItemIds.length === 0}
+                              aria-label={t("quick_apps.delete_selected")}
+                            >
+                              <TrashGlyphSmall />
+                            </button>
+                          </span>
+                        </OdeTooltip>
+                      ) : null}
+                      {selectedLibraryItemIds.length > 0 ? (
+                        <button
+                          type="button"
+                          className="ode-text-btn h-9 px-3 text-[0.8rem]"
+                          onClick={() => setSelectedLibraryItemIds([])}
+                          disabled={saving}
+                        >
+                          {t("quick_apps.library_clear_selection")}
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
                 {libraryItems.length === 0 ? (
                   <div className="rounded-[20px] border border-dashed border-[rgba(76,152,194,0.24)] bg-[rgba(5,24,39,0.34)] px-5 py-4 text-[0.94rem] text-[var(--ode-text-dim)]">
                     {t("quick_apps.library_empty")}
@@ -301,9 +408,28 @@ export function NodeQuickAppsModal({
                           return (
                             <div
                               key={libraryItem.id}
-                              className="flex min-w-0 items-center gap-3 rounded-[18px] border border-[rgba(71,142,186,0.18)] bg-[rgba(6,28,44,0.78)] px-3 py-3"
-                              title={libraryItem.target}
+                              className={`flex min-w-0 cursor-pointer items-center gap-3 rounded-[18px] border px-3 py-3 transition ${
+                                selectedLibraryItemIdSet.has(libraryItem.id)
+                                  ? "border-[rgba(95,196,242,0.42)] bg-[rgba(12,68,101,0.78)]"
+                                  : "border-[rgba(71,142,186,0.18)] bg-[rgba(6,28,44,0.78)]"
+                              }`}
+                              role="option"
+                              aria-selected={selectedLibraryItemIdSet.has(libraryItem.id)}
+                              onClick={() => {
+                                if (!saving) toggleLibrarySelection(libraryItem.id);
+                              }}
                             >
+                              <label className="inline-flex h-11 w-8 shrink-0 cursor-pointer items-center justify-center">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4"
+                                  checked={selectedLibraryItemIdSet.has(libraryItem.id)}
+                                  onClick={(event) => event.stopPropagation()}
+                                  onChange={() => toggleLibrarySelection(libraryItem.id)}
+                                  disabled={saving}
+                                  aria-label={t("quick_apps.library_select", { name: displayLabel })}
+                                />
+                              </label>
                               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[14px] bg-[linear-gradient(180deg,rgba(10,43,66,0.72),rgba(4,19,31,0.78))]">
                                 <QuickAppIcon item={libraryItem} variant="editor" />
                               </div>
@@ -312,14 +438,6 @@ export function NodeQuickAppsModal({
                                   {displayLabel}
                                 </span>
                               </div>
-                              <button
-                                type="button"
-                                className="ode-text-btn inline-flex h-9 shrink-0 items-center px-4 text-[0.82rem] font-medium text-[var(--ode-accent)]"
-                                onClick={() => handleLibraryUse(libraryItem.id)}
-                                disabled={saving}
-                              >
-                                {t("quick_apps.use_saved")}
-                              </button>
                             </div>
                           );
                         })}
@@ -339,10 +457,6 @@ export function NodeQuickAppsModal({
               {items.map((item, index) => (
                 (() => {
                   const itemType = resolveQuickAppItemType(item);
-                  const opensInsideOde = shouldOpenQuickAppInsideOdeBrowser(item);
-                  const odeBrowserChecked = itemType === "html" ? true : opensInsideOde;
-                  const showOdeBrowserToggle = itemType !== "local_app";
-                  const odeBrowserToggleable = itemType === "link";
                   const targetPlaceholder =
                     itemType === "link"
                       ? t("quick_apps.target_placeholder_url")
@@ -392,42 +506,6 @@ export function NodeQuickAppsModal({
                         </select>
 
                         <div className="flex items-center gap-1.5">
-                          {showOdeBrowserToggle ? (
-                          <OdeTooltip label="Browser" side="top" align="start">
-                            <span className="block">
-                              <button
-                                type="button"
-                                className={`ode-icon-btn inline-flex h-12 w-12 items-center justify-center border transition ${
-                                  odeBrowserChecked
-                                    ? "border-[rgba(69,201,255,0.7)] bg-[rgba(18,92,131,0.48)] text-[var(--ode-accent)] shadow-[0_0_0_1px_rgba(69,201,255,0.18),0_0_18px_rgba(69,201,255,0.18)]"
-                                    : "border-transparent text-[var(--ode-text-dim)]"
-                                }`}
-                                onClick={() => {
-                                  if (!odeBrowserToggleable) {
-                                    onChange(item.id, { openInOdeBrowser: true });
-                                    return;
-                                  }
-                                  onChange(item.id, { openInOdeBrowser: !odeBrowserChecked });
-                                }}
-                                aria-label={t("quick_apps.open_inside_ode_browser")}
-                                aria-pressed={odeBrowserChecked}
-                                aria-disabled={saving || (!odeBrowserToggleable && itemType !== "html")}
-                                disabled={saving}
-                              >
-                                <img
-                                  src="/ode-logo-ui.png"
-                                  alt=""
-                                  className={`h-7 w-7 object-contain transition ${
-                                    odeBrowserChecked
-                                      ? "scale-105 opacity-100 drop-shadow-[0_0_10px_rgba(69,201,255,0.55)]"
-                                      : "opacity-45 grayscale"
-                                  }`}
-                                  aria-hidden
-                                />
-                              </button>
-                            </span>
-                          </OdeTooltip>
-                          ) : null}
                           {item.customIconDataUrl ? (
                             <OdeTooltip label={t("quick_apps.use_auto_icon")} side="top" align="start">
                               <span className="block">
@@ -448,7 +526,6 @@ export function NodeQuickAppsModal({
                             className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                             onClick={() => onMove(item.id, "up")}
                             aria-label={t("quick_apps.move_up")}
-                            title={t("quick_apps.move_up")}
                             disabled={saving || index === 0}
                           >
                             <ArrowUpGlyphSmall />
@@ -458,7 +535,6 @@ export function NodeQuickAppsModal({
                             className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                             onClick={() => onMove(item.id, "down")}
                             aria-label={t("quick_apps.move_down")}
-                            title={t("quick_apps.move_down")}
                             disabled={saving || index === items.length - 1}
                           >
                             <ArrowDownGlyphSmall />

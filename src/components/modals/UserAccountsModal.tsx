@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { TrashGlyphSmall, UploadGlyphSmall } from "@/components/Icons";
 import { ACCESS_ROLE_VALUES, type NodeAccessRole } from "@/features/workspace/accessControl";
+import {
+  createEmptyStoredAiProviderKey,
+  detectAndNormalizeAiProviderKeys,
+  ensureAiProviderKeyDrafts,
+  readStoredAiProviderKeys,
+  writeStoredAiProviderKeys,
+  type StoredAiProviderKey
+} from "@/lib/aiProviderKeys";
+import { translate, type LanguageCode, type TranslationParams } from "@/lib/i18n";
 import type { UserAccountLicensePlan, UserAccountSummary } from "@/lib/userAccounts";
 import { createUserProfilePhotoDataUrl, deriveUserProfileInitials } from "@/lib/userProfile";
 
@@ -29,6 +38,7 @@ type UpdatePayload = {
 
 interface UserAccountsModalProps {
   open: boolean;
+  language: LanguageCode;
   users: UserAccountSummary[];
   currentUserId: string | null;
   profileOnlyUserId?: string | null;
@@ -69,6 +79,7 @@ function formatLicenseStatusLabel(user: UserAccountSummary): string {
 
 export function UserAccountsModal({
   open,
+  language,
   users,
   currentUserId,
   profileOnlyUserId = null,
@@ -79,8 +90,12 @@ export function UserAccountsModal({
   onUpdate,
   onDelete
 }: UserAccountsModalProps) {
+  const t = (key: string, params?: TranslationParams) => translate(language, key, params);
   const profileOnlyMode = profileOnlyUserId !== null;
-  const visibleUsers = profileOnlyMode ? users.filter((user) => user.userId === profileOnlyUserId) : users;
+  const visibleUsers = useMemo(
+    () => (profileOnlyMode ? users.filter((user) => user.userId === profileOnlyUserId) : users),
+    [profileOnlyMode, profileOnlyUserId, users]
+  );
   const [selectedUserId, setSelectedUserId] = useState<string>(NEW_USER_SENTINEL);
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
@@ -94,6 +109,13 @@ export function UserAccountsModal({
   const [confirmPassword, setConfirmPassword] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [activeProfileTab, setActiveProfileTab] = useState<"profile" | "ai_api">("profile");
+  const [providerKeys, setProviderKeys] = useState<StoredAiProviderKey[]>(() =>
+    ensureAiProviderKeyDrafts(readStoredAiProviderKeys())
+  );
+  const [aiApiMessage, setAiApiMessage] = useState("");
+  const [isTestingAiKeys, setIsTestingAiKeys] = useState(false);
+  const [isSavingAiKeys, setIsSavingAiKeys] = useState(false);
 
   const selectedUser = useMemo(
     () => visibleUsers.find((user) => user.userId === selectedUserId) ?? null,
@@ -105,6 +127,9 @@ export function UserAccountsModal({
 
   useEffect(() => {
     if (!open) return;
+    setActiveProfileTab("profile");
+    setProviderKeys(ensureAiProviderKeyDrafts(readStoredAiProviderKeys()));
+    setAiApiMessage("");
     if (profileOnlyMode) {
       setSelectedUserId(profileOnlyUserId ?? NEW_USER_SENTINEL);
       return;
@@ -231,6 +256,72 @@ export function UserAccountsModal({
     void onDelete(selectedUser.userId);
   };
 
+  const updateAiProviderKey = (index: number, apiKey: string) => {
+    setProviderKeys((current) =>
+      ensureAiProviderKeyDrafts(
+        current.map((entry, entryIndex) =>
+          entryIndex === index
+            ? {
+                providerId: "unknown",
+                providerLabel: "Auto-detect",
+                apiKey
+              }
+            : entry
+        )
+      )
+    );
+    setAiApiMessage("");
+  };
+
+  const updateAiProviderList = (next: StoredAiProviderKey[]) => {
+    setProviderKeys(ensureAiProviderKeyDrafts(next));
+    setAiApiMessage("");
+  };
+
+  const formatDetectedProviderMessage = (entries: StoredAiProviderKey[]): string => {
+    const known = entries.filter((entry) => entry.providerId !== "unknown");
+    if (known.length === 0) return t("settings.msg_no_keys");
+    const labels = Array.from(new Set(known.map((entry) => entry.providerLabel)));
+    const unknownCount = entries.filter((entry) => entry.providerId === "unknown").length;
+    return unknownCount > 0
+      ? `Detected ${known.length} key(s): ${labels.join(", ")}. ${unknownCount} key(s) could not be identified.`
+      : `Detected ${known.length} key(s): ${labels.join(", ")}.`;
+  };
+
+  const testAiProviderKeys = async () => {
+    setAiApiMessage("");
+    setIsTestingAiKeys(true);
+    try {
+      const detected = await detectAndNormalizeAiProviderKeys(providerKeys);
+      if (detected.length === 0) {
+        setProviderKeys([createEmptyStoredAiProviderKey()]);
+        setAiApiMessage(t("settings.msg_no_keys"));
+        return;
+      }
+      setProviderKeys(ensureAiProviderKeyDrafts(detected));
+      setAiApiMessage(formatDetectedProviderMessage(detected));
+    } catch {
+      setAiApiMessage(t("settings.msg_no_keys"));
+    } finally {
+      setIsTestingAiKeys(false);
+    }
+  };
+
+  const saveAiProviderKeys = async () => {
+    setIsSavingAiKeys(true);
+    try {
+      const detected = await detectAndNormalizeAiProviderKeys(providerKeys);
+      writeStoredAiProviderKeys(detected);
+      setProviderKeys(ensureAiProviderKeyDrafts(detected));
+      setAiApiMessage(t("settings.msg_saved_local"));
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      setAiApiMessage(reason);
+    } finally {
+      setIsSavingAiKeys(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[145] flex items-center justify-center bg-[rgba(6,14,24,0.7)] px-4 py-8">
       <div
@@ -350,6 +441,107 @@ export function UserAccountsModal({
             </button>
           </div>
 
+          {profileOnlyMode ? (
+            <div className="mt-5 inline-flex w-fit rounded-[16px] border border-[var(--ode-border)] bg-[rgba(4,24,39,0.48)] p-1">
+              <button
+                type="button"
+                className={`rounded-[12px] px-4 py-2 text-[0.78rem] font-semibold uppercase tracking-[0.1em] transition ${
+                  activeProfileTab === "profile"
+                    ? "bg-[rgba(12,77,117,0.44)] text-[var(--ode-accent)]"
+                    : "text-[var(--ode-text-dim)] hover:text-[var(--ode-text)]"
+                }`}
+                onClick={() => setActiveProfileTab("profile")}
+              >
+                {t("profile.tab_profile")}
+              </button>
+              <button
+                type="button"
+                className={`rounded-[12px] px-4 py-2 text-[0.78rem] font-semibold uppercase tracking-[0.1em] transition ${
+                  activeProfileTab === "ai_api"
+                    ? "bg-[rgba(12,77,117,0.44)] text-[var(--ode-accent)]"
+                    : "text-[var(--ode-text-dim)] hover:text-[var(--ode-text)]"
+                }`}
+                onClick={() => setActiveProfileTab("ai_api")}
+              >
+                {t("settings.api_setup")}
+              </button>
+            </div>
+          ) : null}
+
+          {activeProfileTab === "ai_api" ? (
+            <div className="mt-6 space-y-5 rounded-[22px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.34)] px-5 py-5">
+              <div>
+                <div className="text-[0.82rem] uppercase tracking-[0.18em] text-[var(--ode-accent)]">
+                  {t("settings.ai_provider_keys_title")}
+                </div>
+                <p className="mt-2 text-[0.9rem] leading-6 text-[var(--ode-text-muted)]">
+                  {t("settings.security")}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                {providerKeys.map((entry, idx) => (
+                  <div key={`profile-provider-key-${idx}`} className="flex items-center gap-2">
+                    <span className="min-w-[8.5rem] rounded-xl border border-[var(--ode-border)] bg-[rgba(7,36,57,0.32)] px-3 py-3 text-center text-[0.78rem] font-medium text-[var(--ode-text-dim)]">
+                      {entry.providerLabel}
+                    </span>
+                    <input
+                      type="password"
+                      value={entry.apiKey}
+                      onChange={(event) => updateAiProviderKey(idx, event.target.value)}
+                      className="ode-input h-12 w-full rounded-xl px-4"
+                      placeholder={t("settings.ai_provider_placeholder", { index: idx + 1 })}
+                    />
+                    <button
+                      type="button"
+                      className="ode-icon-btn h-12 w-12"
+                      onClick={() => updateAiProviderList(providerKeys.filter((_, itemIdx) => itemIdx !== idx))}
+                    >
+                      -
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="ode-action-btn h-12 w-full rounded-xl border border-dashed border-[var(--ode-border-accent)] text-[var(--ode-text-dim)]"
+                onClick={() => updateAiProviderList([...providerKeys, createEmptyStoredAiProviderKey()])}
+              >
+                {t("settings.add_key")}
+              </button>
+
+              {aiApiMessage ? (
+                <p className="rounded-xl border border-[var(--ode-border)] bg-[rgba(7,40,66,0.45)] px-4 py-2.5 text-sm text-[var(--ode-accent)]">
+                  {aiApiMessage}
+                </p>
+              ) : null}
+
+              <div className="flex flex-wrap items-center justify-end gap-3 border-t border-[var(--ode-border)] pt-5">
+                <button
+                  type="button"
+                  className="ode-secondary-btn h-11 px-5"
+                  onClick={() => {
+                    void testAiProviderKeys();
+                  }}
+                  disabled={isTestingAiKeys || isSavingAiKeys}
+                >
+                  {isTestingAiKeys ? t("settings.testing") : t("settings.test_keys")}
+                </button>
+                <button
+                  type="button"
+                  className="ode-primary-btn h-11 px-6"
+                  onClick={() => {
+                    void saveAiProviderKeys();
+                  }}
+                  disabled={isSavingAiKeys || isTestingAiKeys}
+                >
+                  {isSavingAiKeys ? t("settings.saving_keys") : t("settings.save")}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <div className="md:col-span-2 rounded-[22px] border border-[var(--ode-border)] bg-[rgba(7,39,61,0.42)] px-5 py-5">
               <div className="flex flex-wrap items-center gap-4">
@@ -570,6 +762,8 @@ export function UserAccountsModal({
               </button>
             </div>
           </div>
+            </>
+          )}
         </div>
       </div>
     </div>

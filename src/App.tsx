@@ -510,9 +510,11 @@ import {
   buildFunctionQuickAppsProperties,
   buildNodeQuickAppsProperties,
   buildQuickAppHtmlInstanceFileName,
+  buildQuickAppTargetFingerprint,
   createNodeQuickAppItem,
   createQuickAppItemFromLibraryItem,
   getFunctionQuickApps,
+  getQuickAppLibraryItemsForScope,
   getQuickAppTargetLeafName,
   getNodeQuickApps,
   isQuickAppHtmlLocalPath,
@@ -2359,6 +2361,27 @@ function buildQuickAppBrowseTargetPatch(
     kind: "local_path",
     openInOdeBrowser: nextType === "html"
   };
+}
+
+function upsertQuickAppDraftItemByTarget(
+  current: NodeQuickAppItem[],
+  candidate: NodeQuickAppItem
+): NodeQuickAppItem[] {
+  const normalizedCandidate = createNodeQuickAppItem(candidate);
+  const candidateFingerprint = buildQuickAppTargetFingerprint(normalizedCandidate);
+  const duplicateIndex = current.findIndex(
+    (item) => buildQuickAppTargetFingerprint(item) === candidateFingerprint
+  );
+  if (duplicateIndex < 0) {
+    return [...current, normalizedCandidate];
+  }
+
+  const nextItems = [...current];
+  nextItems[duplicateIndex] = {
+    ...normalizedCandidate,
+    id: nextItems[duplicateIndex].id
+  };
+  return nextItems;
 }
 
 function normalizeProcedureExportFileName(value: string): string {
@@ -8095,6 +8118,43 @@ export default function App() {
         : activeWorkspaceTabNode,
     [activeWorkspaceTabNode, nodeById, quickAppsStudioTabOwnerId]
   );
+  const scopedQuickAppsLibraryContext = useMemo<QuickAppLaunchContext>(() => {
+    if (quickAppsStudioFocusedScope === "function") {
+      return {
+        scope: "function",
+        ownerId: quickAppsStudioFunctionOwnerNode?.id ?? null,
+        ownerLabel: quickAppsStudioFunctionOwnerNode?.name ?? null,
+        workspaceId: quickAppsStudioFunctionOwnerNode?.id ?? null,
+        workspaceLabel: quickAppsStudioFunctionOwnerNode?.name ?? null
+      };
+    }
+    if (quickAppsStudioFocusedScope === "tab") {
+      return {
+        scope: "tab",
+        ownerId: quickAppsStudioTabOwnerNode?.id ?? null,
+        ownerLabel: quickAppsStudioTabOwnerNode?.name ?? null,
+        workspaceId: activeWorkspaceRootNode?.id ?? null,
+        workspaceLabel: activeWorkspaceRootNode?.name ?? null
+      };
+    }
+    return {
+      scope: "general",
+      ownerId: null,
+      ownerLabel: null
+    };
+  }, [
+    quickAppsStudioFocusedScope,
+    activeWorkspaceRootNode?.id,
+    activeWorkspaceRootNode?.name,
+    quickAppsStudioFunctionOwnerNode?.id,
+    quickAppsStudioFunctionOwnerNode?.name,
+    quickAppsStudioTabOwnerNode?.id,
+    quickAppsStudioTabOwnerNode?.name
+  ]);
+  const scopedQuickAppLibraryItems = useMemo(
+    () => getQuickAppLibraryItemsForScope(quickAppLibrary, quickAppsStudioFocusedScope),
+    [quickAppLibrary, quickAppsStudioFocusedScope]
+  );
   const scopedQuickAppsModalTitle = useMemo(() => {
     const scopeTitle = t(`quick_apps.scope_${quickAppsStudioFocusedScope}`);
     if (quickAppsStudioFocusedScope === "function") {
@@ -8136,7 +8196,8 @@ export default function App() {
       scope: QuickAppScope,
       items: NodeQuickAppItem[],
       ownerNode: AppNode | null,
-      fallbackOwnerLabel: string
+      fallbackOwnerLabel: string,
+      workspaceNode: AppNode | null = null
     ): ScopedQuickAppRecord[] =>
       items.map((item) => {
         const launchTarget = resolveQuickAppLaunchTarget(item);
@@ -8145,6 +8206,8 @@ export default function App() {
           scope,
           ownerId: ownerNode?.id ?? null,
           ownerLabel: ownerNode?.name ?? fallbackOwnerLabel,
+          workspaceId: workspaceNode?.id ?? null,
+          workspaceLabel: workspaceNode?.name ?? null,
           launchTarget,
           readabilityStatus: getQuickAppReadabilityStatus({
             kind: item.kind,
@@ -8153,12 +8216,19 @@ export default function App() {
         };
       });
 
-    const tabRecords = buildScopedRecords("tab", tabQuickApps, contextualTabQuickAppOwnerNode, t("quick_apps.scope_tab"));
+    const tabRecords = buildScopedRecords(
+      "tab",
+      tabQuickApps,
+      contextualTabQuickAppOwnerNode,
+      t("quick_apps.scope_tab"),
+      activeWorkspaceRootNode
+    );
     const functionRecords = buildScopedRecords(
       "function",
       functionQuickApps,
       activeWorkspaceRootNode,
-      t("quick_apps.scope_function")
+      t("quick_apps.scope_function"),
+      activeWorkspaceRootNode
     );
     const generalRecords = buildScopedRecords("general", generalQuickApps, null, t("quick_apps.scope_general"));
 
@@ -9258,21 +9328,35 @@ export default function App() {
   };
 
   const focusInlineEditInputAt = (selectionStart: number, selectionEnd: number = selectionStart) => {
-    window.requestAnimationFrame(() => {
+    const applyFocus = () => {
       const input = inlineEditInputRef.current;
-      if (!input) return;
+      if (!input) return false;
       input.focus();
       input.setSelectionRange(selectionStart, selectionEnd);
+      return true;
+    };
+    window.requestAnimationFrame(() => {
+      if (applyFocus()) return;
+      window.setTimeout(applyFocus, 0);
     });
   };
 
   useEffect(() => {
+    if (!editingNodeId || !editingSurface) return;
     const pending = pendingInlineEditSelectionRef.current;
-    if (!pending) return;
-    if (editingNodeId !== pending.nodeId || editingSurface !== pending.surface) return;
-    focusInlineEditInputAt(pending.start, pending.end);
+    const selection =
+      pending && pending.nodeId === editingNodeId && pending.surface === editingSurface
+        ? {
+            start: pending.start,
+            end: pending.end
+          }
+        : {
+            start: editingValueRef.current.length,
+            end: editingValueRef.current.length
+          };
     pendingInlineEditSelectionRef.current = null;
-  }, [editingNodeId, editingSurface, editingValue]);
+    focusInlineEditInputAt(selection.start, selection.end);
+  }, [editingNodeId, editingSurface]);
 
   const replaceInlineEditRange = (start: number, end: number, replacement: string) => {
     const safeStart = Math.max(0, Math.min(start, editingValue.length));
@@ -11002,18 +11086,28 @@ export default function App() {
     []
   );
 
+  const removeQuickAppLibraryItems = useCallback(
+    (libraryItemIds: string[]) => {
+      const idsToRemove = new Set(libraryItemIds);
+      if (idsToRemove.size === 0) return;
+      persistQuickAppLibrary((current) => current.filter((item) => !idsToRemove.has(item.id)));
+    },
+    [persistQuickAppLibrary]
+  );
+
   const addQuickAppsStudioItem = useCallback((scope: QuickAppScope) => {
     updateScopedQuickAppsDraft(scope, (current) => [...current, createNodeQuickAppItem()]);
   }, [updateScopedQuickAppsDraft]);
 
   const addQuickAppsStudioItemFromLibrary = useCallback(
     (scope: QuickAppScope, libraryItemId: string) => {
-      const libraryItem = quickAppLibrary.find((item) => item.id === libraryItemId) ?? null;
+      const libraryItem = scopedQuickAppLibraryItems.find((item) => item.id === libraryItemId) ?? null;
       if (!libraryItem) return;
-      updateScopedQuickAppsDraft(scope, (current) => [...current, createQuickAppItemFromLibraryItem(libraryItem)]);
+      const nextItem = createQuickAppItemFromLibraryItem(libraryItem, scopedQuickAppsLibraryContext);
+      updateScopedQuickAppsDraft(scope, (current) => upsertQuickAppDraftItemByTarget(current, nextItem));
       persistQuickAppLibrary((current) => touchQuickAppLibraryItem(current, libraryItemId));
     },
-    [persistQuickAppLibrary, quickAppLibrary, updateScopedQuickAppsDraft]
+    [persistQuickAppLibrary, scopedQuickAppLibraryItems, scopedQuickAppsLibraryContext, updateScopedQuickAppsDraft]
   );
 
   const updateQuickAppsStudioItem = useCallback(
@@ -11071,7 +11165,9 @@ export default function App() {
         const nextGeneralQuickApps = normalizeNodeQuickApps(generalQuickAppsDraft);
         setGeneralQuickApps(nextGeneralQuickApps);
         writeStoredGeneralQuickApps(nextGeneralQuickApps);
-        persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextGeneralQuickApps));
+        persistQuickAppLibrary((current) =>
+          upsertQuickAppLibraryItems(current, nextGeneralQuickApps, scopedQuickAppsLibraryContext)
+        );
         setQuickAppsStudioOpen(false);
         return;
       }
@@ -11089,7 +11185,9 @@ export default function App() {
             properties: nextProperties,
             updatedAt: Date.now()
           });
-          persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextFunctionQuickApps));
+          persistQuickAppLibrary((current) =>
+            upsertQuickAppLibraryItems(current, nextFunctionQuickApps, scopedQuickAppsLibraryContext)
+          );
         }
         setQuickAppsStudioOpen(false);
         return;
@@ -11107,7 +11205,9 @@ export default function App() {
           properties: nextProperties,
           updatedAt: Date.now()
         });
-        persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextTabQuickApps));
+        persistQuickAppLibrary((current) =>
+          upsertQuickAppLibraryItems(current, nextTabQuickApps, scopedQuickAppsLibraryContext)
+        );
       }
 
       setQuickAppsStudioOpen(false);
@@ -11122,6 +11222,7 @@ export default function App() {
     quickAppsStudioFocusedScope,
     quickAppsStudioFunctionOwnerNode,
     quickAppsStudioTabOwnerNode,
+    scopedQuickAppsLibraryContext,
     store,
     tabQuickAppsDraft
   ]);
@@ -15743,7 +15844,15 @@ export default function App() {
         properties: nextProperties,
         updatedAt: Date.now()
       });
-      persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, nextQuickApps));
+      persistQuickAppLibrary((current) =>
+        upsertQuickAppLibraryItems(current, nextQuickApps, {
+          scope: "tab",
+          ownerId: node.id,
+          ownerLabel: node.name,
+          workspaceId: activeWorkspaceRootNode?.id ?? null,
+          workspaceLabel: activeWorkspaceRootNode?.name ?? null
+        })
+      );
 
       if (localAutoQuickApps.length > 0) {
         const uniqueIconRequests = new Map<string, { target: string; fileName: string }>();
@@ -15770,7 +15879,7 @@ export default function App() {
     } finally {
       setQuickAppsSaving(false);
     }
-  }, [ensureNodeAccessAllowed, nodeById, persistQuickAppLibrary, quickAppsDraftItems, quickAppsModalNodeId, store]);
+  }, [activeWorkspaceRootNode?.id, activeWorkspaceRootNode?.name, ensureNodeAccessAllowed, nodeById, persistQuickAppLibrary, quickAppsDraftItems, quickAppsModalNodeId, store]);
 
   const openQuickAppBrowserWindow = useCallback(
     async (
@@ -19597,7 +19706,13 @@ export default function App() {
     if (scope === "general") {
       setGeneralQuickApps(normalized);
       writeStoredGeneralQuickApps(normalized);
-      persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, normalized));
+      persistQuickAppLibrary((current) =>
+        upsertQuickAppLibraryItems(current, normalized, {
+          scope: "general",
+          ownerId: null,
+          ownerLabel: null
+        })
+      );
       return normalized;
     }
 
@@ -19622,7 +19737,15 @@ export default function App() {
       properties: nextProperties,
       updatedAt: Date.now()
     });
-    persistQuickAppLibrary((current) => upsertQuickAppLibraryItems(current, normalized));
+      persistQuickAppLibrary((current) =>
+        upsertQuickAppLibraryItems(current, normalized, {
+          scope,
+          ownerId: ownerNode.id,
+          ownerLabel: ownerNode.name,
+          workspaceId: activeWorkspaceRootNode?.id ?? null,
+          workspaceLabel: activeWorkspaceRootNode?.name ?? null
+        })
+      );
     return normalized;
   };
 
@@ -23734,7 +23857,9 @@ export default function App() {
     await launchQuickApp(record, {
       scope: record.scope,
       ownerId: record.ownerId,
-      ownerLabel: record.ownerLabel
+      ownerLabel: record.ownerLabel,
+      workspaceId: record.workspaceId ?? null,
+      workspaceLabel: record.workspaceLabel ?? null
     });
     setProjectNotice(`Opened quick app "${record.label}".`);
   };
@@ -26530,6 +26655,7 @@ export default function App() {
         ) : null}
         <UserAccountsModal
           open={userAccountsModalOpen}
+          language={language}
           users={userAccountState?.users ?? []}
           currentUserId={currentUserAccount?.userId ?? null}
           profileOnlyUserId={userAccountsModalMode === "profile" ? currentUserAccount?.userId ?? null : null}
@@ -27148,11 +27274,12 @@ export default function App() {
           title={scopedQuickAppsModalTitle}
           nodeLabel={scopedQuickAppsModalSubtitle}
           emptyMessage={t("quick_apps.scope_empty")}
-          libraryItems={quickAppLibrary}
+          libraryItems={scopedQuickAppLibraryItems}
           items={scopedQuickAppsModalItems}
           saving={quickAppsSaving}
           onAdd={() => addQuickAppsStudioItem(quickAppsStudioFocusedScope)}
           onAddFromLibrary={(libraryItemId) => addQuickAppsStudioItemFromLibrary(quickAppsStudioFocusedScope, libraryItemId)}
+          onRemoveFromLibrary={removeQuickAppLibraryItems}
           onRemove={(itemId) => removeQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId)}
           onMove={(itemId, direction) => moveQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId, direction)}
           onChange={(itemId, patch) => updateQuickAppsStudioItem(quickAppsStudioFocusedScope, itemId, patch)}
@@ -27725,7 +27852,9 @@ export default function App() {
           void launchQuickApp(item, {
             scope: "function",
             ownerId: activeWorkspaceRootNode?.id ?? null,
-            ownerLabel: activeWorkspaceRootNode?.name ?? null
+            ownerLabel: activeWorkspaceRootNode?.name ?? null,
+            workspaceId: activeWorkspaceRootNode?.id ?? null,
+            workspaceLabel: activeWorkspaceRootNode?.name ?? null
           });
         }}
         onManageWorkspaceQuickApps={() => {
@@ -28075,7 +28204,9 @@ export default function App() {
                 void launchQuickApp(item, {
                   scope: "function",
                   ownerId: activeWorkspaceRootNode?.id ?? null,
-                  ownerLabel: activeWorkspaceRootNode?.name ?? null
+                  ownerLabel: activeWorkspaceRootNode?.name ?? null,
+                  workspaceId: activeWorkspaceRootNode?.id ?? null,
+                  workspaceLabel: activeWorkspaceRootNode?.name ?? null
                 });
               }}
               onOpenTabQuickApps={() => {
@@ -28088,7 +28219,9 @@ export default function App() {
                 void launchQuickApp(item, {
                   scope: "tab",
                   ownerId: activeWorkspaceTabNode?.id ?? null,
-                  ownerLabel: activeWorkspaceTabNode?.name ?? null
+                  ownerLabel: activeWorkspaceTabNode?.name ?? null,
+                  workspaceId: activeWorkspaceRootNode?.id ?? null,
+                  workspaceLabel: activeWorkspaceRootNode?.name ?? null
                 });
               }}
             />
@@ -28674,7 +28807,9 @@ export default function App() {
                 void launchQuickApp(item, {
                   scope: "tab",
                   ownerId: activeWorkspaceTabNode?.id ?? null,
-                  ownerLabel: activeWorkspaceTabNode?.name ?? null
+                  ownerLabel: activeWorkspaceTabNode?.name ?? null,
+                  workspaceId: activeWorkspaceRootNode?.id ?? null,
+                  workspaceLabel: activeWorkspaceRootNode?.name ?? null
                 });
               }}
               onManageQuickAppsForActiveTab={() => {

@@ -201,7 +201,6 @@ function QuickAppsStudioSection({
                         className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                         onClick={() => onLaunch(item)}
                         aria-label={t("quick_apps.open_item", { name: item.label || title })}
-                        title={t("quick_apps.open_item", { name: item.label || title })}
                         disabled={saving || item.target.trim().length === 0}
                       >
                         <LinkGlyphSmall />
@@ -211,7 +210,6 @@ function QuickAppsStudioSection({
                         className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                         onClick={() => onMove(item.id, "up")}
                         aria-label={t("quick_apps.move_up")}
-                        title={t("quick_apps.move_up")}
                         disabled={saving || index === 0}
                       >
                         <ArrowUpGlyphSmall />
@@ -221,7 +219,6 @@ function QuickAppsStudioSection({
                         className="ode-icon-btn inline-flex h-12 w-12 items-center justify-center"
                         onClick={() => onMove(item.id, "down")}
                         aria-label={t("quick_apps.move_down")}
-                        title={t("quick_apps.move_down")}
                         disabled={saving || index === items.length - 1}
                       >
                         <ArrowDownGlyphSmall />

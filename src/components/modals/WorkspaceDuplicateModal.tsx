@@ -25,6 +25,11 @@ export function WorkspaceDuplicateModal({
 }: WorkspaceDuplicateModalProps) {
   const { surfaceRef, surfaceStyle, handlePointerDown } = useDraggableModalSurface({ open });
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const onCancelRef = useRef(onCancel);
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     if (!open) return;
@@ -35,7 +40,7 @@ export function WorkspaceDuplicateModal({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        onCancelRef.current();
       }
     };
     window.addEventListener("keydown", onKeyDown, true);
@@ -43,7 +48,7 @@ export function WorkspaceDuplicateModal({
       window.cancelAnimationFrame(focusRafId);
       window.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [open, onCancel]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -57,22 +62,13 @@ export function WorkspaceDuplicateModal({
         aria-modal="true"
         aria-label={t("project.duplicate_btn")}
       >
-        <div
-          className="ode-modal-drag-handle border-b border-[var(--ode-border)] px-6 py-5"
-          onPointerDown={handlePointerDown}
-        >
-          <div className="text-[0.72rem] font-semibold uppercase tracking-[0.16em] text-[var(--ode-accent)]">
-            {t("project.duplicate_btn")}
-          </div>
+        <div className="ode-modal-drag-handle border-b border-[var(--ode-border)] px-6 py-5" onPointerDown={handlePointerDown}>
           <h2 className="mt-1 text-[1.35rem] font-semibold tracking-tight text-[var(--ode-text)]">
-            {t("project.duplicate_name_prompt")}
+            {t("project.name_prompt")}
           </h2>
         </div>
         <div className="px-6 py-5">
-          <label className="block">
-            <span className="mb-2 block text-[0.78rem] font-medium text-[var(--ode-text-dim)]">
-              {t("project.name_prompt")}
-            </span>
+          <label className="block" aria-label={t("project.name_prompt")}>
             <input
               ref={inputRef}
               type="text"
@@ -85,6 +81,7 @@ export function WorkspaceDuplicateModal({
                 }
               }}
               className="ode-input h-12 w-full rounded-[16px] border-transparent bg-[rgba(8,40,61,0.34)] px-4 text-[1rem]"
+              placeholder={t("project.name_prompt")}
               disabled={busy}
             />
           </label>
