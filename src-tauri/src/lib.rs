@@ -10859,6 +10859,16 @@ fn inject_quick_app_html_scoped_storage(
     let Ok(seeded_quick_app_id_json) = serde_json::to_string(&seeded_quick_app_id) else {
         return raw.to_string();
     };
+    let Ok(bundled_js_pdf_source_json) =
+        serde_json::to_string(include_str!("../../node_modules/jspdf/dist/jspdf.umd.min.js"))
+    else {
+        return raw.to_string();
+    };
+    let Ok(bundled_html2canvas_source_json) =
+        serde_json::to_string(include_str!("../../node_modules/html2canvas/dist/html2canvas.min.js"))
+    else {
+        return raw.to_string();
+    };
 
     let injection = format!(
         r#"<script>
@@ -10870,6 +10880,8 @@ fn inject_quick_app_html_scoped_storage(
   const seededOwnerId = {seeded_owner_id_json};
   const seededOwnerLabel = {seeded_owner_label_json};
   const seededQuickAppId = {seeded_quick_app_id_json};
+  const bundledJsPdfSource = {bundled_js_pdf_source_json};
+  const bundledHtml2CanvasSource = {bundled_html2canvas_source_json};
   let storageRef = null;
   try {{
     storageRef = window.localStorage;
@@ -10921,6 +10933,381 @@ fn inject_quick_app_html_scoped_storage(
       // Fall through to rejected promise below.
     }}
     return Promise.reject(new Error("Tauri invoke unavailable."));
+  }};
+  const MIME_EXTENSION_MAP = {{
+    "application/json": "json",
+    "application/msword": "doc",
+    "application/pdf": "pdf",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "image/gif": "gif",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/svg+xml": "svg",
+    "image/webp": "webp",
+    "text/csv": "csv",
+    "text/html": "html",
+    "text/markdown": "md",
+    "text/plain": "txt"
+  }};
+  const normalizeDownloadName = (value) => {{
+    return String(value || "")
+      .trim()
+      .replace(/[\\\\/:*?"<>|]+/g, "_");
+  }};
+  const inferExtensionFromName = (fileName) => {{
+    const normalized = normalizeDownloadName(fileName);
+    const lastDot = normalized.lastIndexOf(".");
+    if (lastDot <= 0 || lastDot === normalized.length - 1) return "";
+    return normalized.slice(lastDot + 1).toLowerCase();
+  }};
+  const inferExtensionFromMimeType = (mimeType) => {{
+    const normalizedMime = typeof mimeType === "string" ? mimeType.split(";")[0].trim().toLowerCase() : "";
+    return MIME_EXTENSION_MAP[normalizedMime] || "";
+  }};
+  const inferFilterLabel = (extension, mimeType) => {{
+    const normalizedExtension = String(extension || "").trim().toLowerCase();
+    if (normalizedExtension === "csv") return "CSV";
+    if (normalizedExtension === "doc" || normalizedExtension === "docx") return "Word";
+    if (normalizedExtension === "htm" || normalizedExtension === "html") return "HTML";
+    if (normalizedExtension === "jpg" || normalizedExtension === "jpeg") return "JPEG";
+    if (normalizedExtension === "json") return "JSON";
+    if (normalizedExtension === "md") return "Markdown";
+    if (normalizedExtension === "pdf") return "PDF";
+    if (normalizedExtension === "png") return "PNG";
+    if (normalizedExtension === "svg") return "SVG";
+    if (normalizedExtension === "txt") return "Text";
+    if (normalizedExtension === "xls" || normalizedExtension === "xlsx") return "Excel";
+    const normalizedMime = typeof mimeType === "string" ? mimeType.split(";")[0].trim().toLowerCase() : "";
+    return MIME_EXTENSION_MAP[normalizedMime]
+      ? MIME_EXTENSION_MAP[normalizedMime].toUpperCase()
+      : (normalizedExtension || "FILE").toUpperCase();
+  }};
+  const toByteArray = (bufferLike) => {{
+    return Array.from(new Uint8Array(bufferLike));
+  }};
+  const readBlobAsArrayBuffer = (blob) => {{
+    if (blob && typeof blob.arrayBuffer === "function") {{
+      return blob.arrayBuffer();
+    }}
+    return new Promise((resolve, reject) => {{
+      try {{
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error("Failed to read blob."));
+        reader.readAsArrayBuffer(blob);
+      }} catch (error) {{
+        reject(error);
+      }}
+    }});
+  }};
+  const decodeDataUrl = (href) => {{
+    const match = /^data:([^;,]+)?(?:;charset=[^;,]+)?(;base64)?,(.*)$/i.exec(String(href || ""));
+    if (!match) return null;
+    const mimeType = String(match[1] || "").trim().toLowerCase() || "application/octet-stream";
+    const isBase64 = Boolean(match[2]);
+    const payload = match[3] || "";
+    try {{
+      if (isBase64) {{
+        const binary = window.atob(payload);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index += 1) {{
+          bytes[index] = binary.charCodeAt(index);
+        }}
+        return {{
+          mimeType,
+          bytes: Array.from(bytes)
+        }};
+      }}
+      const decoded = decodeURIComponent(payload);
+      const bytes = new TextEncoder().encode(decoded);
+      return {{
+        mimeType,
+        bytes: Array.from(bytes)
+      }};
+    }} catch (_error) {{
+      return null;
+    }}
+  }};
+  const inferFileNameFromUrl = (href) => {{
+    try {{
+      const parsed = new URL(String(href || ""), window.location.href);
+      const lastSegment = parsed.pathname.split("/").pop() || "";
+      return normalizeDownloadName(lastSegment);
+    }} catch (_error) {{
+      return "";
+    }}
+  }};
+  const showExportStatus = (message, tone = "success") => {{
+    const normalizedMessage = String(message || "").trim();
+    if (!normalizedMessage || !document.body) return;
+    try {{
+      const toast = document.createElement("div");
+      toast.textContent = normalizedMessage;
+      toast.style.position = "fixed";
+      toast.style.right = "18px";
+      toast.style.bottom = "18px";
+      toast.style.zIndex = "2147483647";
+      toast.style.maxWidth = "min(560px, calc(100vw - 36px))";
+      toast.style.padding = "12px 14px";
+      toast.style.borderRadius = "14px";
+      toast.style.background = tone === "error" ? "rgba(82, 20, 28, 0.94)" : "rgba(3, 30, 48, 0.94)";
+      toast.style.color = "rgb(220, 238, 255)";
+      toast.style.boxShadow = "0 18px 42px rgba(0, 0, 0, 0.28)";
+      toast.style.font = "600 13px/1.35 system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif";
+      toast.style.whiteSpace = "pre-wrap";
+      document.body.appendChild(toast);
+      window.setTimeout(() => toast.remove(), 5200);
+    }} catch (_error) {{
+      // The export has already completed; the toast is only a user-facing confirmation.
+    }}
+  }};
+  const saveBytesToNativeFile = async (bytes, fileName, mimeType) => {{
+    const normalizedMime = typeof mimeType === "string" ? mimeType.split(";")[0].trim().toLowerCase() : "";
+    let normalizedName = normalizeDownloadName(fileName);
+    let extension = inferExtensionFromName(normalizedName);
+    if (!extension) {{
+      extension = inferExtensionFromMimeType(normalizedMime) || "bin";
+      normalizedName = normalizedName ? `${{normalizedName}}.${{extension}}` : `export.${{extension}}`;
+    }}
+    const savedPath = await invokeTauri("save_export_file", {{
+      dialogTitle: `Save ${{extension.toUpperCase()}} export`,
+      defaultFileName: normalizedName || `export.${{extension}}`,
+      filterLabel: inferFilterLabel(extension, normalizedMime),
+      extension,
+      bytes
+    }});
+    if (savedPath) {{
+      showExportStatus(`Saved to ${{savedPath}}`);
+    }}
+    return savedPath;
+  }};
+  const saveBlobToNativeFile = async (blob, fileName) => {{
+    const arrayBuffer = await readBlobAsArrayBuffer(blob);
+    return saveBytesToNativeFile(toByteArray(arrayBuffer), fileName, blob?.type || "");
+  }};
+  const saveUrlToNativeFile = async (href, fileName) => {{
+    const normalizedHref = String(href || "").trim();
+    if (!normalizedHref) {{
+      throw new Error("Missing export URL.");
+    }}
+    if (/^data:/i.test(normalizedHref)) {{
+      const decoded = decodeDataUrl(normalizedHref);
+      if (!decoded) {{
+        throw new Error("Unsupported data export URL.");
+      }}
+      return saveBytesToNativeFile(decoded.bytes, fileName, decoded.mimeType);
+    }}
+    const response = await fetch(normalizedHref);
+    if (!response.ok) {{
+      throw new Error(`Export download failed with status ${{response.status}}.`);
+    }}
+    const arrayBuffer = await response.arrayBuffer();
+    const responseMime = response.headers.get("content-type") || "";
+    const fallbackName = normalizeDownloadName(fileName) || inferFileNameFromUrl(normalizedHref);
+    return saveBytesToNativeFile(toByteArray(arrayBuffer), fallbackName, responseMime);
+  }};
+  const savePayloadToNativeFile = async (payload, fileName) => {{
+    if (!payload) {{
+      throw new Error("Missing export payload.");
+    }}
+    if (typeof payload === "string") {{
+      return saveUrlToNativeFile(payload, fileName);
+    }}
+    if (typeof Blob !== "undefined" && payload instanceof Blob) {{
+      return saveBlobToNativeFile(payload, fileName);
+    }}
+    if (payload && typeof payload === "object" && typeof payload.href === "string") {{
+      return saveUrlToNativeFile(payload.href, fileName);
+    }}
+    throw new Error("Unsupported export payload.");
+  }};
+  const extractDownloadFileName = (anchor) => {{
+    if (!anchor || typeof anchor !== "object") return "export";
+    const preferred = normalizeDownloadName(anchor.getAttribute("download") || anchor.download || "");
+    if (preferred) return preferred;
+    const inferred = inferFileNameFromUrl(anchor.href || "");
+    return inferred || "export";
+  }};
+  const interceptDownloadAnchor = (anchor) => {{
+    if (!anchor || !anchor.href || !anchor.hasAttribute("download")) return false;
+    void savePayloadToNativeFile(anchor.href, extractDownloadFileName(anchor)).catch(() => {{
+      // Let page code continue to manage errors when native save fails.
+    }});
+    return true;
+  }};
+  const anchorProto =
+    typeof window.HTMLAnchorElement !== "undefined" ? window.HTMLAnchorElement.prototype : null;
+  if (anchorProto && typeof anchorProto.click === "function" && !anchorProto.__ODEQuickAppDownloadPatched) {{
+    const originalAnchorClick = anchorProto.click;
+    anchorProto.click = function() {{
+      if (interceptDownloadAnchor(this)) return;
+      return originalAnchorClick.call(this);
+    }};
+    Object.defineProperty(anchorProto, "__ODEQuickAppDownloadPatched", {{
+      configurable: true,
+      enumerable: false,
+      value: true
+    }});
+  }}
+  document.addEventListener(
+    "click",
+    (event) => {{
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest("a[download]");
+      if (!(anchor instanceof HTMLAnchorElement) || !anchor.href) return;
+      if (!interceptDownloadAnchor(anchor)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    }},
+    true
+  );
+  if (typeof window.saveAs === "function" && !window.__ODEQuickAppSaveAsPatched) {{
+    const originalSaveAs = window.saveAs.bind(window);
+    window.saveAs = function(payload, name, options) {{
+      return savePayloadToNativeFile(payload, name).catch(() => originalSaveAs(payload, name, options));
+    }};
+    Object.defineProperty(window, "__ODEQuickAppSaveAsPatched", {{
+      configurable: true,
+      enumerable: false,
+      value: true
+    }});
+  }}
+  const injectBundledLibrary = (source, readyCheck) => {{
+    if (typeof readyCheck === "function" && readyCheck()) return true;
+    if (typeof source !== "string" || !source.trim()) return false;
+    try {{
+      const script = document.createElement("script");
+      script.type = "text/javascript";
+      script.text = source;
+      (document.head || document.documentElement || document.body).appendChild(script);
+      script.remove();
+    }} catch (_error) {{
+      try {{
+        window.eval(source);
+      }} catch (_evalError) {{
+        return false;
+      }}
+    }}
+    return typeof readyCheck === "function" ? readyCheck() : true;
+  }};
+  const ensurePdfDependencies = () => {{
+    const html2CanvasReady =
+      typeof window.html2canvas === "function" ||
+      injectBundledLibrary(bundledHtml2CanvasSource, () => typeof window.html2canvas === "function");
+    const jsPdfReady =
+      Boolean(window.jspdf && window.jspdf.jsPDF) ||
+      injectBundledLibrary(bundledJsPdfSource, () => Boolean(window.jspdf && window.jspdf.jsPDF));
+    return html2CanvasReady && jsPdfReady;
+  }};
+  ensurePdfDependencies();
+  const patchJsPdfInstance = (instance) => {{
+    if (!instance || typeof instance.save !== "function" || instance.__ODEQuickAppPdfSavePatched) return instance;
+    const originalJsPdfSave = instance.save;
+    Object.defineProperty(instance, "save", {{
+      configurable: true,
+      enumerable: false,
+      value: function(fileName, options) {{
+        try {{
+          const buffer = this.output("arraybuffer");
+          return saveBytesToNativeFile(
+            toByteArray(buffer),
+            normalizeDownloadName(fileName) || `${{normalizeDownloadName(document.title) || "export"}}.pdf`,
+            "application/pdf"
+          ).catch((error) => {{
+            showExportStatus(error && error.message ? `PDF export failed: ${{error.message}}` : "PDF export failed.", "error");
+            return null;
+          }});
+        }} catch (error) {{
+          showExportStatus(error && error.message ? `PDF export failed: ${{error.message}}` : "PDF export failed.", "error");
+          return originalJsPdfSave.call(this, fileName, options);
+        }}
+      }}
+    }});
+    Object.defineProperty(instance, "__ODEQuickAppPdfSavePatched", {{
+      configurable: true,
+      enumerable: false,
+      value: true
+    }});
+    return instance;
+  }};
+  const patchJsPdfSave = () => {{
+    if (!window.jspdf || !window.jspdf.jsPDF) return false;
+    const jsPdfCtor = window.jspdf.jsPDF;
+    if (jsPdfCtor.__ODEQuickAppCtorPatched) {{
+      return true;
+    }}
+    const apiSaveTarget =
+      jsPdfCtor.API && typeof jsPdfCtor.API.save === "function"
+        ? jsPdfCtor.API
+        : jsPdfCtor.prototype && typeof jsPdfCtor.prototype.save === "function"
+          ? jsPdfCtor.prototype
+          : null;
+    if (apiSaveTarget && !apiSaveTarget.__ODEQuickAppPdfSavePatched) {{
+      const originalApiSave = apiSaveTarget.save;
+      apiSaveTarget.save = function(fileName, options) {{
+        return patchJsPdfInstance(this).save(fileName, options);
+      }};
+      Object.defineProperty(apiSaveTarget, "__ODEQuickAppPdfSavePatched", {{
+        configurable: true,
+        enumerable: false,
+        value: true
+      }});
+    }}
+    const OdeQuickAppJsPdf = function(...args) {{
+      const instance = new jsPdfCtor(...args);
+      return patchJsPdfInstance(instance);
+    }};
+    try {{
+      Reflect.ownKeys(jsPdfCtor).forEach((key) => {{
+        if (key === "length" || key === "name" || key === "prototype") return;
+        const descriptor = Object.getOwnPropertyDescriptor(jsPdfCtor, key);
+        if (descriptor) {{
+          Object.defineProperty(OdeQuickAppJsPdf, key, descriptor);
+        }}
+      }});
+      Object.setPrototypeOf(OdeQuickAppJsPdf, jsPdfCtor);
+    }} catch (_error) {{
+      OdeQuickAppJsPdf.API = jsPdfCtor.API;
+    }}
+    OdeQuickAppJsPdf.prototype = jsPdfCtor.prototype;
+    Object.defineProperty(OdeQuickAppJsPdf, "__ODEQuickAppCtorPatched", {{
+      configurable: true,
+      enumerable: false,
+      value: true
+    }});
+    Object.defineProperty(OdeQuickAppJsPdf, "__ODEQuickAppOriginalCtor", {{
+      configurable: true,
+      enumerable: false,
+      value: jsPdfCtor
+    }});
+    window.jspdf.jsPDF = OdeQuickAppJsPdf;
+    return true;
+  }};
+  patchJsPdfSave();
+  if (!window.__ODEQuickAppPdfPatchWatcher) {{
+    const watchForJsPdf = () => {{
+      ensurePdfDependencies();
+      patchJsPdfSave();
+    }};
+    window.__ODEQuickAppPdfPatchWatcher = window.setInterval(watchForJsPdf, 250);
+    window.setTimeout(() => {{
+      if (window.__ODEQuickAppPdfPatchWatcher) {{
+        window.clearInterval(window.__ODEQuickAppPdfPatchWatcher);
+        window.__ODEQuickAppPdfPatchWatcher = null;
+      }}
+    }}, 30000);
+    window.addEventListener("load", watchForJsPdf, {{ once: true }});
+  }}
+  window.__ODE_QUICK_APP_EXPORT__ = {{
+    saveBytes(bytes, fileName, mimeType) {{
+      return saveBytesToNativeFile(Array.isArray(bytes) ? bytes : [], fileName, mimeType);
+    }},
+    savePayload(payload, fileName) {{
+      return savePayloadToNativeFile(payload, fileName);
+    }}
   }};
 
   const originalGetItem = storageProto && typeof storageProto.getItem === "function" ? storageProto.getItem : null;
