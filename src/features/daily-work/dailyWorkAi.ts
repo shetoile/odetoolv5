@@ -36,6 +36,27 @@ export type DailyWorkAiExtractionInput = {
   evidenceLabels?: string[];
 };
 
+export type DailyHubChatMessageInput = {
+  author: string;
+  role: string;
+  body: string;
+  files: string[];
+  createdAt: string;
+};
+
+export type DailyHubChatAnswerInput = {
+  apiKey: string;
+  providerId?: SupportedAiProviderId;
+  targetLanguage: LanguageCode;
+  question: string;
+  messages: DailyHubChatMessageInput[];
+};
+
+export type DailyHubChatAnswer = {
+  title: string;
+  answer: string;
+};
+
 function asText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -148,5 +169,60 @@ export async function extractDailyWorkWithAi(input: DailyWorkAiExtractionInput):
       timelineSuggestions: parseItems(parsed.timeline_suggestions),
       confidence: clampStructuredConfidence(parsed.confidence, 0.72)
     })
+  });
+}
+
+export async function answerDailyHubChatWithAi(input: DailyHubChatAnswerInput): Promise<DailyHubChatAnswer> {
+  const question = input.question.trim();
+  const transcript = input.messages
+    .map((message) => {
+      const files = message.files.length > 0 ? ` Files: ${message.files.join(", ")}.` : "";
+      return `[${message.createdAt}] ${message.author} (${message.role}): ${message.body}${files}`;
+    })
+    .join("\n");
+
+  const systemPrompt = [
+    "You are ODETool Daily Hub AI.",
+    "Answer from the Daily Hub conversation transcript first.",
+    "The transcript is authoritative for who said what, when, and which files were shared.",
+    "If the user asks who messaged something, name the user from the author field.",
+    "If the user asks for a subject summary, cite the relevant messages and shared file names.",
+    "If the transcript does not contain the answer, say that clearly and do not invent facts.",
+    "You may also mention app/workspace next steps when useful, but do not pretend to execute actions.",
+    buildAiOutputLanguageInstruction(input.targetLanguage)
+  ].join(" ");
+
+  const userPrompt = [
+    "Question:",
+    question,
+    "",
+    "Daily Hub transcript:",
+    transcript || "(no messages yet)",
+    "",
+    "Return JSON with this exact schema:",
+    "{",
+    '  "title": "short answer title",',
+    '  "answer": "direct helpful answer grounded in the transcript"',
+    "}",
+    "No markdown outside JSON. No extra keys."
+  ].join("\n");
+
+  return runStructuredAiPrompt({
+    apiKey: input.apiKey,
+    providerId: input.providerId,
+    intent: "daily_hub_chat",
+    systemPrompt,
+    userPrompt,
+    invalidJsonMessage: "AI returned an invalid Daily Hub answer.",
+    malformedJsonMessage: "AI returned malformed Daily Hub JSON.",
+    aiEngine: "cloud",
+    parse: (parsed) => {
+      const title = asText(parsed.title) || "Daily Hub answer";
+      const answer = asText(parsed.answer);
+      if (!answer) {
+        throw new StructuredAiPromptError("schema_invalid", "AI answer was empty.");
+      }
+      return { title, answer };
+    }
   });
 }

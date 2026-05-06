@@ -52,7 +52,9 @@ import {
   type DailyWorkExportFormat
 } from "@/features/daily-work/dailyWorkExport";
 import {
+  answerDailyHubChatWithAi,
   extractDailyWorkWithAi,
+  type DailyHubChatMessageInput,
   type DailyWorkAiExtractedItem,
   type DailyWorkAiExtraction
 } from "@/features/daily-work/dailyWorkAi";
@@ -725,6 +727,44 @@ function SharedFileChips({
       })}
     </div>
   );
+}
+
+function createDailyHubTranscript(messages: DailyHubMessage[]): DailyHubChatMessageInput[] {
+  return messages.slice(-120).map((message) => ({
+    author: message.author,
+    role: message.role,
+    body: message.body && !isSameCompactText(message.title, message.body) ? message.body : message.title,
+    files: message.evidenceRefs.map((ref) => ref.label),
+    createdAt: message.createdAt
+  }));
+}
+
+function answerDailyHubChatLocally(question: string, messages: DailyHubMessage[]): string {
+  const queryWords = question
+    .toLowerCase()
+    .split(/[^a-z0-9\u00c0-\u017f]+/i)
+    .filter((word) => word.length > 2 && !["what", "which", "when", "where", "about", "tell", "give", "summary", "please", "team", "message", "messages", "discussed"].includes(word));
+  const relevant = messages.filter((message) => {
+    const haystack = [message.author, message.title, message.body, ...message.evidenceRefs.map((ref) => ref.label)]
+      .join(" ")
+      .toLowerCase();
+    return queryWords.length === 0 || queryWords.some((word) => haystack.includes(word));
+  });
+  const selected = (relevant.length > 0 ? relevant : messages).slice(-8);
+  if (selected.length === 0) return "I do not see any Daily Hub messages yet.";
+  return [
+    relevant.length > 0
+      ? "I found these matching Daily Hub messages:"
+      : "I do not see a specific match, but these are the latest Daily Hub messages:",
+    ...selected
+      .map((message) => {
+        const text = message.body && !isSameCompactText(message.title, message.body) ? message.body : message.title;
+        const files = message.evidenceRefs.length > 0
+          ? ` Files: ${message.evidenceRefs.map((ref) => ref.label).join(", ")}.`
+          : "";
+        return `- ${message.author} said: ${text}${files}`;
+      })
+  ].join("\n");
 }
 
 function EmptyPanel({ label }: { label: string }) {
@@ -1664,27 +1704,44 @@ export function DailyWorkBoard({
       setDailyHubAiBusy("ask");
       setDailyHubAiMessage(null);
       try {
-        const aiRequest = [
-          body,
-          "",
-          "Answer as the Daily Hub assistant. Read the conversation transcript and selected evidence before answering. If the user asks what was discussed or said about a subject, summarize the relevant messages and mention any shared files."
-        ].join("\n");
-        const nodeResponse = aiPropsWithEvidence.onAskNode
-          ? await aiPropsWithEvidence.onAskNode(aiRequest, { actionHint: "daily_hub_chat" })
-          : null;
-        const plan = nodeResponse
-          ? null
-          : await aiPropsWithEvidence.onAnalyze(aiRequest, { actionHint: "daily_hub_chat" });
-        const answer =
-          nodeResponse?.answer ||
-          plan?.reason ||
-          plan?.steps.join("\n") ||
-          "I reviewed the current conversation.";
+        const questionMessage: DailyHubMessage = {
+          id: item.id,
+          channelId: getDailyHubItemChannelId(item),
+          role: getDailyHubMessageRole(item),
+          author: getDailyHubMessageAuthor(item, dailyHubCurrentUserLabel),
+          title: item.title,
+          body: item.body,
+          createdAt: item.createdAt,
+          item,
+          evidenceRefs: item.evidenceRefs
+        };
+        const transcriptMessages = [...dailyHubMessages, questionMessage];
+        const credential = getPrimaryStoredAiProviderKey();
+        let cloudAnswer: Awaited<ReturnType<typeof answerDailyHubChatWithAi>> | null = null;
+        if (credential) {
+          try {
+            cloudAnswer = await answerDailyHubChatWithAi({
+              apiKey: encodeAiAccessToken(credential),
+              providerId: isSupportedAiProviderId(credential.providerId) ? credential.providerId : undefined,
+              targetLanguage: aiCommandBarProps.language,
+              question: body,
+              messages: createDailyHubTranscript(transcriptMessages)
+            });
+          } catch (error) {
+            const message = error instanceof Error && error.message.trim().length > 0
+              ? error.message
+              : "AI unavailable; local Daily Hub answer used.";
+            setDailyHubAiMessage(message);
+          }
+        } else {
+          setDailyHubAiMessage("No AI provider key found; local Daily Hub answer used.");
+        }
+        const answer = cloudAnswer?.answer || answerDailyHubChatLocally(body, transcriptMessages);
         const responseItem = createDailyWorkItem({
           type: "note",
-          title: answer.split(/\r?\n/)[0]?.trim().slice(0, 120) || "AI response",
+          title: cloudAnswer?.title || answer.split(/\r?\n/)[0]?.trim().slice(0, 120) || "AI response",
           body: answer,
-          status: plan?.requiresConfirmation ? "suggested" : "inbox",
+          status: "inbox",
           sourceType: "ask_ai",
           sourceLabels: ["AI Assistant", "AI Response"],
           evidenceRefs: []
@@ -1698,7 +1755,7 @@ export function DailyWorkBoard({
             },
             {
               type: "note_saved",
-              label: plan?.requiresConfirmation ? "AI proposal ready" : "AI response received",
+              label: "AI response received",
               detail: responseItem.title,
               itemId: responseItem.id
             }
@@ -1712,10 +1769,11 @@ export function DailyWorkBoard({
       }
     },
     [
-      aiPropsWithEvidence,
+      aiCommandBarProps.language,
       dailyHubComposerMode,
       dailyHubCurrentUserLabel,
       dailyHubDraft,
+      dailyHubMessages,
       dailyHubPendingFiles,
       importFiles,
       saveDailyHubPendingFilesToCommunication,
@@ -1860,49 +1918,52 @@ export function DailyWorkBoard({
                           aria-label="Edit message"
                         />
                         <div className="ode-daily-chat-message-tools">
-                        <button type="button" onClick={cancelDailyHubMessageEdit} title="Cancel" aria-label="Cancel edit">Cancel</button>
-                        <button
-                          type="button"
-                          onClick={() => saveDailyHubMessageEdit(message.item!)}
-                          disabled={!dailyHubEditingDraft.trim()}
-                          title="Save"
-                          aria-label="Save edit"
-                        >
-                          Save
-                        </button>
+                          <button type="button" onClick={cancelDailyHubMessageEdit} title="Cancel" aria-label="Cancel edit">Cancel</button>
+                          <button
+                            type="button"
+                            onClick={() => saveDailyHubMessageEdit(message.item!)}
+                            disabled={!dailyHubEditingDraft.trim()}
+                            title="Save"
+                            aria-label="Save edit"
+                          >
+                            Save
+                          </button>
                         </div>
                       </div>
                     ) : (
-                      <p>{messageText}</p>
+                      <div className="ode-daily-chat-message-body-row">
+                        <p>{messageText}</p>
+                        {canEditMessage && message.item ? (
+                          <div className="ode-daily-chat-message-tools" aria-label="Message actions">
+                            <button
+                              type="button"
+                              className="ode-daily-chat-tool-btn ode-daily-chat-tool-edit"
+                              onClick={() => startDailyHubMessageEdit(message.item!)}
+                              title="Edit message"
+                              aria-label="Edit message"
+                            >
+                              <EditGlyphSmall />
+                            </button>
+                            <button
+                              type="button"
+                              className="ode-daily-chat-tool-btn ode-daily-chat-tool-delete"
+                              onClick={() => deleteItem(message.item!.id)}
+                              title="Delete message"
+                              aria-label="Delete message"
+                            >
+                              <TrashGlyphSmall />
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     )}
                     {isSharedFileMessage ? (
                       <SharedFileChips
                         refs={message.evidenceRefs}
                         onOpen={openDailyHubDocument}
                         onOpenLocation={openDailyHubDocumentLocation}
-                      />
-                    ) : null}
-                    {canEditMessage && message.item ? (
-                      <div className="ode-daily-chat-message-tools">
-                        <button
-                          type="button"
-                          onClick={() => startDailyHubMessageEdit(message.item!)}
-                          disabled={editingMessage}
-                          title="Edit message"
-                          aria-label="Edit message"
-                        >
-                          <EditGlyphSmall />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteItem(message.item!.id)}
-                          title="Delete message"
-                          aria-label="Delete message"
-                        >
-                          <TrashGlyphSmall />
-                        </button>
-                      </div>
-                    ) : null}
+                        />
+                      ) : null}
                   </div>
                 </article>
               );
