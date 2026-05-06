@@ -402,6 +402,18 @@ export async function openLocalPath(path: string): Promise<void> {
   await callNative("open_local_path", { path });
 }
 
+export async function saveCommunicationFile(
+  workspaceRootPath: string,
+  fileName: string,
+  bytes: number[]
+): Promise<string> {
+  return callNative<string>("save_communication_file", {
+    workspaceRootPath,
+    fileName,
+    bytes
+  });
+}
+
 export async function startWindowsSnippingTool(): Promise<void> {
   await callNative("start_windows_snipping_tool");
 }

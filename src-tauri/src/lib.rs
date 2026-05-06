@@ -10735,6 +10735,39 @@ Start-Process -FilePath $target | Out-Null
     open_path_with_system_default(&target)
 }
 
+#[tauri::command]
+fn save_communication_file(
+    workspace_root_path: String,
+    file_name: String,
+    bytes: Vec<u8>,
+) -> Result<String, String> {
+    let root = PathBuf::from(workspace_root_path.trim().trim_matches('"'));
+    if !root.exists() || !root.is_dir() {
+        return Err(format!("workspace folder does not exist: {:?}", root));
+    }
+
+    let communication_dir = root.join("Communication");
+    fs::create_dir_all(&communication_dir)
+        .map_err(|err| format!("failed to create Communication folder {:?}: {err}", communication_dir))?;
+
+    let safe_name = sanitize_file_name_component(&file_name);
+    let (base, ext) = split_file_name(&safe_name);
+    for copy_index in 0..5000 {
+        let candidate = communication_dir.join(build_copy_name(&base, &ext, copy_index));
+        if candidate.exists() {
+            continue;
+        }
+        fs::write(&candidate, &bytes)
+            .map_err(|err| format!("failed to save communication file {:?}: {err}", candidate))?;
+        return Ok(candidate.to_string_lossy().to_string());
+    }
+
+    let fallback = communication_dir.join(format!("{}-{}", safe_name, now_ms()));
+    fs::write(&fallback, bytes)
+        .map_err(|err| format!("failed to save communication file {:?}: {err}", fallback))?;
+    Ok(fallback.to_string_lossy().to_string())
+}
+
 fn escape_html_attribute(value: &str) -> String {
     value
         .replace('&', "&amp;")
@@ -12037,6 +12070,7 @@ pub fn run() {
             pick_qa_evidence_files,
             get_windows_language_snapshot,
             open_local_path,
+            save_communication_file,
             prepare_quick_app_html_instance,
             export_tree_structure_excel,
             export_procedure_table_excel,

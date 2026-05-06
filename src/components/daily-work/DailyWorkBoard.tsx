@@ -57,6 +57,10 @@ import {
   type DailyWorkAiExtraction
 } from "@/features/daily-work/dailyWorkAi";
 import {
+  openLocalPath,
+  saveCommunicationFile
+} from "@/lib/nodeService";
+import {
   encodeAiAccessToken,
   getPrimaryStoredAiProviderKey,
   isSupportedAiProviderId
@@ -79,6 +83,7 @@ type DailyWorkBoardProps = {
   aiCommandBarProps: AiCommandBarEmbeddedProps;
   contextKey?: string | null;
   currentUserLabel?: string | null;
+  workspaceLocalPath?: string | null;
 };
 
 type DailyStateRecord = {
@@ -685,10 +690,12 @@ function EvidenceChips({
 
 function SharedFileChips({
   refs,
-  onOpen
+  onOpen,
+  onOpenLocation
 }: {
   refs: DailyEvidenceRef[];
-  onOpen?: (id: string) => void;
+  onOpen?: (ref: DailyEvidenceRef) => void;
+  onOpenLocation?: (ref: DailyEvidenceRef) => void;
 }) {
   if (refs.length === 0) return null;
 
@@ -697,16 +704,23 @@ function SharedFileChips({
       {refs.map((ref) => {
         const isImage = /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(ref.label);
         return (
-          <button
-            key={ref.id}
-            type="button"
-            className="ode-daily-chat-shared-file"
-            title={ref.label}
-            onClick={() => onOpen?.(ref.id)}
-          >
-            {isImage ? <ImageGlyphSmall /> : <FileGlyphSmall />}
-            <span>{ref.label}</span>
-          </button>
+          <span key={ref.id} className="ode-daily-chat-shared-file" title={ref.label}>
+            <button type="button" onClick={() => onOpen?.(ref)} aria-label={`Open ${ref.label}`}>
+              {isImage ? <ImageGlyphSmall /> : <FileGlyphSmall />}
+              <span>{ref.label}</span>
+            </button>
+            {onOpenLocation ? (
+              <button
+                type="button"
+                className="ode-daily-chat-shared-file-location"
+                title="Open file location"
+                aria-label={`Open location for ${ref.label}`}
+                onClick={() => onOpenLocation(ref)}
+              >
+                <OpenGlyphSmall />
+              </button>
+            ) : null}
+          </span>
         );
       })}
     </div>
@@ -731,8 +745,14 @@ function DailyActivityStrip({ activities }: { activities: DailyWorkActivity[] })
   );
 }
 
-export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel }: DailyWorkBoardProps) {
+export function DailyWorkBoard({
+  aiCommandBarProps,
+  contextKey,
+  currentUserLabel,
+  workspaceLocalPath
+}: DailyWorkBoardProps) {
   const dailyHubCurrentUserLabel = currentUserLabel?.trim() || "User";
+  const communicationWorkspacePath = workspaceLocalPath?.trim() || null;
   const storageKey = useMemo(() => buildDailyWorkStorageKey(contextKey), [contextKey]);
   const [stateRecord, setStateRecord] = useState<DailyStateRecord>(() => ({
     key: storageKey,
@@ -812,14 +832,39 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     [selectedEvidenceRefs]
   );
 
+  const dailyHubMessages = useMemo(
+    () => createDailyHubMessages(dailyState.items, dailyState.activities, dailyHubCurrentUserLabel),
+    [dailyHubCurrentUserLabel, dailyState.activities, dailyState.items]
+  );
+
   const dailyAiContext = useMemo(
     () => buildDailyWorkAiContext(dailyState, allDocuments, selectedEvidenceRefs),
     [allDocuments, dailyState, selectedEvidenceRefs]
   );
 
   const withDailyAiContext = useCallback(
-    (requestText: string) => addDailyWorkContextToPrompt(requestText, dailyAiContext),
-    [dailyAiContext]
+    (requestText: string) => {
+      const conversationTranscript = dailyHubMessages
+        .slice(-80)
+        .map((message) => {
+          const body = message.body && !isSameCompactText(message.title, message.body) ? message.body : message.title;
+          const files = message.evidenceRefs.length > 0
+            ? ` [files: ${message.evidenceRefs.map((ref) => ref.label).join(", ")}]`
+            : "";
+          return `${message.author}: ${body}${files}`;
+        })
+        .join("\n");
+      return addDailyWorkContextToPrompt(
+        [
+          requestText,
+          "",
+          "Daily Hub conversation transcript:",
+          conversationTranscript || "(no messages yet)"
+        ].join("\n"),
+        dailyAiContext
+      );
+    },
+    [dailyAiContext, dailyHubMessages]
   );
 
   const mergeAiOptions = useCallback(
@@ -892,11 +937,6 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     () => allDocuments.filter((document) => document.kind === "document").slice(0, 5),
     [allDocuments]
   );
-  const dailyHubMessages = useMemo(
-    () => createDailyHubMessages(dailyState.items, dailyState.activities, dailyHubCurrentUserLabel),
-    [dailyHubCurrentUserLabel, dailyState.activities, dailyState.items]
-  );
-
   const resolveEvidenceRefs = useCallback(
     (ids: string[]) => {
       const explicitRefs = ids
@@ -949,7 +989,11 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
   );
 
   const importFiles = useCallback(
-    (files: File[], parentId: string | null = dailyState.activeFolderId) => {
+    (
+      files: File[],
+      parentId: string | null = dailyState.activeFolderId,
+      localPathByFileName?: Map<string, string>
+    ) => {
       if (files.length === 0) return [];
       const created = files.map((file) =>
         createDailyDocumentItem({
@@ -957,7 +1001,8 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
           kind: "document",
           parentId,
           mimeType: file.type || null,
-          size: file.size
+          size: file.size,
+          localPath: localPathByFileName?.get(file.name) ?? null
         })
       );
       setDailyState((current) => ({
@@ -1328,6 +1373,43 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     [addDailyHubPendingFiles]
   );
 
+  const saveDailyHubPendingFilesToCommunication = useCallback(
+    async (files: File[]): Promise<Map<string, string>> => {
+      const savedPaths = new Map<string, string>();
+      if (!communicationWorkspacePath || files.length === 0) return savedPaths;
+
+      for (const file of files) {
+        const bytes = Array.from(new Uint8Array(await file.arrayBuffer()));
+        const savedPath = await saveCommunicationFile(communicationWorkspacePath, file.name, bytes);
+        savedPaths.set(file.name, savedPath);
+      }
+      return savedPaths;
+    },
+    [communicationWorkspacePath]
+  );
+
+  const openDailyHubDocument = useCallback(
+    (ref: DailyEvidenceRef) => {
+      const document = documentById.get(ref.id);
+      if (document?.localPath) {
+        void openLocalPath(document.localPath);
+        return;
+      }
+      setPreviewDocumentId(ref.id);
+    },
+    [documentById]
+  );
+
+  const openDailyHubDocumentLocation = useCallback(
+    (ref: DailyEvidenceRef) => {
+      const localPath = documentById.get(ref.id)?.localPath;
+      if (!localPath) return;
+      const folderPath = localPath.replace(/[\\/][^\\/]*$/, "");
+      void openLocalPath(folderPath || localPath);
+    },
+    [documentById]
+  );
+
   const handleDailyHubPaste = useCallback(
     (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
       const clipboardData = event.clipboardData;
@@ -1522,7 +1604,10 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
       if (!body && pendingFiles.length === 0) return;
 
       const isAiMessage = dailyHubComposerMode === "ai" && body.length > 0;
-      const createdDocuments = pendingFiles.length > 0 ? importFiles(pendingFiles) : [];
+      const savedFilePaths = await saveDailyHubPendingFilesToCommunication(pendingFiles);
+      const createdDocuments = pendingFiles.length > 0
+        ? importFiles(pendingFiles, null, savedFilePaths)
+        : [];
       const evidenceRefs = createdDocuments.map(documentToEvidenceRef);
       const sharedFileNames = createdDocuments.map((document) => document.name).join(", ");
       const fallbackTitle = createdDocuments.length === 1
@@ -1579,20 +1664,27 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
       setDailyHubAiBusy("ask");
       setDailyHubAiMessage(null);
       try {
-        const plan = await aiPropsWithEvidence.onAnalyze(
-          [
-            body,
-            "",
-            "Respond as the Daily Hub assistant. Use current ODETool context, selected evidence, quick apps, and daily-work history. If an app change is needed, propose the action clearly and wait for confirmation."
-          ].join("\n"),
-          { actionHint: "daily_hub_chat" }
-        );
-        const answer = plan.reason || plan.steps.join("\n") || "I reviewed the current context.";
+        const aiRequest = [
+          body,
+          "",
+          "Answer as the Daily Hub assistant. Read the conversation transcript and selected evidence before answering. If the user asks what was discussed or said about a subject, summarize the relevant messages and mention any shared files."
+        ].join("\n");
+        const nodeResponse = aiPropsWithEvidence.onAskNode
+          ? await aiPropsWithEvidence.onAskNode(aiRequest, { actionHint: "daily_hub_chat" })
+          : null;
+        const plan = nodeResponse
+          ? null
+          : await aiPropsWithEvidence.onAnalyze(aiRequest, { actionHint: "daily_hub_chat" });
+        const answer =
+          nodeResponse?.answer ||
+          plan?.reason ||
+          plan?.steps.join("\n") ||
+          "I reviewed the current conversation.";
         const responseItem = createDailyWorkItem({
           type: "note",
           title: answer.split(/\r?\n/)[0]?.trim().slice(0, 120) || "AI response",
           body: answer,
-          status: plan.requiresConfirmation ? "suggested" : "inbox",
+          status: plan?.requiresConfirmation ? "suggested" : "inbox",
           sourceType: "ask_ai",
           sourceLabels: ["AI Assistant", "AI Response"],
           evidenceRefs: []
@@ -1606,7 +1698,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
             },
             {
               type: "note_saved",
-              label: plan.requiresConfirmation ? "AI proposal ready" : "AI response received",
+              label: plan?.requiresConfirmation ? "AI proposal ready" : "AI response received",
               detail: responseItem.title,
               itemId: responseItem.id
             }
@@ -1626,6 +1718,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
       dailyHubDraft,
       dailyHubPendingFiles,
       importFiles,
+      saveDailyHubPendingFilesToCommunication,
       setDailyState
     ]
   );
@@ -1724,8 +1817,9 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
             ) : null}
 
             {dailyHubMessages.map((message) => {
-              const ownMessage = message.role === "user" || message.author === dailyHubCurrentUserLabel;
-              const canEditMessage = Boolean(message.item && ownMessage);
+              const userMessage = message.role === "user" || message.author === dailyHubCurrentUserLabel;
+              const alignRight = message.role === "assistant";
+              const canEditMessage = Boolean(message.item && userMessage);
               const isSharedFileMessage =
                 message.evidenceRefs.length > 0 &&
                 message.item?.sourceLabels.some((label) => {
@@ -1739,7 +1833,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
                 <article
                   key={message.id}
                   className={`ode-daily-chat-message ode-daily-chat-message-${message.role} ${
-                    ownMessage ? "ode-daily-chat-message-own" : ""
+                    alignRight ? "ode-daily-chat-message-own" : ""
                   }`}
                 >
                   <div className="ode-daily-chat-bubble">
@@ -1766,31 +1860,46 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
                           aria-label="Edit message"
                         />
                         <div className="ode-daily-chat-message-tools">
-                          <button type="button" onClick={cancelDailyHubMessageEdit}>Cancel</button>
-                          <button
-                            type="button"
-                            onClick={() => saveDailyHubMessageEdit(message.item!)}
-                            disabled={!dailyHubEditingDraft.trim()}
-                          >
-                            Save
-                          </button>
+                        <button type="button" onClick={cancelDailyHubMessageEdit} title="Cancel" aria-label="Cancel edit">Cancel</button>
+                        <button
+                          type="button"
+                          onClick={() => saveDailyHubMessageEdit(message.item!)}
+                          disabled={!dailyHubEditingDraft.trim()}
+                          title="Save"
+                          aria-label="Save edit"
+                        >
+                          Save
+                        </button>
                         </div>
                       </div>
                     ) : (
                       <p>{messageText}</p>
                     )}
                     {isSharedFileMessage ? (
-                      <SharedFileChips refs={message.evidenceRefs} onOpen={setPreviewDocumentId} />
+                      <SharedFileChips
+                        refs={message.evidenceRefs}
+                        onOpen={openDailyHubDocument}
+                        onOpenLocation={openDailyHubDocumentLocation}
+                      />
                     ) : null}
                     {canEditMessage && message.item ? (
                       <div className="ode-daily-chat-message-tools">
-                        <button type="button" onClick={() => startDailyHubMessageEdit(message.item!)} disabled={editingMessage}>
+                        <button
+                          type="button"
+                          onClick={() => startDailyHubMessageEdit(message.item!)}
+                          disabled={editingMessage}
+                          title="Edit message"
+                          aria-label="Edit message"
+                        >
                           <EditGlyphSmall />
-                          <span>Edit</span>
                         </button>
-                        <button type="button" onClick={() => deleteItem(message.item!.id)}>
+                        <button
+                          type="button"
+                          onClick={() => deleteItem(message.item!.id)}
+                          title="Delete message"
+                          aria-label="Delete message"
+                        >
                           <TrashGlyphSmall />
-                          <span>Delete</span>
                         </button>
                       </div>
                     ) : null}

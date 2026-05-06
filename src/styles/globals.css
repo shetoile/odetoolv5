@@ -1194,6 +1194,7 @@ input {
 
 .ode-daily-chat-bubble {
   min-width: 0;
+  position: relative;
   display: grid;
   gap: 0.46rem;
   border-radius: 18px 18px 18px 6px;
@@ -1268,6 +1269,41 @@ input {
   flex: 0 0 auto;
 }
 
+.ode-daily-chat-shared-file {
+  font-family: inherit;
+}
+
+.ode-daily-chat-shared-file:hover,
+.ode-daily-chat-shared-file:focus-within {
+  border-color: rgba(132, 223, 255, 0.34);
+  background: rgba(41, 175, 227, 0.14);
+}
+
+.ode-daily-chat-shared-file > button {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  color: inherit;
+  font: inherit;
+}
+
+.ode-daily-chat-shared-file > button:first-child {
+  flex: 1 1 auto;
+}
+
+.ode-daily-chat-shared-file-location {
+  width: 1.45rem;
+  height: 1.45rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: rgba(235, 249, 252, 0.78);
+  background: rgba(255, 255, 255, 0.08);
+}
+
 .ode-daily-chat-pending-files {
   display: flex;
   flex-wrap: wrap;
@@ -1316,6 +1352,33 @@ input {
 .ode-daily-chat-message-tools {
   flex-wrap: wrap;
   gap: 0.38rem;
+}
+
+.ode-daily-chat-bubble > .ode-daily-chat-message-tools {
+  position: absolute;
+  right: 0.62rem;
+  bottom: 0.48rem;
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.ode-daily-chat-bubble:hover > .ode-daily-chat-message-tools,
+.ode-daily-chat-bubble:focus-within > .ode-daily-chat-message-tools {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ode-daily-chat-bubble > .ode-daily-chat-message-tools button {
+  width: 2.1rem;
+  height: 2.1rem;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0;
+}
+
+.ode-daily-chat-bubble > .ode-daily-chat-message-tools button span {
+  display: none;
 }
 
 .ode-daily-chat-composer {

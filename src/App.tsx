@@ -28335,6 +28335,7 @@ export default function App() {
                 <DailyWorkBoard
                   contextKey={`${activeProjectId ?? "global"}:${activeProjectRootId ?? "root"}:${embeddedAiUploadTargetNodeId ?? "workspace"}`}
                   currentUserLabel={currentUserAccount?.displayName ?? null}
+                  workspaceLocalPath={activeProjectHasLinkedFolder ? activeProject?.rootPath ?? null : null}
                   aiCommandBarProps={{
                     open: true,
                     simpleMode: true,
@@ -28577,6 +28578,7 @@ export default function App() {
                     <DailyWorkBoard
                       contextKey={`${activeProjectId ?? "global"}:${activeProjectRootId ?? "root"}:dashboard`}
                       currentUserLabel={currentUserAccount?.displayName ?? null}
+                      workspaceLocalPath={activeProjectHasLinkedFolder ? activeProject?.rootPath ?? null : null}
                       aiCommandBarProps={{
                         open: true,
                         simpleMode: true,
