@@ -74,6 +74,7 @@ export type DailyDocumentItem = {
   source: "local" | "node";
   mimeType?: string | null;
   size?: number | null;
+  localPath?: string | null;
   nodeDocumentId?: string | null;
   pathLabel?: string | null;
   createdAt: string;

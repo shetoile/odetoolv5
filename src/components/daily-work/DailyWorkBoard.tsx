@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
   type ComponentProps,
   type DragEvent,
   type FormEvent,
@@ -24,6 +25,7 @@ import {
   EditGlyphSmall,
   ExportGlyphSmall,
   FileGlyphSmall,
+  ImageGlyphSmall,
   LinkGlyphSmall,
   OpenGlyphSmall,
   PlusGlyphSmall,
@@ -76,6 +78,7 @@ type AiCommandBarEmbeddedProps = ComponentProps<typeof AiCommandBar>;
 type DailyWorkBoardProps = {
   aiCommandBarProps: AiCommandBarEmbeddedProps;
   contextKey?: string | null;
+  currentUserLabel?: string | null;
 };
 
 type DailyStateRecord = {
@@ -344,39 +347,32 @@ function getDailyHubMessageRole(item: DailyWorkItem): DailyHubMessage["role"] {
   return "team";
 }
 
-function getDailyHubMessageAuthor(item: DailyWorkItem): string {
+function getDailyHubMessageAuthor(item: DailyWorkItem, currentUserLabel: string): string {
   const role = getDailyHubMessageRole(item);
   if (role === "assistant") return "ODE AI";
   if (role === "action") return getDailyHubItemLabel(item);
   if (getDailyHubItemChannelId(item) === "workspace") return "Workspace";
   if (getDailyHubItemChannelId(item) === "chantier") return "Chantier";
-  return "You";
+  return currentUserLabel;
 }
 
-function createDailyHubMessages(items: DailyWorkItem[], activities: DailyWorkActivity[]): DailyHubMessage[] {
+function createDailyHubMessages(
+  items: DailyWorkItem[],
+  _activities: DailyWorkActivity[],
+  currentUserLabel: string
+): DailyHubMessage[] {
   const itemMessages = items.map((item): DailyHubMessage => ({
     id: item.id,
     channelId: getDailyHubItemChannelId(item),
     role: getDailyHubMessageRole(item),
-    author: getDailyHubMessageAuthor(item),
+    author: getDailyHubMessageAuthor(item, currentUserLabel),
     title: item.title,
     body: item.body,
     createdAt: item.createdAt,
     item,
     evidenceRefs: item.evidenceRefs
   }));
-  const activityMessages = activities.map((activity): DailyHubMessage => ({
-    id: activity.id,
-    channelId: "activity",
-    role: "system",
-    author: "ODETool",
-    title: activity.label,
-    body: activity.detail ?? activity.label,
-    createdAt: activity.createdAt,
-    activity,
-    evidenceRefs: []
-  }));
-  return [...itemMessages, ...activityMessages].sort(
+  return itemMessages.sort(
     (left, right) => Date.parse(left.createdAt) - Date.parse(right.createdAt)
   );
 }
@@ -687,6 +683,24 @@ function EvidenceChips({
   );
 }
 
+function SharedFileChips({ refs }: { refs: DailyEvidenceRef[] }) {
+  if (refs.length === 0) return null;
+
+  return (
+    <div className="ode-daily-chat-shared-files">
+      {refs.map((ref) => {
+        const isImage = /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(ref.label);
+        return (
+          <span key={ref.id} className="ode-daily-chat-shared-file" title={ref.label}>
+            {isImage ? <ImageGlyphSmall /> : <FileGlyphSmall />}
+            <span>{ref.label}</span>
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 function EmptyPanel({ label }: { label: string }) {
   return <div className="ode-daily-empty">{label}</div>;
 }
@@ -705,7 +719,8 @@ function DailyActivityStrip({ activities }: { activities: DailyWorkActivity[] })
   );
 }
 
-export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoardProps) {
+export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel }: DailyWorkBoardProps) {
+  const dailyHubCurrentUserLabel = currentUserLabel?.trim() || "User";
   const storageKey = useMemo(() => buildDailyWorkStorageKey(contextKey), [contextKey]);
   const [stateRecord, setStateRecord] = useState<DailyStateRecord>(() => ({
     key: storageKey,
@@ -721,11 +736,10 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
   const [previewDocumentId, setPreviewDocumentId] = useState<string | null>(null);
   const [aiExtractBusy, setAiExtractBusy] = useState<DailyWorkSourceType | null>(null);
   const [dailyAiMessage, setDailyAiMessage] = useState<string | null>(null);
-  const [dailyHubEntryType, setDailyHubEntryType] = useState<DailyHubEntryKind>("note");
   const [dailyHubDraft, setDailyHubDraft] = useState("");
+  const [dailyHubComposerMode, setDailyHubComposerMode] = useState<"message" | "ai">("message");
   const [dailyHubAiBusy, setDailyHubAiBusy] = useState<DailyHubAiAction | null>(null);
   const [dailyHubAiMessage, setDailyHubAiMessage] = useState<string | null>(null);
-  const [dailyHubChannelId, setDailyHubChannelId] = useState<DailyHubChannelId>("ai");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -864,69 +878,8 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
     [allDocuments]
   );
   const dailyHubMessages = useMemo(
-    () => createDailyHubMessages(dailyState.items, dailyState.activities),
-    [dailyState.activities, dailyState.items]
-  );
-  const dailyHubActiveMessages = useMemo(
-    () => dailyHubMessages.filter((message) => message.channelId === dailyHubChannelId),
-    [dailyHubChannelId, dailyHubMessages]
-  );
-  const dailyHubChannelCounts = useMemo(() => {
-    const counts: Record<DailyHubChannelId, number> = {
-      ai: 0,
-      team: 0,
-      workspace: 0,
-      chantier: 0,
-      activity: 0
-    };
-    for (const message of dailyHubMessages) {
-      counts[message.channelId] += 1;
-    }
-    return counts;
-  }, [dailyHubMessages]);
-  const dailyHubChannels = useMemo<DailyHubChannel[]>(
-    () => [
-      {
-        id: "ai",
-        label: "AI Assistant",
-        detail: "Answers and app control",
-        icon: <SparkGlyphSmall />,
-        count: dailyHubChannelCounts.ai
-      },
-      {
-        id: "team",
-        label: "Team Chat",
-        detail: "Messages and handoffs",
-        icon: <MessageGlyphSmall />,
-        count: dailyHubChannelCounts.team
-      },
-      {
-        id: "workspace",
-        label: "Workspace",
-        detail: aiCommandBarProps.nodeContext?.title ?? "Current workspace",
-        icon: <DataFolderGlyphSmall />,
-        count: dailyHubChannelCounts.workspace
-      },
-      {
-        id: "chantier",
-        label: "Chantier",
-        detail: "Focused field channel",
-        icon: <ChecklistGlyphSmall />,
-        count: dailyHubChannelCounts.chantier
-      },
-      {
-        id: "activity",
-        label: "Activity",
-        detail: "System stream",
-        icon: <ClockGlyphSmall />,
-        count: dailyHubChannelCounts.activity
-      }
-    ],
-    [aiCommandBarProps.nodeContext?.title, dailyHubChannelCounts]
-  );
-  const activeDailyHubChannel = useMemo<DailyHubChannel>(
-    () => dailyHubChannels.find((channel) => channel.id === dailyHubChannelId) ?? dailyHubChannels[0],
-    [dailyHubChannelId, dailyHubChannels]
+    () => createDailyHubMessages(dailyState.items, dailyState.activities, dailyHubCurrentUserLabel),
+    [dailyHubCurrentUserLabel, dailyState.activities, dailyState.items]
   );
 
   const resolveEvidenceRefs = useCallback(
@@ -1334,6 +1287,67 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
     [importFiles]
   );
 
+  const handleDailyHubPaste = useCallback(
+    (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+      const clipboardData = event.clipboardData;
+      const filesFromList = Array.from(clipboardData.files ?? []);
+      const filesFromItems = Array.from(clipboardData.items ?? [])
+        .filter((item) => item.kind === "file")
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file));
+      const bySignature = new Map<string, File>();
+      for (const file of [...filesFromList, ...filesFromItems]) {
+        const fallbackName = file.type.startsWith("image/")
+          ? `Pasted image ${new Date().toISOString().replace(/[:.]/g, "-")}.png`
+          : `Pasted file ${new Date().toISOString().replace(/[:.]/g, "-")}`;
+        const namedFile = file.name.trim().length > 0
+          ? file
+          : new File([file], fallbackName, {
+              lastModified: file.lastModified,
+              type: file.type
+            });
+        bySignature.set(`${namedFile.name}|${namedFile.size}|${namedFile.type}`, namedFile);
+      }
+      const pastedFiles = Array.from(bySignature.values());
+      if (pastedFiles.length === 0) return;
+
+      event.preventDefault();
+      const created = importFiles(pastedFiles);
+      if (created.length === 0) return;
+      const evidenceRefs = created.map(documentToEvidenceRef);
+      const names = created.map((document) => document.name).join(", ");
+      const draftText = dailyHubDraft.trim();
+      const item = createDailyWorkItem({
+        type: "note",
+        title: draftText || (created.length === 1 ? `Shared ${created[0].name}` : `Shared ${created.length} files`),
+        body: draftText || `Shared: ${names}`,
+        status: "inbox",
+        sourceType: "manual",
+        sourceLabels: ["Team Chat", "Clipboard"],
+        evidenceRefs
+      });
+      setDailyState((current) =>
+        addActivityToState(
+          {
+            ...current,
+            items: [...current.items, item],
+            selectedDocumentIds: uniqueStrings([...current.selectedDocumentIds, ...created.map((document) => document.id)]),
+            updatedAt: nowIso()
+          },
+          {
+            type: "document_attached",
+            label: created.length === 1 ? "Clipboard file shared" : `${created.length} clipboard files shared`,
+            detail: names,
+            itemId: item.id
+          }
+        )
+      );
+      setDailyHubComposerMode("message");
+      setDailyHubDraft("");
+    },
+    [dailyHubDraft, importFiles, setDailyState]
+  );
+
   const moveDocument = useCallback(
     (document: DailyDocumentItem, parentId: string | null) => {
       if (document.source !== "local") return;
@@ -1494,21 +1508,18 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const body = dailyHubDraft.trim();
-      if (!body || dailyHubChannelId === "activity") return;
+      if (!body) return;
 
-      const activeChannel = dailyHubChannels.find((channel) => channel.id === dailyHubChannelId) ?? dailyHubChannels[0];
-      const isAiChannel = dailyHubChannelId === "ai";
-      const entryMeta = getDailyHubEntryMeta(isAiChannel ? "message" : dailyHubEntryType);
-      const preset = getDailyHubItemPreset(isAiChannel ? "message" : dailyHubEntryType);
-      const title = body.split(/\r?\n/)[0]?.trim().slice(0, 120) || activeChannel.label;
+      const isAiMessage = dailyHubComposerMode === "ai";
+      const title = body.split(/\r?\n/)[0]?.trim().slice(0, 120) || (isAiMessage ? "AI question" : "Team message");
       const item = createDailyWorkItem({
-        type: isAiChannel ? "note" : preset.type,
+        type: "note",
         title,
         body,
-        status: isAiChannel ? "inbox" : preset.status,
-        sourceType: isAiChannel ? "ask_ai" : preset.sourceType,
-        sourceLabels: isAiChannel ? ["AI Chat", "You"] : [activeChannel.label, entryMeta.label],
-        evidenceRefs: selectedEvidenceRefs
+        status: "inbox",
+        sourceType: isAiMessage ? "ask_ai" : "manual",
+        sourceLabels: isAiMessage ? ["AI Chat", dailyHubCurrentUserLabel] : ["Team Chat", "Message"],
+        evidenceRefs: []
       });
 
       setDailyState((current) =>
@@ -1519,15 +1530,15 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
             updatedAt: nowIso()
           },
           {
-            type: dailyHubEntryType === "task" || dailyHubEntryType === "decision" ? "actions_created" : "note_saved",
-            label: isAiChannel ? "AI question sent" : `${activeChannel.label} message sent`,
+            type: "note_saved",
+            label: isAiMessage ? "AI question sent" : "Team message sent",
             detail: item.title,
             itemId: item.id
           }
         )
       );
       setDailyHubDraft("");
-      if (!isAiChannel) return;
+      if (!isAiMessage) return;
 
       setDailyHubAiBusy("ask");
       setDailyHubAiMessage(null);
@@ -1548,7 +1559,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
           status: plan.requiresConfirmation ? "suggested" : "inbox",
           sourceType: "ask_ai",
           sourceLabels: ["AI Assistant", "AI Response"],
-          evidenceRefs: selectedEvidenceRefs
+          evidenceRefs: []
         });
         setDailyState((current) =>
           addActivityToState(
@@ -1574,10 +1585,9 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
     },
     [
       aiPropsWithEvidence,
-      dailyHubChannelId,
-      dailyHubChannels,
+      dailyHubComposerMode,
+      dailyHubCurrentUserLabel,
       dailyHubDraft,
-      dailyHubEntryType,
       selectedEvidenceRefs,
       setDailyState
     ]
@@ -1634,7 +1644,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
           status: plan.requiresConfirmation ? "suggested" : "inbox",
           sourceType: "ask_ai",
           sourceLabels: ["AI Assistant", "AI Response", actionLabel],
-          evidenceRefs: selectedEvidenceRefs
+          evidenceRefs: []
         });
         setDailyState((current) =>
           addActivityToState(
@@ -1651,7 +1661,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
             }
           )
         );
-        setDailyHubChannelId("ai");
+        setDailyHubComposerMode("ai");
         setDailyHubAiMessage(answer);
       } catch (error) {
         setDailyHubAiMessage(error instanceof Error ? error.message : String(error));
@@ -1659,86 +1669,29 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
         setDailyHubAiBusy(null);
       }
     },
-    [aiPropsWithEvidence, allDocuments, dailyFeedItems, dailyHubAiBusy, dailyHubDraft, selectedEvidenceRefs, setDailyState]
+    [aiPropsWithEvidence, allDocuments, dailyFeedItems, dailyHubAiBusy, dailyHubDraft, setDailyState]
   );
 
   return (
     <section className="ode-daily-board ode-daily-hub ode-daily-chat" aria-label="Daily Hub">
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleDocumentUpload} />
 
-      <div className="ode-daily-chat-shell">
-        <aside className="ode-daily-chat-rail" aria-label="Daily Hub channels">
-          <div className="ode-daily-chat-brand">
-            <span className="ode-daily-chat-brand-mark"><MessageGlyphSmall /></span>
-            <div className="min-w-0">
-              <p>{new Date().toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}</p>
-              <h2>Daily Hub</h2>
-            </div>
-          </div>
-
-          <nav className="ode-daily-chat-channel-list">
-            {dailyHubChannels.map((channel) => {
-              const selected = channel.id === dailyHubChannelId;
-              return (
-                <button
-                  key={channel.id}
-                  type="button"
-                  className={`ode-daily-chat-channel ${selected ? "ode-daily-chat-channel-active" : ""}`}
-                  onClick={() => setDailyHubChannelId(channel.id)}
-                  aria-pressed={selected}
-                >
-                  <span className={`ode-daily-chat-channel-icon ode-daily-chat-channel-icon-${channel.id}`}>
-                    {channel.icon}
-                  </span>
-                  <span className="ode-daily-chat-channel-copy">
-                    <strong>{channel.label}</strong>
-                    <small>{channel.detail}</small>
-                  </span>
-                  {channel.count > 0 ? <span className="ode-daily-chat-channel-count">{channel.count}</span> : null}
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="ode-daily-chat-rail-footer">
-            <button type="button" onClick={() => fileInputRef.current?.click()}>
-              <UploadGlyphSmall />
-              Attach
-            </button>
-            <button type="button" onClick={() => void handleExport("pdf")}>
-              <ExportGlyphSmall />
-              PDF
-            </button>
-          </div>
-        </aside>
-
+      <div className="ode-daily-chat-shell ode-daily-chat-shell-simple">
         <main className="ode-daily-chat-panel">
-          <header className="ode-daily-chat-header">
-            <div className={`ode-daily-chat-avatar ode-daily-chat-avatar-${activeDailyHubChannel.id}`}>
-              {activeDailyHubChannel.icon}
-            </div>
-            <div className="min-w-0">
-              <h3>{activeDailyHubChannel.label}</h3>
-              <p>{activeDailyHubChannel.detail}</p>
-            </div>
-            <div className="ode-daily-chat-header-stats" aria-label="Daily Hub summary">
-              <span>{dailyHubMessages.length} messages</span>
-              <span>{openActionItems.length} open</span>
-              <span>{allDocuments.length} docs</span>
-            </div>
-          </header>
-
-          <section className="ode-daily-chat-thread" aria-label={`${activeDailyHubChannel.label} messages`}>
-            {dailyHubActiveMessages.length === 0 ? (
+          <section className="ode-daily-chat-thread" aria-label="Activity messages">
+            {dailyHubMessages.length === 0 ? (
               <div className="ode-daily-chat-empty">
-                <SparkGlyphSmall />
-                <span>No messages yet.</span>
+                <MessageGlyphSmall />
+                <span>No activity yet.</span>
               </div>
             ) : null}
 
-            {dailyHubActiveMessages.map((message) => {
-              const item = message.item;
-              const ownMessage = message.role === "user" || (message.role === "team" && message.author === "You");
+            {dailyHubMessages.map((message) => {
+              const ownMessage = message.role === "user" || message.author === dailyHubCurrentUserLabel;
+              const canEditMessage = Boolean(message.item && ownMessage);
+              const isSharedFileMessage =
+                message.evidenceRefs.length > 0 &&
+                message.item?.sourceLabels.some((label) => label.toLowerCase().includes("clipboard")) === true;
               const messageText =
                 message.body && !isSameCompactText(message.title, message.body) ? message.body : message.title;
               return (
@@ -1748,33 +1701,23 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
                     ownMessage ? "ode-daily-chat-message-own" : ""
                   }`}
                 >
-                  <div className="ode-daily-chat-message-avatar">{message.author.slice(0, 2).toUpperCase()}</div>
                   <div className="ode-daily-chat-bubble">
                     <div className="ode-daily-chat-message-meta">
                       <strong>{message.author}</strong>
                       <time>{formatDailyHubTime(message.createdAt)}</time>
                     </div>
                     <p>{messageText}</p>
-                    {message.evidenceRefs.length > 0 ? <EvidenceChips refs={message.evidenceRefs} /> : null}
-                    {item && item.type !== "note" && item.type !== "meeting_summary" ? (
-                      <div className="ode-daily-chat-action-card">
-                        <span className={`ode-daily-hub-status ode-daily-status-${item.status}`}>
-                          {getStatusMeta(item.status).icon}
-                          {getStatusMeta(item.status).label}
-                        </span>
-                        {item.status !== "done" ? (
-                          <button type="button" onClick={() => setItemStatus(item.id, "done")}>Done</button>
-                        ) : null}
-                        {item.dueDate ? (
-                          <button type="button" onClick={() => sendToTimeline(item.id)}>Timeline</button>
-                        ) : null}
-                        <button type="button" onClick={() => editItem(item)}>Edit</button>
-                        <button type="button" onClick={() => deleteItem(item.id)}>Delete</button>
-                      </div>
-                    ) : item ? (
+                    {isSharedFileMessage ? <SharedFileChips refs={message.evidenceRefs} /> : null}
+                    {canEditMessage && message.item ? (
                       <div className="ode-daily-chat-message-tools">
-                        <button type="button" onClick={() => editItem(item)}>Edit</button>
-                        <button type="button" onClick={() => deleteItem(item.id)}>Delete</button>
+                        <button type="button" onClick={() => editItem(message.item!)}>
+                          <EditGlyphSmall />
+                          <span>Edit</span>
+                        </button>
+                        <button type="button" onClick={() => deleteItem(message.item!.id)}>
+                          <TrashGlyphSmall />
+                          <span>Delete</span>
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -1785,50 +1728,31 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
 
           <form className="ode-daily-chat-composer" onSubmit={(event) => void handleDailyHubSubmit(event)}>
             <div className="ode-daily-chat-quick-row">
-              {dailyHubChannelId === "ai"
-                ? DAILY_HUB_AI_ACTIONS.map((action) => (
-                    <button
-                      key={action.id}
-                      type="button"
-                      onClick={() => void runDailyHubAiAction(action.id)}
-                      disabled={dailyHubAiBusy !== null}
-                      className={dailyHubAiBusy === action.id ? "ode-daily-chat-chip-busy" : ""}
-                    >
-                      {dailyHubAiBusy === action.id ? (
-                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                      ) : (
-                        action.icon
-                      )}
-                      <span>{action.label}</span>
-                    </button>
-                  ))
-                : DAILY_HUB_ENTRY_TYPES.map((type) => {
-                    const selected = dailyHubEntryType === type.id;
-                    return (
-                      <button
-                        key={type.id}
-                        type="button"
-                        className={selected ? "ode-daily-chat-chip-active" : ""}
-                        onClick={() => setDailyHubEntryType(type.id)}
-                        aria-pressed={selected}
-                        disabled={dailyHubChannelId === "activity"}
-                      >
-                        {type.icon}
-                        <span>{type.label}</span>
-                      </button>
-                    );
-                  })}
+              <button
+                type="button"
+                className={dailyHubComposerMode === "message" ? "ode-daily-chat-chip-active" : ""}
+                onClick={() => setDailyHubComposerMode("message")}
+                aria-pressed={dailyHubComposerMode === "message"}
+              >
+                <MessageGlyphSmall />
+                <span>Message</span>
+              </button>
+              <button
+                type="button"
+                className={dailyHubComposerMode === "ai" ? "ode-daily-chat-chip-active" : ""}
+                onClick={() => setDailyHubComposerMode("ai")}
+                aria-pressed={dailyHubComposerMode === "ai"}
+              >
+                <SparkGlyphSmall />
+                <span>Ask AI</span>
+              </button>
             </div>
 
-            <EvidenceChips refs={selectedEvidenceRefs} />
-
             <div className="ode-daily-chat-compose-row">
-              <button type="button" className="ode-daily-chat-round-btn" onClick={() => fileInputRef.current?.click()} aria-label="Attach document">
-                <UploadGlyphSmall />
-              </button>
               <textarea
                 value={dailyHubDraft}
                 onChange={(event) => setDailyHubDraft(event.target.value)}
+                onPaste={handleDailyHubPaste}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -1836,112 +1760,24 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey }: DailyWorkBoard
                   }
                 }}
                 placeholder={
-                  dailyHubChannelId === "activity"
-                    ? "Activity is read-only"
-                    : dailyHubChannelId === "ai"
-                      ? "Ask ODE AI anything..."
-                      : `Message ${activeDailyHubChannel.label}...`
+                  dailyHubComposerMode === "ai"
+                    ? "Ask AI..."
+                    : "Message..."
                 }
-                disabled={dailyHubChannelId === "activity" || dailyHubAiBusy !== null}
-                aria-label={`Message ${activeDailyHubChannel.label}`}
+                disabled={dailyHubAiBusy !== null}
+                aria-label={dailyHubComposerMode === "ai" ? "Ask AI" : "Write team message"}
               />
               <button
                 type="submit"
                 className="ode-daily-chat-send-btn"
-                disabled={!dailyHubDraft.trim() || dailyHubChannelId === "activity" || dailyHubAiBusy !== null}
-                aria-label="Send message"
+                disabled={!dailyHubDraft.trim() || dailyHubAiBusy !== null}
+                aria-label={dailyHubComposerMode === "ai" ? "Ask AI" : "Send message"}
               >
                 <ArrowRightGlyphSmall />
               </button>
             </div>
           </form>
         </main>
-
-        <aside className="ode-daily-chat-context" aria-label="Daily Hub context">
-          <section className="ode-daily-chat-context-card">
-            <div className="ode-daily-chat-context-title">
-              <SparkGlyphSmall />
-              <h3>Context</h3>
-            </div>
-            <dl className="ode-daily-chat-context-stats">
-              <div>
-                <dt>Workspace</dt>
-                <dd>{aiCommandBarProps.nodeContext?.title ?? "Current"}</dd>
-              </div>
-              <div>
-                <dt>Evidence</dt>
-                <dd>{selectedEvidenceRefs.length} selected</dd>
-              </div>
-              <div>
-                <dt>Quick Apps</dt>
-                <dd>{(aiCommandBarProps.quickAppScopes ?? []).reduce((sum, scope) => sum + scope.itemCount, 0)}</dd>
-              </div>
-            </dl>
-          </section>
-
-          <section className="ode-daily-chat-context-card">
-            <div className="ode-daily-chat-context-title">
-              <ChecklistGlyphSmall />
-              <h3>Control</h3>
-            </div>
-            <div className="ode-daily-chat-control-grid">
-              <button type="button" onClick={() => {
-                setDailyHubChannelId("ai");
-                setDailyHubDraft("Summarize the current workspace and tell me what needs attention.");
-              }}>
-                <SparkGlyphSmall />
-                Ask AI
-              </button>
-              <button type="button" onClick={() => void runDailyHubAiAction("tasks")} disabled={dailyHubAiBusy !== null}>
-                <ChecklistGlyphSmall />
-                Tasks
-              </button>
-              <button type="button" onClick={() => fileInputRef.current?.click()}>
-                <DataFolderGlyphSmall />
-                Docs
-              </button>
-              <button type="button" onClick={() => void handleExport("excel")}>
-                <TableGridGlyphSmall />
-                Sheet
-              </button>
-            </div>
-            {dailyHubAiMessage || dailyAiMessage ? (
-              <p className="ode-daily-chat-ai-note">{dailyHubAiMessage ?? dailyAiMessage}</p>
-            ) : null}
-          </section>
-
-          <section className="ode-daily-chat-context-card">
-            <div className="ode-daily-chat-context-title">
-              <DataFolderGlyphSmall />
-              <h3>Documents</h3>
-            </div>
-            <div className="ode-daily-chat-mini-list">
-              {recentDocumentItems.length === 0 ? <span>No documents yet</span> : null}
-              {recentDocumentItems.map((document) => (
-                <button key={document.id} type="button" onClick={() => toggleDocumentSelection(document.id)}>
-                  <span>{document.name}</span>
-                  <small>{dailyState.selectedDocumentIds.includes(document.id) ? "Selected" : describeSize(document.size)}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-
-          <section className="ode-daily-chat-context-card">
-            <div className="ode-daily-chat-context-title">
-              <ClockGlyphSmall />
-              <h3>Open Work</h3>
-            </div>
-            <div className="ode-daily-chat-mini-list">
-              {openActionItems.length === 0 ? <span>No open tasks</span> : null}
-              {openActionItems.slice(0, 5).map((item) => (
-                <button key={item.id} type="button" onClick={() => setItemStatus(item.id, "done")}>
-                  <span>{item.title}</span>
-                  <small>{getStatusMeta(item.status).label}</small>
-                </button>
-              ))}
-            </div>
-          </section>
-        </aside>
       </div>
     </section>
   );

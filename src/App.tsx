@@ -18698,6 +18698,7 @@ export default function App() {
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       if (hasBlockingOverlayOpenWithMove || commandBarOpen) return;
+      if (editingNodeIdRef.current) return;
       if (
         shouldIgnoreGlobalClipboardTarget(event.target) ||
         shouldIgnoreGlobalClipboardTarget(document.activeElement)
@@ -28333,6 +28334,7 @@ export default function App() {
               <div className="flex min-h-0 flex-1 overflow-hidden">
                 <DailyWorkBoard
                   contextKey={`${activeProjectId ?? "global"}:${activeProjectRootId ?? "root"}:${embeddedAiUploadTargetNodeId ?? "workspace"}`}
+                  currentUserLabel={currentUserAccount?.displayName ?? null}
                   aiCommandBarProps={{
                     open: true,
                     simpleMode: true,
@@ -28574,6 +28576,7 @@ export default function App() {
                   AI_COMMAND_BAR_ENABLED ? (
                     <DailyWorkBoard
                       contextKey={`${activeProjectId ?? "global"}:${activeProjectRootId ?? "root"}:dashboard`}
+                      currentUserLabel={currentUserAccount?.displayName ?? null}
                       aiCommandBarProps={{
                         open: true,
                         simpleMode: true,

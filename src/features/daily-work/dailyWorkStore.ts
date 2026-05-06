@@ -146,6 +146,7 @@ function normalizeDailyDocument(value: unknown): DailyDocumentItem | null {
     source: candidate.source === "node" ? "node" : "local",
     mimeType: asNullableString(candidate.mimeType),
     size: asNumberOrNull(candidate.size),
+    localPath: asNullableString(candidate.localPath),
     nodeDocumentId: asNullableString(candidate.nodeDocumentId),
     pathLabel: asNullableString(candidate.pathLabel),
     createdAt,
@@ -313,6 +314,7 @@ type NewDailyDocumentInput = {
   parentId?: string | null;
   mimeType?: string | null;
   size?: number | null;
+  localPath?: string | null;
 };
 
 export function createDailyDocumentItem(input: NewDailyDocumentInput): DailyDocumentItem {
@@ -325,6 +327,7 @@ export function createDailyDocumentItem(input: NewDailyDocumentInput): DailyDocu
     source: "local",
     mimeType: input.mimeType ?? null,
     size: input.size ?? null,
+    localPath: input.localPath ?? null,
     nodeDocumentId: null,
     pathLabel: null,
     createdAt: now,

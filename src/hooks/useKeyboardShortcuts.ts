@@ -1,4 +1,4 @@
-import { useEffect, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 import {
   resolveActiveSelectionSurface,
   isTimelineKeyboardSurfaceActive,
@@ -126,6 +126,9 @@ export function useKeyboardShortcuts({
   onOpenFavoriteGroupAssign,
   onToggleFavoriteGroup
 }: UseKeyboardShortcutsParams) {
+  const editingNodeIdRef = useRef<string | null>(editingNodeId);
+  editingNodeIdRef.current = editingNodeId;
+
   useEffect(() => {
     const shouldIgnoreGlobalShortcutsTarget = (target: EventTarget | null): boolean => {
       if (!(target instanceof HTMLElement)) return false;
@@ -161,7 +164,7 @@ export function useKeyboardShortcuts({
       ) {
         return;
       }
-      if (editingNodeId) return;
+      if (editingNodeIdRef.current) return;
 
       if (event.key === "Escape") {
         if (branchClipboardPresent) {
@@ -736,6 +739,7 @@ export function useKeyboardShortcuts({
 
       if (event.key === "F2") {
         event.preventDefault();
+        editingNodeIdRef.current = selectedId;
         onBeginInlineEdit(selectedId, undefined, resolveInlineRenameSurface());
         return;
       }
@@ -748,6 +752,7 @@ export function useKeyboardShortcuts({
 
       if (isPrintable) {
         event.preventDefault();
+        editingNodeIdRef.current = selectedId;
         onBeginInlineEdit(selectedId, event.key, resolveInlineRenameSurface());
       }
     };

@@ -883,14 +883,15 @@ input {
 }
 
 .ode-daily-hub {
-  padding: clamp(0.72rem, 1.2vw, 1rem);
+  padding: 0.25rem;
   background:
-    linear-gradient(135deg, rgba(6, 28, 38, 0.99) 0%, rgba(18, 63, 72, 0.98) 34%, rgba(47, 43, 84, 0.97) 68%, rgba(32, 74, 56, 0.98) 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    radial-gradient(900px 360px at 24% -18%, rgba(42, 138, 201, 0.16), transparent 68%),
+    linear-gradient(180deg, rgba(3, 20, 35, 0.99), rgba(2, 14, 26, 0.99));
+  box-shadow: inset 0 1px 0 rgba(126, 217, 255, 0.04);
 }
 
 .ode-daily-chat {
-  padding: clamp(0.72rem, 1.2vw, 1rem);
+  padding: 0.25rem;
 }
 
 .ode-daily-chat button,
@@ -912,15 +913,23 @@ input {
   overflow: hidden;
 }
 
+.ode-daily-chat-shell-simple {
+  grid-template-columns: minmax(0, 1fr);
+  max-width: none;
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+}
+
 .ode-daily-chat-rail,
 .ode-daily-chat-panel,
 .ode-daily-chat-context {
   min-width: 0;
   min-height: 0;
-  border: 1px solid rgba(90, 183, 237, 0.14);
+  border: 1px solid var(--ode-border-strong);
   border-radius: 18px;
-  background: rgba(3, 24, 39, 0.62);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 18px 44px rgba(0, 0, 0, 0.16);
+  background: linear-gradient(180deg, rgba(4, 23, 39, 0.96), rgba(3, 18, 31, 0.98));
+  box-shadow: inset 0 1px 0 rgba(132, 223, 255, 0.04), 0 18px 44px rgba(0, 0, 0, 0.18);
 }
 
 .ode-daily-chat-rail,
@@ -934,8 +943,12 @@ input {
 
 .ode-daily-chat-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   overflow: hidden;
+}
+
+.ode-daily-chat-shell-simple .ode-daily-chat-panel {
+  border-radius: 14px;
 }
 
 .ode-daily-chat-brand,
@@ -975,7 +988,7 @@ input {
   height: 2.55rem;
   border-radius: 14px;
   color: #dff8ff;
-  background: linear-gradient(135deg, rgba(59, 181, 232, 0.28), rgba(83, 216, 160, 0.16));
+  background: linear-gradient(135deg, rgba(41, 175, 227, 0.26), rgba(20, 86, 129, 0.18));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
@@ -1036,16 +1049,17 @@ input {
 .ode-daily-chat-context-card button:hover,
 .ode-daily-chat-quick-row button:hover:enabled,
 .ode-daily-chat-rail-footer button:hover,
+.ode-daily-chat-footer-actions button:hover,
 .ode-daily-chat-action-card button:hover,
 .ode-daily-chat-message-tools button:hover {
   transform: translateY(-1px);
-  background: rgba(90, 183, 237, 0.14);
+  background: rgba(41, 175, 227, 0.13);
 }
 
 .ode-daily-chat-channel-active {
   color: #f7fdff;
-  background: linear-gradient(135deg, rgba(44, 163, 224, 0.32), rgba(55, 211, 163, 0.14));
-  box-shadow: inset 0 0 0 1px rgba(112, 216, 255, 0.28);
+  background: linear-gradient(135deg, rgba(31, 129, 188, 0.3), rgba(6, 42, 66, 0.22));
+  box-shadow: inset 0 0 0 1px var(--ode-border-accent);
 }
 
 .ode-daily-chat-channel-icon {
@@ -1086,8 +1100,8 @@ input {
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  color: #062033;
-  background: #8de5ff;
+  color: #041827;
+  background: var(--ode-accent);
   font-size: 0.72rem;
   font-weight: 850;
 }
@@ -1098,6 +1112,7 @@ input {
 }
 
 .ode-daily-chat-rail-footer button,
+.ode-daily-chat-footer-actions button,
 .ode-daily-chat-quick-row button,
 .ode-daily-chat-action-card button,
 .ode-daily-chat-message-tools button,
@@ -1111,7 +1126,7 @@ input {
   border-radius: 12px;
   padding: 0 0.62rem;
   color: rgba(237, 249, 252, 0.86);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(7, 38, 60, 0.78);
   font-size: 0.78rem;
   font-weight: 760;
   line-height: 1;
@@ -1151,9 +1166,9 @@ input {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.72rem;
+  gap: 0.62rem;
   overflow: auto;
-  padding: 1rem;
+  padding: clamp(0.8rem, 1.4vw, 1.25rem);
 }
 
 .ode-daily-chat-empty {
@@ -1169,36 +1184,12 @@ input {
 
 .ode-daily-chat-message {
   align-items: flex-end;
-  gap: 0.54rem;
-  max-width: min(780px, 88%);
+  max-width: min(860px, 88%);
 }
 
 .ode-daily-chat-message-own {
   align-self: flex-end;
   flex-direction: row-reverse;
-}
-
-.ode-daily-chat-message-avatar {
-  width: 2rem;
-  height: 2rem;
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  color: #052133;
-  background: #8be7ff;
-  font-size: 0.68rem;
-  font-weight: 850;
-}
-
-.ode-daily-chat-message-assistant .ode-daily-chat-message-avatar,
-.ode-daily-chat-message-action .ode-daily-chat-message-avatar {
-  background: #aaf29b;
-}
-
-.ode-daily-chat-message-system .ode-daily-chat-message-avatar {
-  background: #d6c4ff;
 }
 
 .ode-daily-chat-bubble {
@@ -1208,13 +1199,13 @@ input {
   border-radius: 18px 18px 18px 6px;
   padding: 0.74rem 0.86rem;
   color: rgba(241, 250, 252, 0.9);
-  background: rgba(255, 255, 255, 0.09);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  background: rgba(8, 40, 61, 0.86);
+  box-shadow: inset 0 1px 0 rgba(132, 223, 255, 0.04);
 }
 
 .ode-daily-chat-message-own .ode-daily-chat-bubble {
   border-radius: 18px 18px 6px 18px;
-  background: linear-gradient(135deg, rgba(47, 163, 224, 0.34), rgba(38, 208, 158, 0.14));
+  background: linear-gradient(135deg, rgba(31, 129, 188, 0.34), rgba(5, 29, 48, 0.92));
 }
 
 .ode-daily-chat-message-meta {
@@ -1242,6 +1233,38 @@ input {
   white-space: pre-wrap;
 }
 
+.ode-daily-chat-shared-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.ode-daily-chat-shared-file {
+  min-width: 0;
+  max-width: min(18rem, 100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  border: 1px solid rgba(132, 223, 255, 0.14);
+  border-radius: 12px;
+  padding: 0.38rem 0.58rem;
+  color: rgba(234, 248, 252, 0.9);
+  background: rgba(255, 255, 255, 0.075);
+  font-size: 0.78rem;
+  font-weight: 720;
+}
+
+.ode-daily-chat-shared-file span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ode-daily-chat-shared-file svg {
+  flex: 0 0 auto;
+}
+
 .ode-daily-chat-action-card,
 .ode-daily-chat-message-tools {
   flex-wrap: wrap;
@@ -1250,50 +1273,58 @@ input {
 
 .ode-daily-chat-composer {
   display: grid;
-  gap: 0.55rem;
-  padding: 0.82rem;
-  border-top: 1px solid rgba(83, 174, 228, 0.12);
-  background: rgba(1, 15, 27, 0.5);
+  gap: 0.58rem;
+  padding: 0.72rem clamp(0.8rem, 1.4vw, 1.25rem) clamp(0.8rem, 1.4vw, 1.25rem);
+  border-top: 1px solid var(--ode-border-strong);
+  background: rgba(2, 15, 28, 0.72);
+}
+
+.ode-daily-chat-footer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+  justify-content: flex-end;
 }
 
 .ode-daily-chat-quick-row {
-  gap: 0.42rem;
+  gap: 0.5rem;
   overflow-x: auto;
-  padding-bottom: 0.06rem;
+  padding-bottom: 0;
 }
 
 .ode-daily-chat-quick-row button {
   flex: 0 0 auto;
-  min-height: 2rem;
+  min-height: 2.35rem;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.075);
+  background: rgba(7, 38, 60, 0.82);
+  padding: 0 0.9rem;
   white-space: nowrap;
 }
 
 .ode-daily-chat-quick-row .ode-daily-chat-chip-active,
 .ode-daily-chat-quick-row .ode-daily-chat-chip-busy {
-  color: #062133;
-  background: #8de5ff;
+  color: #041827;
+  background: var(--ode-accent);
 }
 
 .ode-daily-chat-compose-row {
-  gap: 0.52rem;
+  gap: 0.62rem;
 }
 
 .ode-daily-chat-compose-row textarea {
   min-width: 0;
-  min-height: 2.9rem;
-  max-height: 8rem;
+  min-height: 4.8rem;
+  max-height: 13rem;
   flex: 1 1 auto;
   resize: vertical;
   border: 1px solid rgba(93, 185, 235, 0.16);
   border-radius: 16px;
   outline: none;
-  padding: 0.76rem 0.9rem;
+  padding: 1rem 1.08rem;
   color: #f4fbff;
-  background: rgba(255, 255, 255, 0.075);
-  font-size: 0.94rem;
-  line-height: 1.35;
+  background: var(--ode-input-bg);
+  font-size: 1.02rem;
+  line-height: 1.45;
 }
 
 .ode-daily-chat-compose-row textarea::placeholder {
@@ -1315,8 +1346,11 @@ input {
 }
 
 .ode-daily-chat-send-btn {
-  color: #052133;
-  background: #2da7df;
+  width: 3.6rem;
+  height: 4.8rem;
+  border-radius: 18px;
+  color: #041827;
+  background: var(--ode-accent);
 }
 
 .ode-daily-chat-send-btn:disabled,
@@ -1406,6 +1440,10 @@ input {
 @media (max-width: 1180px) {
   .ode-daily-chat-shell {
     grid-template-columns: minmax(190px, 240px) minmax(0, 1fr);
+  }
+
+  .ode-daily-chat-shell-simple {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .ode-daily-chat-context {
