@@ -1239,7 +1239,8 @@ input {
   gap: 0.42rem;
 }
 
-.ode-daily-chat-shared-file {
+.ode-daily-chat-shared-file,
+.ode-daily-chat-pending-file {
   min-width: 0;
   max-width: min(18rem, 100%);
   display: inline-flex;
@@ -1254,15 +1255,61 @@ input {
   font-weight: 720;
 }
 
-.ode-daily-chat-shared-file span {
+.ode-daily-chat-shared-file span,
+.ode-daily-chat-pending-file span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ode-daily-chat-shared-file svg {
+.ode-daily-chat-shared-file svg,
+.ode-daily-chat-pending-file svg {
   flex: 0 0 auto;
+}
+
+.ode-daily-chat-pending-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+}
+
+.ode-daily-chat-pending-file {
+  max-width: min(22rem, 100%);
+  background: rgba(41, 175, 227, 0.12);
+}
+
+.ode-daily-chat-pending-file button {
+  width: 1.35rem;
+  height: 1.35rem;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: rgba(235, 249, 252, 0.86);
+  background: rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+  font-weight: 850;
+}
+
+.ode-daily-chat-edit-form {
+  display: grid;
+  gap: 0.48rem;
+}
+
+.ode-daily-chat-edit-form textarea {
+  min-width: 0;
+  min-height: 5.5rem;
+  resize: vertical;
+  border: 1px solid rgba(120, 218, 255, 0.34);
+  border-radius: 14px;
+  outline: none;
+  padding: 0.72rem 0.82rem;
+  color: #f4fbff;
+  background: rgba(2, 15, 28, 0.72);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .ode-daily-chat-action-card,

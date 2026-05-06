@@ -683,7 +683,13 @@ function EvidenceChips({
   );
 }
 
-function SharedFileChips({ refs }: { refs: DailyEvidenceRef[] }) {
+function SharedFileChips({
+  refs,
+  onOpen
+}: {
+  refs: DailyEvidenceRef[];
+  onOpen?: (id: string) => void;
+}) {
   if (refs.length === 0) return null;
 
   return (
@@ -691,10 +697,16 @@ function SharedFileChips({ refs }: { refs: DailyEvidenceRef[] }) {
       {refs.map((ref) => {
         const isImage = /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(ref.label);
         return (
-          <span key={ref.id} className="ode-daily-chat-shared-file" title={ref.label}>
+          <button
+            key={ref.id}
+            type="button"
+            className="ode-daily-chat-shared-file"
+            title={ref.label}
+            onClick={() => onOpen?.(ref.id)}
+          >
             {isImage ? <ImageGlyphSmall /> : <FileGlyphSmall />}
             <span>{ref.label}</span>
-          </span>
+          </button>
         );
       })}
     </div>
@@ -737,7 +749,10 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
   const [aiExtractBusy, setAiExtractBusy] = useState<DailyWorkSourceType | null>(null);
   const [dailyAiMessage, setDailyAiMessage] = useState<string | null>(null);
   const [dailyHubDraft, setDailyHubDraft] = useState("");
+  const [dailyHubPendingFiles, setDailyHubPendingFiles] = useState<File[]>([]);
   const [dailyHubComposerMode, setDailyHubComposerMode] = useState<"message" | "ai">("message");
+  const [dailyHubEditingMessageId, setDailyHubEditingMessageId] = useState<string | null>(null);
+  const [dailyHubEditingDraft, setDailyHubEditingDraft] = useState("");
   const [dailyHubAiBusy, setDailyHubAiBusy] = useState<DailyHubAiAction | null>(null);
   const [dailyHubAiMessage, setDailyHubAiMessage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1196,20 +1211,6 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     [setDailyState]
   );
 
-  const editItem = useCallback(
-    (item: DailyWorkItem) => {
-      const title = window.prompt("Edit title", item.title);
-      if (title === null || !title.trim()) return;
-      const body = window.prompt("Edit detail", item.body);
-      updateItem(item.id, (current) => ({
-        ...current,
-        title: title.trim(),
-        body: body === null ? current.body : body.trim()
-      }));
-    },
-    [updateItem]
-  );
-
   const toggleActionSelected = useCallback((itemId: string) => {
     setSelectedActionIds((current) =>
       current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId]
@@ -1253,6 +1254,31 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     [setDailyState]
   );
 
+  const startDailyHubMessageEdit = useCallback((item: DailyWorkItem) => {
+    setDailyHubEditingMessageId(item.id);
+    setDailyHubEditingDraft(item.body || item.title);
+  }, []);
+
+  const cancelDailyHubMessageEdit = useCallback(() => {
+    setDailyHubEditingMessageId(null);
+    setDailyHubEditingDraft("");
+  }, []);
+
+  const saveDailyHubMessageEdit = useCallback(
+    (item: DailyWorkItem) => {
+      const body = dailyHubEditingDraft.trim();
+      if (!body) return;
+      updateItem(item.id, (current) => ({
+        ...current,
+        title: body.split(/\r?\n/)[0]?.trim().slice(0, 120) || current.title,
+        body
+      }));
+      setDailyHubEditingMessageId(null);
+      setDailyHubEditingDraft("");
+    },
+    [dailyHubEditingDraft, updateItem]
+  );
+
   const createFolder = useCallback(() => {
     const name = window.prompt("Folder name");
     if (!name?.trim()) return;
@@ -1278,13 +1304,28 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     );
   }, [dailyState.activeFolderId, setDailyState]);
 
-  const handleDocumentUpload = useCallback(
+  const addDailyHubPendingFiles = useCallback((files: File[]) => {
+    if (files.length === 0) return;
+    setDailyHubPendingFiles((current) => {
+      const bySignature = new Map<string, File>();
+      for (const file of [...current, ...files]) {
+        bySignature.set(`${file.name}|${file.size}|${file.type}|${file.lastModified}`, file);
+      }
+      return Array.from(bySignature.values());
+    });
+    setDailyHubComposerMode("message");
+  }, []);
+
+  const removeDailyHubPendingFile = useCallback((index: number) => {
+    setDailyHubPendingFiles((current) => current.filter((_, fileIndex) => fileIndex !== index));
+  }, []);
+
+  const handleDailyHubFileSelect = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(event.target.files ?? []);
-      importFiles(files);
+      addDailyHubPendingFiles(Array.from(event.target.files ?? []));
       event.target.value = "";
     },
-    [importFiles]
+    [addDailyHubPendingFiles]
   );
 
   const handleDailyHubPaste = useCallback(
@@ -1312,40 +1353,9 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
       if (pastedFiles.length === 0) return;
 
       event.preventDefault();
-      const created = importFiles(pastedFiles);
-      if (created.length === 0) return;
-      const evidenceRefs = created.map(documentToEvidenceRef);
-      const names = created.map((document) => document.name).join(", ");
-      const draftText = dailyHubDraft.trim();
-      const item = createDailyWorkItem({
-        type: "note",
-        title: draftText || (created.length === 1 ? `Shared ${created[0].name}` : `Shared ${created.length} files`),
-        body: draftText || `Shared: ${names}`,
-        status: "inbox",
-        sourceType: "manual",
-        sourceLabels: ["Team Chat", "Clipboard"],
-        evidenceRefs
-      });
-      setDailyState((current) =>
-        addActivityToState(
-          {
-            ...current,
-            items: [...current.items, item],
-            selectedDocumentIds: uniqueStrings([...current.selectedDocumentIds, ...created.map((document) => document.id)]),
-            updatedAt: nowIso()
-          },
-          {
-            type: "document_attached",
-            label: created.length === 1 ? "Clipboard file shared" : `${created.length} clipboard files shared`,
-            detail: names,
-            itemId: item.id
-          }
-        )
-      );
-      setDailyHubComposerMode("message");
-      setDailyHubDraft("");
+      addDailyHubPendingFiles(pastedFiles);
     },
-    [dailyHubDraft, importFiles, setDailyState]
+    [addDailyHubPendingFiles]
   );
 
   const moveDocument = useCallback(
@@ -1508,18 +1518,33 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       const body = dailyHubDraft.trim();
-      if (!body) return;
+      const pendingFiles = dailyHubPendingFiles;
+      if (!body && pendingFiles.length === 0) return;
 
-      const isAiMessage = dailyHubComposerMode === "ai";
-      const title = body.split(/\r?\n/)[0]?.trim().slice(0, 120) || (isAiMessage ? "AI question" : "Team message");
+      const isAiMessage = dailyHubComposerMode === "ai" && body.length > 0;
+      const createdDocuments = pendingFiles.length > 0 ? importFiles(pendingFiles) : [];
+      const evidenceRefs = createdDocuments.map(documentToEvidenceRef);
+      const sharedFileNames = createdDocuments.map((document) => document.name).join(", ");
+      const fallbackTitle = createdDocuments.length === 1
+        ? createdDocuments[0].name
+        : createdDocuments.length > 1
+          ? `${createdDocuments.length} files`
+          : isAiMessage
+            ? "AI question"
+            : "Team message";
+      const title = body.split(/\r?\n/)[0]?.trim().slice(0, 120) || fallbackTitle;
       const item = createDailyWorkItem({
         type: "note",
         title,
-        body,
+        body: body || (createdDocuments.length > 0 ? sharedFileNames : title),
         status: "inbox",
         sourceType: isAiMessage ? "ask_ai" : "manual",
-        sourceLabels: isAiMessage ? ["AI Chat", dailyHubCurrentUserLabel] : ["Team Chat", "Message"],
-        evidenceRefs: []
+        sourceLabels: uniqueStrings([
+          isAiMessage ? "AI Chat" : "Team Chat",
+          dailyHubCurrentUserLabel,
+          createdDocuments.length > 0 ? "Shared File" : "Message"
+        ]),
+        evidenceRefs
       });
 
       setDailyState((current) =>
@@ -1527,17 +1552,28 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
           {
             ...current,
             items: [item, ...current.items],
+            selectedDocumentIds: uniqueStrings([
+              ...current.selectedDocumentIds,
+              ...createdDocuments.map((document) => document.id)
+            ]),
             updatedAt: nowIso()
           },
           {
-            type: "note_saved",
-            label: isAiMessage ? "AI question sent" : "Team message sent",
-            detail: item.title,
+            type: createdDocuments.length > 0 ? "document_attached" : "note_saved",
+            label: createdDocuments.length > 0
+              ? createdDocuments.length === 1
+                ? "File shared"
+                : `${createdDocuments.length} files shared`
+              : isAiMessage
+                ? "AI question sent"
+                : "Team message sent",
+            detail: createdDocuments.length > 0 ? sharedFileNames : item.title,
             itemId: item.id
           }
         )
       );
       setDailyHubDraft("");
+      setDailyHubPendingFiles([]);
       if (!isAiMessage) return;
 
       setDailyHubAiBusy("ask");
@@ -1588,7 +1624,8 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
       dailyHubComposerMode,
       dailyHubCurrentUserLabel,
       dailyHubDraft,
-      selectedEvidenceRefs,
+      dailyHubPendingFiles,
+      importFiles,
       setDailyState
     ]
   );
@@ -1674,7 +1711,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
 
   return (
     <section className="ode-daily-board ode-daily-hub ode-daily-chat" aria-label="Daily Hub">
-      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleDocumentUpload} />
+      <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleDailyHubFileSelect} />
 
       <div className="ode-daily-chat-shell ode-daily-chat-shell-simple">
         <main className="ode-daily-chat-panel">
@@ -1691,9 +1728,13 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
               const canEditMessage = Boolean(message.item && ownMessage);
               const isSharedFileMessage =
                 message.evidenceRefs.length > 0 &&
-                message.item?.sourceLabels.some((label) => label.toLowerCase().includes("clipboard")) === true;
+                message.item?.sourceLabels.some((label) => {
+                  const normalized = label.toLowerCase();
+                  return normalized.includes("clipboard") || normalized.includes("shared file");
+                }) === true;
               const messageText =
                 message.body && !isSameCompactText(message.title, message.body) ? message.body : message.title;
+              const editingMessage = message.item?.id === dailyHubEditingMessageId;
               return (
                 <article
                   key={message.id}
@@ -1706,11 +1747,44 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
                       <strong>{message.author}</strong>
                       <time>{formatDailyHubTime(message.createdAt)}</time>
                     </div>
-                    <p>{messageText}</p>
-                    {isSharedFileMessage ? <SharedFileChips refs={message.evidenceRefs} /> : null}
+                    {editingMessage && message.item ? (
+                      <div className="ode-daily-chat-edit-form">
+                        <textarea
+                          value={dailyHubEditingDraft}
+                          onChange={(event) => setDailyHubEditingDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              cancelDailyHubMessageEdit();
+                            }
+                            if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+                              event.preventDefault();
+                              saveDailyHubMessageEdit(message.item!);
+                            }
+                          }}
+                          autoFocus
+                          aria-label="Edit message"
+                        />
+                        <div className="ode-daily-chat-message-tools">
+                          <button type="button" onClick={cancelDailyHubMessageEdit}>Cancel</button>
+                          <button
+                            type="button"
+                            onClick={() => saveDailyHubMessageEdit(message.item!)}
+                            disabled={!dailyHubEditingDraft.trim()}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <p>{messageText}</p>
+                    )}
+                    {isSharedFileMessage ? (
+                      <SharedFileChips refs={message.evidenceRefs} onOpen={setPreviewDocumentId} />
+                    ) : null}
                     {canEditMessage && message.item ? (
                       <div className="ode-daily-chat-message-tools">
-                        <button type="button" onClick={() => editItem(message.item!)}>
+                        <button type="button" onClick={() => startDailyHubMessageEdit(message.item!)} disabled={editingMessage}>
                           <EditGlyphSmall />
                           <span>Edit</span>
                         </button>
@@ -1748,7 +1822,33 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
               </button>
             </div>
 
+            {dailyHubPendingFiles.length > 0 ? (
+              <div className="ode-daily-chat-pending-files" aria-label="Files ready to send">
+                {dailyHubPendingFiles.map((file, index) => {
+                  const isImage = file.type.startsWith("image/") || /\.(avif|gif|jpe?g|png|svg|webp)$/i.test(file.name);
+                  return (
+                    <span key={`${file.name}-${file.size}-${file.lastModified}`} className="ode-daily-chat-pending-file">
+                      {isImage ? <ImageGlyphSmall /> : <FileGlyphSmall />}
+                      <span>{file.name}</span>
+                      <button type="button" onClick={() => removeDailyHubPendingFile(index)} aria-label={`Remove ${file.name}`}>
+                        x
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            ) : null}
+
             <div className="ode-daily-chat-compose-row">
+              <button
+                type="button"
+                className="ode-daily-chat-round-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={dailyHubAiBusy !== null}
+                aria-label="Attach files"
+              >
+                <UploadGlyphSmall />
+              </button>
               <textarea
                 value={dailyHubDraft}
                 onChange={(event) => setDailyHubDraft(event.target.value)}
@@ -1770,7 +1870,7 @@ export function DailyWorkBoard({ aiCommandBarProps, contextKey, currentUserLabel
               <button
                 type="submit"
                 className="ode-daily-chat-send-btn"
-                disabled={!dailyHubDraft.trim() || dailyHubAiBusy !== null}
+                disabled={(!dailyHubDraft.trim() && dailyHubPendingFiles.length === 0) || dailyHubAiBusy !== null}
                 aria-label={dailyHubComposerMode === "ai" ? "Ask AI" : "Send message"}
               >
                 <ArrowRightGlyphSmall />
