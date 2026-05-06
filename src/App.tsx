@@ -18020,6 +18020,7 @@ export default function App() {
   useEffect(() => {
     const onPaste = (event: ClipboardEvent) => {
       if (hasBlockingOverlayOpenWithMove || commandBarOpen) return;
+      if (editingNodeIdRef.current) return;
       if (
         shouldIgnoreGlobalClipboardTarget(event.target) ||
         shouldIgnoreGlobalClipboardTarget(document.activeElement)
