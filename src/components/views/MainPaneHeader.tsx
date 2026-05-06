@@ -67,12 +67,12 @@ function QuickAppStrip({
 }) {
   const resolvedManageLabel = manageLabel?.trim() || (items.length > 0 ? t("quick_apps.manage") : scopeLabel);
   return (
-    <div className={`flex max-w-[360px] shrink-0 items-center gap-1.5 overflow-x-auto rounded-[14px] bg-[rgba(4,24,39,0.42)] px-1 py-1 ${className}`.trim()}>
+    <div className={`flex max-w-[360px] shrink-0 items-center gap-1 overflow-x-auto rounded-[12px] bg-[rgba(4,24,39,0.42)] px-1 py-1 ${className}`.trim()}>
       {items.map((item) => (
         <OdeTooltip key={item.id} label={item.label || scopeLabel} side="bottom">
           <button
             type="button"
-            className="group inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[11px] bg-transparent p-0 text-[var(--ode-text)] transition duration-150 hover:-translate-y-[1px] hover:bg-[rgba(18,75,108,0.26)]"
+            className="group inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-transparent p-0 text-[var(--ode-text)] transition duration-150 hover:-translate-y-[1px] hover:bg-[rgba(18,75,108,0.26)]"
             onClick={() => onLaunch(item)}
             aria-label={t("quick_apps.open_item", { name: item.label })}
           >
@@ -83,7 +83,7 @@ function QuickAppStrip({
       <OdeTooltip label={resolvedManageLabel} side="bottom" align="end">
         <button
           type="button"
-          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-transparent bg-[rgba(7,36,57,0.28)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.38)] hover:text-[var(--ode-text)]"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] border border-transparent bg-[rgba(7,36,57,0.28)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(10,50,77,0.38)] hover:text-[var(--ode-text)]"
           onClick={onManage}
           aria-label={resolvedManageLabel}
         >
@@ -161,8 +161,7 @@ export function MainPaneHeader({
     canShowFilesAction ||
     showUploadAction ||
     workspaceSettingsEnabled ||
-    canShowWorkspaceQuickApps ||
-    showFocusedTabQuickApps;
+    canShowWorkspaceQuickApps;
 
   useEffect(() => {
     setFilesMenuOpen(false);
@@ -229,6 +228,21 @@ export function MainPaneHeader({
               <span className="rounded-full border border-[rgba(223,198,119,0.42)] bg-[rgba(108,88,34,0.24)] px-2.5 py-0.5 text-[0.72rem] uppercase tracking-[0.08em] text-[#f3d98a]">
                 {t("structure_lock.locked_badge")}
               </span>
+            ) : null}
+            {showFocusedTabQuickApps ? (
+              <QuickAppStrip
+                t={t}
+                scopeLabel={t("quick_apps.scope_tab")}
+                manageLabel={t("quick_apps.manage_tab_tooltip")}
+                items={tabQuickApps}
+                onLaunch={onLaunchTabQuickApp}
+                onManage={onOpenTabQuickApps}
+                className={
+                  isDesktopRuntime
+                    ? "-mt-[2px] ml-1 max-w-[420px] bg-[rgba(6,31,49,0.78)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08),0_14px_34px_rgba(0,0,0,0.24)]"
+                    : "-mt-[2px] ml-1 max-w-[420px] bg-[rgba(6,31,49,0.58)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08)]"
+                }
+              />
             ) : null}
           </div>
         </div>
@@ -330,21 +344,6 @@ export function MainPaneHeader({
                 items={functionQuickApps}
                 onLaunch={onLaunchFunctionQuickApp}
                 onManage={onOpenFunctionQuickApps}
-              />
-            ) : null}
-            {showFocusedTabQuickApps ? (
-              <QuickAppStrip
-                t={t}
-                scopeLabel={t("quick_apps.scope_tab")}
-                manageLabel={t("quick_apps.manage_tab_tooltip")}
-                items={tabQuickApps}
-                onLaunch={onLaunchTabQuickApp}
-                onManage={onOpenTabQuickApps}
-                className={
-                  isDesktopRuntime
-                    ? "fixed right-4 top-[5.2rem] z-[205] max-w-[420px] bg-[rgba(6,31,49,0.78)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08),0_14px_34px_rgba(0,0,0,0.24)]"
-                    : "max-w-[420px] bg-[rgba(6,31,49,0.58)] px-1.5 shadow-[inset_0_1px_0_rgba(110,198,244,0.08)]"
-                }
               />
             ) : null}
           </div>

@@ -161,7 +161,7 @@ export function useKeyboardShortcuts({
       ) {
         return;
       }
-      if (editingNodeId && shouldIgnoreGlobalShortcutsTarget(document.activeElement)) return;
+      if (editingNodeId) return;
 
       if (event.key === "Escape") {
         if (branchClipboardPresent) {

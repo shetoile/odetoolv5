@@ -6,10 +6,14 @@ type StartupFailure = {
   title: string;
   message: string;
   detail: string | null;
+  isRuntimeModeHint?: boolean;
 };
 
 function formatFailure(error: unknown, fallbackTitle: string): StartupFailure {
   if (error instanceof Error) {
+    if (isTauriRuntimeError(error.message)) {
+      return buildTauriRuntimeFailure(error);
+    }
     return {
       title: fallbackTitle,
       message: error.message || fallbackTitle,
@@ -18,6 +22,9 @@ function formatFailure(error: unknown, fallbackTitle: string): StartupFailure {
   }
 
   if (typeof error === "string" && error.trim().length > 0) {
+    if (isTauriRuntimeError(error)) {
+      return buildTauriRuntimeFailure(error);
+    }
     return {
       title: fallbackTitle,
       message: error.trim(),
@@ -38,6 +45,30 @@ function formatFailure(error: unknown, fallbackTitle: string): StartupFailure {
       detail: null
     };
   }
+}
+
+function isTauriRuntimeError(message: string): boolean {
+  return message.toLowerCase().includes("tauri runtime not detected");
+}
+
+function buildTauriRuntimeFailure(error: Error | string): StartupFailure {
+  const stack = error instanceof Error ? error.stack ?? null : null;
+  return {
+    title: "You opened the web server in a browser.",
+    message: [
+      "localhost is only the Vite web server. ODETool needs the Tauri desktop runtime to read nodes, documents, Windows files, and local app integrations.",
+      "",
+      "For no-installer testing, use the Desktop shortcut:",
+      "Start ODETool Dev.cmd",
+      "",
+      "Or run this command from the project folder:",
+      "npm run dev:desktop",
+      "",
+      "Keep the command window open while testing. Do not open localhost directly in Chrome for desktop mode."
+    ].join("\n"),
+    detail: stack,
+    isRuntimeModeHint: true
+  };
 }
 
 function StartupFailureView({ failure }: { failure: StartupFailure }) {
@@ -96,6 +127,22 @@ function StartupFailureView({ failure }: { failure: StartupFailure }) {
         >
           {failure.message}
         </p>
+        {failure.isRuntimeModeHint ? (
+          <div
+            style={{
+              margin: "18px 0 0",
+              borderRadius: "16px",
+              border: "1px solid rgba(55,145,205,0.18)",
+              background: "rgba(7, 36, 57, 0.48)",
+              padding: "14px 16px",
+              color: "#d9effc",
+              fontSize: "0.9rem",
+              lineHeight: 1.6
+            }}
+          >
+            Tip: after double-clicking the dev shortcut, the real ODETool window opens separately from Chrome.
+          </div>
+        ) : null}
         {failure.detail ? (
           <pre
             style={{

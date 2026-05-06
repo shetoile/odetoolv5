@@ -293,7 +293,15 @@ export function SidebarPanel({
     onActivateTreeSurface();
     treeScrollRef.current?.focus({ preventScroll: true });
   };
-  const activateTreeKeyboardSurface = () => {
+  const isInteractiveEditTarget = (target: EventTarget | null): boolean => {
+    if (!(target instanceof HTMLElement)) return false;
+    return Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+  };
+  const activateTreeKeyboardSurface = (event?: ReactMouseEvent<HTMLElement>) => {
+    if (isInteractiveEditTarget(event?.target ?? null)) {
+      onActivateTreeSurface();
+      return;
+    }
     focusTreeKeyboardSurface();
   };
   const restoreTreeKeyboardSurfaceAfterInlineEdit = () => {
@@ -1038,7 +1046,7 @@ export function SidebarPanel({
               <div
                 key={row.id}
                 data-ode-node-id={row.id}
-                className={`ode-tree-row group relative mb-1.5 flex items-start gap-2 overflow-hidden rounded-[22px] border border-transparent pr-2 transition-[background,border-color,box-shadow,transform] duration-150 ${selected ? "ode-tree-row-selected border-[rgba(108,211,255,0.36)] bg-[linear-gradient(135deg,rgba(13,61,92,0.68),rgba(6,31,49,0.92))] shadow-[0_12px_32px_rgba(0,0,0,0.2)]" : "bg-[rgba(4,23,37,0.16)] hover:border-[rgba(108,211,255,0.16)] hover:bg-[rgba(7,34,53,0.52)]"} ${focused ? "ode-tree-row-active shadow-[0_0_0_1px_rgba(122,224,255,0.24),0_16px_36px_rgba(0,0,0,0.24)]" : ""} ${cutPendingNodeIds.has(row.id) ? "ode-cut-pending" : ""
+                className={`ode-tree-row group relative mb-1.5 flex items-center gap-2 overflow-hidden rounded-[22px] border border-transparent pr-2 transition-[background,border-color,box-shadow,transform] duration-150 ${selected ? "ode-tree-row-selected border-[rgba(108,211,255,0.36)] bg-[linear-gradient(135deg,rgba(13,61,92,0.68),rgba(6,31,49,0.92))] shadow-[0_12px_32px_rgba(0,0,0,0.2)]" : "bg-[rgba(4,23,37,0.16)] hover:border-[rgba(108,211,255,0.16)] hover:bg-[rgba(7,34,53,0.52)]"} ${focused ? "ode-tree-row-active shadow-[0_0_0_1px_rgba(122,224,255,0.24),0_16px_36px_rgba(0,0,0,0.24)]" : ""} ${cutPendingNodeIds.has(row.id) ? "ode-cut-pending" : ""
                   } ${draggingNodeId === row.id ? "ode-tree-row-dragging opacity-70" : ""
                   } ${dropIndicator?.targetId === row.id
                     ? dropIndicator.position === "before"
@@ -1132,7 +1140,7 @@ export function SidebarPanel({
                   />
                 ) : null}
                 <button
-                  className={`ode-caret-btn mt-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[12px] border border-transparent text-[0.82rem] transition ${
+                  className={`ode-caret-btn inline-flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-[12px] border border-transparent text-[0.82rem] transition ${
                     row.hasChildren
                       ? "text-[var(--ode-text-muted)] hover:border-[rgba(108,211,255,0.16)] hover:bg-[rgba(10,41,63,0.72)] hover:text-[var(--ode-text)]"
                       : "text-[var(--ode-text-subtle)] opacity-60"
@@ -1146,7 +1154,7 @@ export function SidebarPanel({
                   {row.hasChildren ? (expandedIds.has(row.id) ? "v" : ">") : ""}
                 </button>
 
-                <div className="ode-tree-row-main min-w-0 flex-1 items-start gap-3 rounded-[18px] px-2.5 py-2.5">
+                <div className="ode-tree-row-main min-w-0 flex-1 items-center gap-3 rounded-[18px] px-2.5 py-2.5">
                   <NodeGlyph
                     node={row.node}
                     active={selected || focused}
@@ -1154,7 +1162,7 @@ export function SidebarPanel({
                     showExecutionOwnerGlyph={executionOwnerNodeIds.has(row.id)}
                   />
                   <div className="min-w-0 flex-1">
-                    <div className="flex min-w-0 items-start gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       {isEditingHere ? (
                         <input
                           ref={inlineEditInputRef as RefObject<HTMLInputElement | null>}
@@ -1165,6 +1173,9 @@ export function SidebarPanel({
                           autoCapitalize="off"
                           lang={getLocaleForLanguage(language)}
                           onChange={(event) => onSetEditingValue(event.target.value)}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => event.stopPropagation()}
+                          onDoubleClick={(event) => event.stopPropagation()}
                           onContextMenu={onOpenInlineEditContextMenu}
                           onBlur={() => {
                             if (editActionInFlightRef.current) return;
@@ -1214,7 +1225,7 @@ export function SidebarPanel({
                           {getNodeDisplayLabel(row.node)}
                         </span>
                       )}
-                      <div className="flex shrink-0 items-start gap-2">
+                      <div className="flex shrink-0 items-center gap-2">
                         {!hideTreeNumbering && !isFileNode && row.indexLabel ? (
                           <span className={`rounded-full border px-2.5 py-1 text-[0.68rem] font-medium tracking-[0.12em] ${
                             selected || focused

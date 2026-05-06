@@ -7,7 +7,8 @@ export type StructuredAiPromptIntent =
   | "planning_deliverables"
   | "planning_tasks"
   | "planning_structure"
-  | "translate_structure";
+  | "translate_structure"
+  | "daily_work_extract";
 
 export type StructuredAiPromptErrorCode =
   | "ai_request_failed"
@@ -46,7 +47,8 @@ const DEFAULT_ENGINE_BY_INTENT: Record<StructuredAiPromptIntent, AiEngine> = {
   planning_deliverables: "cloud",
   planning_tasks: "cloud",
   planning_structure: "cloud",
-  translate_structure: "cloud"
+  translate_structure: "cloud",
+  daily_work_extract: "cloud"
 };
 
 function extractFirstJsonObject(raw: string): string | null {

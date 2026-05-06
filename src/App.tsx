@@ -396,6 +396,7 @@ import { NodeContextMenu } from "@/components/overlay/NodeContextMenu";
 import { OdeTooltip } from "@/components/overlay/OdeTooltip";
 import { TextEditContextMenu, type TextEditContextMenuState } from "@/components/overlay/TextEditContextMenu";
 import { AiCommandBar } from "@/components/overlay/AiCommandBar";
+import { DailyWorkBoard } from "@/components/daily-work/DailyWorkBoard";
 import type {
   AiActivityItem,
   AiCommandPlan,
@@ -506,6 +507,8 @@ import {
   updateNodeProperties
 } from "@/lib/nodeService";
 import {
+  applyQuickAppContextToItem,
+  applyQuickAppContextToItems,
   applyQuickAppItemPatch,
   buildFunctionQuickAppsProperties,
   buildNodeQuickAppsProperties,
@@ -523,6 +526,7 @@ import {
   readStoredGeneralQuickApps,
   readStoredQuickAppLibrary,
   resolveQuickAppItemType,
+  resolveQuickAppHtmlTemplateTarget,
   resolveQuickAppLocalPath,
   resolveQuickAppLaunchTarget,
   shouldOpenQuickAppInsideOdeBrowser,
@@ -1628,12 +1632,16 @@ function buildQuickAppWindowTitle(
 }
 
 function buildQuickAppHtmlStorageNamespace(
-  item: Pick<NodeQuickAppItem, "id" | "label" | "target">,
+  item: Pick<NodeQuickAppItem, "id" | "label" | "kind" | "target"> & Partial<Pick<NodeQuickAppItem, "templateTarget">>,
   context?: QuickAppLaunchContext | null
 ): string {
   const scopeToken = resolveQuickAppContextScopeToken(context);
   const ownerToken = sanitizeQuickAppWindowToken(context?.ownerId ?? context?.ownerLabel, "shared");
-  const itemToken = sanitizeQuickAppWindowToken(item.id || item.label || getQuickAppTargetLeafName(item.target), "app");
+  const templateTarget = resolveQuickAppHtmlTemplateTarget(item);
+  const itemToken = sanitizeQuickAppWindowToken(
+    templateTarget || item.target || item.label || item.id || getQuickAppTargetLeafName(item.target),
+    "app"
+  );
   return `odetool.quick-app.html.${scopeToken}.${ownerToken}.${itemToken}`;
 }
 
@@ -1703,7 +1711,11 @@ function buildQuickAppHtmlWindowLabel(item: NodeQuickAppItem, context?: QuickApp
   const scopeToken =
     context?.scope === "function" ? "workspace" : context?.scope === "tab" ? "chantier" : "general";
   const ownerToken = sanitizeQuickAppWindowToken(context?.ownerId ?? context?.ownerLabel, "shared");
-  const itemToken = sanitizeQuickAppWindowToken(item.id || item.label || getQuickAppTargetLeafName(item.target), "app");
+  const templateTarget = resolveQuickAppHtmlTemplateTarget(item);
+  const itemToken = sanitizeQuickAppWindowToken(
+    templateTarget || item.target || item.label || item.id || getQuickAppTargetLeafName(item.target),
+    "app"
+  );
   return `odetool-panel-html-${scopeToken}-${ownerToken}-${itemToken}`.slice(0, 180);
 }
 
@@ -2357,6 +2369,7 @@ function buildQuickAppBrowseTargetPatch(
 
   return {
     target,
+    templateTarget: nextType === "html" ? target : null,
     type: nextType,
     kind: "local_path",
     openInOdeBrowser: nextType === "html"
@@ -11162,20 +11175,24 @@ export default function App() {
     setQuickAppsSaving(true);
     try {
       if (quickAppsStudioFocusedScope === "general") {
-        const nextGeneralQuickApps = normalizeNodeQuickApps(generalQuickAppsDraft);
+        const nextGeneralQuickApps = normalizeNodeQuickApps(
+          applyQuickAppContextToItems(generalQuickAppsDraft, scopedQuickAppsLibraryContext)
+        );
         setGeneralQuickApps(nextGeneralQuickApps);
+        setGeneralQuickAppsDraft(nextGeneralQuickApps);
         writeStoredGeneralQuickApps(nextGeneralQuickApps);
         persistQuickAppLibrary((current) =>
           upsertQuickAppLibraryItems(current, nextGeneralQuickApps, scopedQuickAppsLibraryContext)
         );
-        setQuickAppsStudioOpen(false);
         return;
       }
 
       if (quickAppsStudioFocusedScope === "function") {
         if (quickAppsStudioFunctionOwnerNode) {
           if (!ensureNodeAccessAllowed([quickAppsStudioFunctionOwnerNode.id], "write")) return;
-          const nextFunctionQuickApps = normalizeNodeQuickApps(functionQuickAppsDraft);
+          const nextFunctionQuickApps = normalizeNodeQuickApps(
+            applyQuickAppContextToItems(functionQuickAppsDraft, scopedQuickAppsLibraryContext)
+          );
           const nextProperties = buildFunctionQuickAppsProperties(
             quickAppsStudioFunctionOwnerNode.properties,
             nextFunctionQuickApps
@@ -11185,17 +11202,19 @@ export default function App() {
             properties: nextProperties,
             updatedAt: Date.now()
           });
+          setFunctionQuickAppsDraft(nextFunctionQuickApps);
           persistQuickAppLibrary((current) =>
             upsertQuickAppLibraryItems(current, nextFunctionQuickApps, scopedQuickAppsLibraryContext)
           );
         }
-        setQuickAppsStudioOpen(false);
         return;
       }
 
       if (quickAppsStudioTabOwnerNode) {
         if (!ensureNodeAccessAllowed([quickAppsStudioTabOwnerNode.id], "write")) return;
-        const nextTabQuickApps = normalizeNodeQuickApps(tabQuickAppsDraft);
+        const nextTabQuickApps = normalizeNodeQuickApps(
+          applyQuickAppContextToItems(tabQuickAppsDraft, scopedQuickAppsLibraryContext)
+        );
         const nextProperties = buildNodeQuickAppsProperties(
           quickAppsStudioTabOwnerNode.properties,
           nextTabQuickApps
@@ -11205,12 +11224,11 @@ export default function App() {
           properties: nextProperties,
           updatedAt: Date.now()
         });
+        setTabQuickAppsDraft(nextTabQuickApps);
         persistQuickAppLibrary((current) =>
           upsertQuickAppLibraryItems(current, nextTabQuickApps, scopedQuickAppsLibraryContext)
         );
       }
-
-      setQuickAppsStudioOpen(false);
     } finally {
       setQuickAppsSaving(false);
     }
@@ -15832,7 +15850,16 @@ export default function App() {
     if (!node) return;
     if (!ensureNodeAccessAllowed([node.id], "write")) return;
 
-    const nextQuickApps = normalizeNodeQuickApps(quickAppsDraftItems);
+    const quickAppsContext: QuickAppLaunchContext = {
+      scope: "tab",
+      ownerId: node.id,
+      ownerLabel: node.name,
+      workspaceId: activeWorkspaceRootNode?.id ?? null,
+      workspaceLabel: activeWorkspaceRootNode?.name ?? null
+    };
+    const nextQuickApps = normalizeNodeQuickApps(
+      applyQuickAppContextToItems(quickAppsDraftItems, quickAppsContext)
+    );
     const nextProperties = buildNodeQuickAppsProperties(node.properties, nextQuickApps);
     const localAutoQuickApps = nextQuickApps.filter(
       (item) => item.kind === "local_path" && item.iconKey === "auto" && !item.customIconDataUrl
@@ -15845,13 +15872,7 @@ export default function App() {
         updatedAt: Date.now()
       });
       persistQuickAppLibrary((current) =>
-        upsertQuickAppLibraryItems(current, nextQuickApps, {
-          scope: "tab",
-          ownerId: node.id,
-          ownerLabel: node.name,
-          workspaceId: activeWorkspaceRootNode?.id ?? null,
-          workspaceLabel: activeWorkspaceRootNode?.name ?? null
-        })
+        upsertQuickAppLibraryItems(current, nextQuickApps, quickAppsContext)
       );
 
       if (localAutoQuickApps.length > 0) {
@@ -15874,8 +15895,7 @@ export default function App() {
         );
       }
 
-      setQuickAppsModalNodeId(null);
-      setQuickAppsDraftItems([]);
+      setQuickAppsDraftItems(nextQuickApps);
     } finally {
       setQuickAppsSaving(false);
     }
@@ -15953,7 +15973,8 @@ export default function App() {
 
   const launchQuickApp = useCallback(
     async (item: NodeQuickAppItem, context?: QuickAppLaunchContext | null) => {
-      const target = resolveQuickAppLaunchTarget(item);
+      const launchItem = applyQuickAppContextToItem(item, context);
+      const target = resolveQuickAppLaunchTarget(launchItem);
       if (!target) {
         setProjectError(t("quick_apps.target_required"));
         return;
@@ -15966,7 +15987,7 @@ export default function App() {
           if (!targetNode) {
             setProjectError(
               t("quick_apps.launch_failed", {
-                name: item.label || target,
+                name: launchItem.label || target,
                 reason: "The linked ODE node could not be found."
               })
             );
@@ -15978,34 +15999,36 @@ export default function App() {
           } else {
             await openNodeInDedicatedWindow(targetNode.id);
           }
-        } else if (item.kind === "local_path") {
+        } else if (launchItem.kind === "local_path") {
           const localPath = resolveQuickAppLocalPath(target);
-          if (isQuickAppHtmlItem(item) || isQuickAppHtmlLocalPath(localPath)) {
-            if (!localPath) {
+          if (isQuickAppHtmlItem(launchItem) || isQuickAppHtmlLocalPath(localPath)) {
+            const templateTarget = resolveQuickAppHtmlTemplateTarget(launchItem) || target;
+            const templateLocalPath = resolveQuickAppLocalPath(templateTarget);
+            if (!templateLocalPath) {
               throw new Error("The HTML template path could not be resolved.");
             }
             const instancePath = await prepareQuickAppHtmlInstance(
-              localPath,
-              buildQuickAppHtmlInstanceFileName(item, context),
+              templateLocalPath,
+              buildQuickAppHtmlInstanceFileName(launchItem, context),
               {
-                templateBaseHref: buildQuickAppHtmlTemplateBaseHref(localPath),
-                storageNamespace: buildQuickAppHtmlStorageNamespace(item, context),
-                snapshotSeed: buildQuickAppHtmlSnapshotSeed(item, context)
+                templateBaseHref: buildQuickAppHtmlTemplateBaseHref(templateLocalPath),
+                storageNamespace: buildQuickAppHtmlStorageNamespace(launchItem, context),
+                snapshotSeed: buildQuickAppHtmlSnapshotSeed(launchItem, context)
               }
             );
-            await openQuickAppHtmlWindow(item, instancePath, context);
+            await openQuickAppHtmlWindow(launchItem, instancePath, context);
             return;
           }
           await openLocalPath(localPath ?? target);
-        } else if (shouldOpenQuickAppInsideOdeBrowser(item)) {
-          await openQuickAppBrowserWindow(item, target, context, { mode: "link" });
+        } else if (shouldOpenQuickAppInsideOdeBrowser(launchItem)) {
+          await openQuickAppBrowserWindow(launchItem, target, context, { mode: "link" });
         } else {
           await openExternalUrl(target);
         }
       } catch (error) {
         setProjectError(
           t("quick_apps.launch_failed", {
-            name: item.label || target,
+            name: launchItem.label || target,
             reason: error instanceof Error ? error.message : String(error)
           })
         );
@@ -19702,16 +19725,17 @@ export default function App() {
     scope: QuickAppScope,
     items: NodeQuickAppItem[]
   ): Promise<NodeQuickAppItem[]> => {
-    const normalized = normalizeNodeQuickApps(items);
     if (scope === "general") {
+      const context: QuickAppLaunchContext = {
+        scope: "general",
+        ownerId: null,
+        ownerLabel: null
+      };
+      const normalized = normalizeNodeQuickApps(applyQuickAppContextToItems(items, context));
       setGeneralQuickApps(normalized);
       writeStoredGeneralQuickApps(normalized);
       persistQuickAppLibrary((current) =>
-        upsertQuickAppLibraryItems(current, normalized, {
-          scope: "general",
-          ownerId: null,
-          ownerLabel: null
-        })
+        upsertQuickAppLibraryItems(current, normalized, context)
       );
       return normalized;
     }
@@ -19728,6 +19752,14 @@ export default function App() {
       throw new Error("You do not have permission to update quick apps here.");
     }
 
+    const context: QuickAppLaunchContext = {
+      scope,
+      ownerId: ownerNode.id,
+      ownerLabel: ownerNode.name,
+      workspaceId: activeWorkspaceRootNode?.id ?? null,
+      workspaceLabel: activeWorkspaceRootNode?.name ?? null
+    };
+    const normalized = normalizeNodeQuickApps(applyQuickAppContextToItems(items, context));
     const nextProperties =
       scope === "function"
         ? buildFunctionQuickAppsProperties(ownerNode.properties, normalized)
@@ -19738,13 +19770,7 @@ export default function App() {
       updatedAt: Date.now()
     });
       persistQuickAppLibrary((current) =>
-        upsertQuickAppLibraryItems(current, normalized, {
-          scope,
-          ownerId: ownerNode.id,
-          ownerLabel: ownerNode.name,
-          workspaceId: activeWorkspaceRootNode?.id ?? null,
-          workspaceLabel: activeWorkspaceRootNode?.name ?? null
-        })
+        upsertQuickAppLibraryItems(current, normalized, context)
       );
     return normalized;
   };
@@ -23804,9 +23830,11 @@ export default function App() {
       target,
       type: (parseArgsString(args, "type") || undefined) as NodeQuickAppItem["type"]
     });
+    const targetFingerprint = buildQuickAppTargetFingerprint(nextItem);
     const targetKey = normalizeCommandLookup(nextItem.target);
     const labelKey = normalizeCommandLookup(nextItem.label);
     const existingIndex = currentItems.findIndex((item) =>
+      buildQuickAppTargetFingerprint(item) === targetFingerprint ||
       normalizeCommandLookup(item.target) === targetKey ||
       normalizeCommandLookup(item.label) === labelKey
     );
@@ -28303,41 +28331,43 @@ export default function App() {
               />
             ) : AI_COMMAND_BAR_ENABLED ? (
               <div className="flex min-h-0 flex-1 overflow-hidden">
-                <AiCommandBar
-                  open
-                  simpleMode
-                  layout="embedded"
-                  chrome="minimal"
-                  focusRequestKey={embeddedAiFocusRequestKey}
-                  historyStorageKey={embeddedAiHistoryStorageKey}
-                  onTriggerUpload={() => {
-                    void triggerDesktopUpload(embeddedAiUploadTargetNodeId);
+                <DailyWorkBoard
+                  contextKey={`${activeProjectId ?? "global"}:${activeProjectRootId ?? "root"}:${embeddedAiUploadTargetNodeId ?? "workspace"}`}
+                  aiCommandBarProps={{
+                    open: true,
+                    simpleMode: true,
+                    layout: "embedded",
+                    chrome: "minimal",
+                    focusRequestKey: embeddedAiFocusRequestKey,
+                    historyStorageKey: embeddedAiHistoryStorageKey,
+                    onTriggerUpload: () => {
+                      void triggerDesktopUpload(embeddedAiUploadTargetNodeId);
+                    },
+                    t,
+                    language,
+                    languageCodes: LANGUAGE_CODES,
+                    activityItems: assistantActivityItems,
+                    initialSurface:
+                      desktopViewMode === "procedure" ||
+                      workspaceFocusMode === "data" ||
+                      workspaceFocusMode === "execution"
+                        ? "workarea"
+                        : "organization",
+                    nodeContext: assistantNodeContext,
+                    quickAppScopes: activeQuickAppScopeSummaries,
+                    documentReview: null,
+                    onClose: () => {},
+                    onDocumentTranslationModeChange: setDocumentAdvisorTranslationMode,
+                    onDocumentManualTranslationLanguageChange: setDocumentAdvisorManualTranslationLanguage,
+                    onAskNode: askSelectedNodeAssistant,
+                    onApplyNodePlan: applyNodeAssistantPlan,
+                    onOpenNodeDeliverableProposal: openNodeDeliverableProposal,
+                    onOpenNodeIntegratedPlanProposal: openNodeIntegratedPlanProposal,
+                    onAnalyze: analyzeAiCommand,
+                    onExecute: executeAiPlan,
+                    onExecuteDocumentReview: async () => {},
+                    onClearActivity: clearAssistantActivity
                   }}
-                  t={t}
-                  language={language}
-                  languageCodes={LANGUAGE_CODES}
-                  activityItems={assistantActivityItems}
-                  initialSurface={
-                    desktopViewMode === "procedure" ||
-                    workspaceFocusMode === "data" ||
-                    workspaceFocusMode === "execution"
-                      ? "workarea"
-                      : "organization"
-                  }
-                  nodeContext={assistantNodeContext}
-                  quickAppScopes={activeQuickAppScopeSummaries}
-                  documentReview={null}
-                  onClose={() => {}}
-                  onDocumentTranslationModeChange={setDocumentAdvisorTranslationMode}
-                  onDocumentManualTranslationLanguageChange={setDocumentAdvisorManualTranslationLanguage}
-                  onAskNode={askSelectedNodeAssistant}
-                  onApplyNodePlan={applyNodeAssistantPlan}
-                  onOpenNodeDeliverableProposal={openNodeDeliverableProposal}
-                  onOpenNodeIntegratedPlanProposal={openNodeIntegratedPlanProposal}
-                  onAnalyze={analyzeAiCommand}
-                  onExecute={executeAiPlan}
-                  onExecuteDocumentReview={async () => {}}
-                  onClearActivity={clearAssistantActivity}
                 />
               </div>
             ) : (
@@ -28542,40 +28572,42 @@ export default function App() {
                 }}
                 dashboardEmbeddedContent={
                   AI_COMMAND_BAR_ENABLED ? (
-                    <AiCommandBar
-                      open
-                      simpleMode
-                      layout="embedded"
-                      chrome="minimal"
-                      historyStorageKey={dashboardAiHistoryStorageKey}
-                      onTriggerUpload={() => {
-                        void triggerDesktopUpload();
+                    <DailyWorkBoard
+                      contextKey={`${activeProjectId ?? "global"}:${activeProjectRootId ?? "root"}:dashboard`}
+                      aiCommandBarProps={{
+                        open: true,
+                        simpleMode: true,
+                        layout: "embedded",
+                        chrome: "minimal",
+                        historyStorageKey: dashboardAiHistoryStorageKey,
+                        onTriggerUpload: () => {
+                          void triggerDesktopUpload();
+                        },
+                        t,
+                        language,
+                        languageCodes: LANGUAGE_CODES,
+                        activityItems: assistantActivityItems,
+                        initialSurface:
+                          desktopViewMode === "procedure" ||
+                          workspaceFocusMode === "data" ||
+                          workspaceFocusMode === "execution"
+                            ? "workarea"
+                            : "organization",
+                        nodeContext: assistantNodeContext,
+                        quickAppScopes: activeQuickAppScopeSummaries,
+                        documentReview: null,
+                        onClose: () => {},
+                        onDocumentTranslationModeChange: setDocumentAdvisorTranslationMode,
+                        onDocumentManualTranslationLanguageChange: setDocumentAdvisorManualTranslationLanguage,
+                        onAskNode: askSelectedNodeAssistant,
+                        onApplyNodePlan: applyNodeAssistantPlan,
+                        onOpenNodeDeliverableProposal: openNodeDeliverableProposal,
+                        onOpenNodeIntegratedPlanProposal: openNodeIntegratedPlanProposal,
+                        onAnalyze: analyzeAiCommand,
+                        onExecute: executeAiPlan,
+                        onExecuteDocumentReview: async () => {},
+                        onClearActivity: clearAssistantActivity
                       }}
-                      t={t}
-                      language={language}
-                      languageCodes={LANGUAGE_CODES}
-                      activityItems={assistantActivityItems}
-                      initialSurface={
-                        desktopViewMode === "procedure" ||
-                        workspaceFocusMode === "data" ||
-                        workspaceFocusMode === "execution"
-                          ? "workarea"
-                          : "organization"
-                      }
-                      nodeContext={assistantNodeContext}
-                      quickAppScopes={activeQuickAppScopeSummaries}
-                      documentReview={null}
-                      onClose={() => {}}
-                      onDocumentTranslationModeChange={setDocumentAdvisorTranslationMode}
-                      onDocumentManualTranslationLanguageChange={setDocumentAdvisorManualTranslationLanguage}
-                      onAskNode={askSelectedNodeAssistant}
-                      onApplyNodePlan={applyNodeAssistantPlan}
-                      onOpenNodeDeliverableProposal={openNodeDeliverableProposal}
-                      onOpenNodeIntegratedPlanProposal={openNodeIntegratedPlanProposal}
-                      onAnalyze={analyzeAiCommand}
-                      onExecute={executeAiPlan}
-                      onExecuteDocumentReview={async () => {}}
-                      onClearActivity={clearAssistantActivity}
                     />
                   ) : null
                 }

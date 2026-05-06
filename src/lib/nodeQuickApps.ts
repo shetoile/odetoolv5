@@ -47,6 +47,7 @@ export interface NodeQuickAppItem {
   kind: NodeQuickAppKind;
   type?: NodeQuickAppType;
   target: string;
+  templateTarget?: string | null;
   iconKey: NodeQuickAppIconKey;
   customIconDataUrl?: string | null;
   openInOdeBrowser?: boolean;
@@ -58,6 +59,7 @@ export interface QuickAppLibraryItem {
   kind: NodeQuickAppKind;
   type?: NodeQuickAppType;
   target: string;
+  templateTarget?: string | null;
   iconKey: NodeQuickAppIconKey;
   customIconDataUrl?: string | null;
   openInOdeBrowser?: boolean;
@@ -208,9 +210,14 @@ function mapQuickAppTypeToKind(type: NodeQuickAppType): NodeQuickAppKind {
   return type === "link" ? "url" : "local_path";
 }
 
-export function buildQuickAppTargetFingerprint(item: Pick<NodeQuickAppItem, "type" | "kind" | "target">): string {
+export function buildQuickAppTargetFingerprint(
+  item: Pick<NodeQuickAppItem, "type" | "kind" | "target"> & Partial<Pick<NodeQuickAppItem, "templateTarget">>
+): string {
   const type = resolveQuickAppTypeCandidate(item);
-  const target = normalizeQuickAppTarget(mapQuickAppTypeToKind(type), trimString(item.target));
+  const target =
+    type === "html"
+      ? normalizeQuickAppTarget("local_path", trimString(item.templateTarget) || trimString(item.target))
+      : normalizeQuickAppTarget(mapQuickAppTypeToKind(type), trimString(item.target));
   if (!target) return `${type}|`;
 
   if (type === "link") {
@@ -227,9 +234,12 @@ export function buildQuickAppTargetFingerprint(item: Pick<NodeQuickAppItem, "typ
 }
 
 function buildQuickAppLibraryFingerprint(
-  item: Pick<QuickAppLibraryItem, "type" | "kind" | "target" | "scope">
+  item: Pick<QuickAppLibraryItem, "type" | "kind" | "target" | "scope"> & Partial<Pick<QuickAppLibraryItem, "templateTarget">>
 ): string {
   const targetFingerprint = buildQuickAppTargetFingerprint(item);
+  if (resolveQuickAppTypeCandidate(item) === "html") {
+    return `html_template|${targetFingerprint}`;
+  }
   return `${item.scope}|${targetFingerprint}`;
 }
 
@@ -255,12 +265,34 @@ function stripKnownQuickAppContextSuffixes(label: string, contextLabels: readonl
   return nextLabel;
 }
 
+function stripKnownQuickAppTargetContextSuffixes(target: string, contextLabels: readonly unknown[]): string {
+  const normalizedTarget = stripWrappingQuotes(target.trim());
+  if (!normalizedTarget) return "";
+  const localPath = resolveQuickAppLocalPath(normalizedTarget) ?? normalizedTarget;
+  const extension = getQuickAppPathExtension(localPath);
+  const leafName = getQuickAppTargetLeafName(localPath);
+  const stem = extension && leafName.endsWith(`.${extension}`) ? leafName.slice(0, -(extension.length + 1)) : leafName;
+  const strippedStem = stripKnownQuickAppContextSuffixes(stem, contextLabels);
+  if (!strippedStem || strippedStem === stem) return normalizedTarget;
+  const parentPath = getQuickAppTargetParentPath(localPath);
+  const nextLeafName = extension ? `${strippedStem}.${extension}` : strippedStem;
+  return parentPath ? joinQuickAppTargetPath(parentPath, nextLeafName) : nextLeafName;
+}
+
 function normalizeQuickAppLibraryLabel(item: NodeQuickAppItem, contextLabels: readonly unknown[] = []): NodeQuickAppItem {
   if (resolveQuickAppItemType(item) !== "html") return item;
-  const baseLabel = stripKnownQuickAppContextSuffixes(item.label, contextLabels) || deriveQuickAppLabel("html", item.target);
+  const explicitTemplateTarget = normalizeQuickAppTarget("local_path", trimString(item.templateTarget));
+  const fallbackTemplateTarget = stripKnownQuickAppTargetContextSuffixes(item.target, contextLabels);
+  const templateTarget = explicitTemplateTarget || fallbackTemplateTarget || item.target;
+  const baseLabel =
+    deriveQuickAppLabel("html", templateTarget) ||
+    stripKnownQuickAppContextSuffixes(item.label, contextLabels) ||
+    deriveQuickAppLabel("html", item.target);
   return {
     ...item,
-    label: baseLabel
+    label: baseLabel,
+    target: templateTarget,
+    templateTarget: null
   };
 }
 
@@ -296,6 +328,96 @@ function applyQuickAppLibraryContextLabel(
     ...item,
     label: baseLabel.endsWith(suffix) ? baseLabel : `${baseLabel || deriveQuickAppLabel("html", item.target)}${suffix}`
   };
+}
+
+function sanitizeQuickAppHtmlInstanceStem(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return normalized || "HTML";
+}
+
+function getQuickAppTargetParentPath(target: string): string | null {
+  const normalized = stripWrappingQuotes(target.trim()).replace(/[\\/]+$/, "");
+  if (!normalized) return null;
+  const separatorIndex = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  if (separatorIndex <= 0) return null;
+  return normalized.slice(0, separatorIndex);
+}
+
+function joinQuickAppTargetPath(parentPath: string, leafName: string): string {
+  const separator = parentPath.includes("\\") ? "\\" : "/";
+  return `${parentPath}${separator}${leafName}`;
+}
+
+export function resolveQuickAppHtmlTemplateTarget(
+  item: Partial<Pick<NodeQuickAppItem, "type" | "kind" | "target" | "templateTarget">>
+): string {
+  if (resolveQuickAppTypeCandidate(item) !== "html") return "";
+  const rawTemplateTarget = trimString(item.templateTarget) || trimString(item.target);
+  return normalizeQuickAppTarget("local_path", rawTemplateTarget);
+}
+
+export function buildQuickAppHtmlInstanceLabel(
+  item: Partial<Pick<NodeQuickAppItem, "label" | "kind" | "target" | "templateTarget">>,
+  context?: QuickAppLaunchContext | null
+): string {
+  const templateTarget = resolveQuickAppHtmlTemplateTarget({
+    type: "html",
+    kind: "local_path",
+    target: item.target,
+    templateTarget: item.templateTarget
+  });
+  const baseLabel = deriveQuickAppLabel("html", templateTarget || trimString(item.target) || trimString(item.label));
+  const suffix = getQuickAppContextLabelParts(context).map((label) => ` [${label}]`).join("");
+  return `${baseLabel}${suffix}`.trim();
+}
+
+export function buildQuickAppHtmlInstanceTarget(
+  item: Partial<Pick<NodeQuickAppItem, "label" | "kind" | "target" | "templateTarget">>,
+  context?: QuickAppLaunchContext | null
+): string {
+  const templateTarget = resolveQuickAppHtmlTemplateTarget({
+    type: "html",
+    kind: "local_path",
+    target: item.target,
+    templateTarget: item.templateTarget
+  });
+  const launchTarget = templateTarget || normalizeQuickAppTarget("local_path", trimString(item.target));
+  const localPath = resolveQuickAppLocalPath(launchTarget) ?? launchTarget;
+  const extension = getQuickAppPathExtension(localPath) || "html";
+  const instanceStem = sanitizeQuickAppHtmlInstanceStem(buildQuickAppHtmlInstanceLabel(item, context));
+  const instanceLeafName = `${instanceStem}.${extension}`;
+  const parentPath = getQuickAppTargetParentPath(localPath);
+  return parentPath ? joinQuickAppTargetPath(parentPath, instanceLeafName) : instanceLeafName;
+}
+
+export function applyQuickAppContextToItem(
+  item: NodeQuickAppItem,
+  context?: QuickAppLaunchContext | null
+): NodeQuickAppItem {
+  const normalized = createNodeQuickAppItem(item);
+  if (resolveQuickAppItemType(normalized) !== "html") return normalized;
+  const templateTarget = resolveQuickAppHtmlTemplateTarget(normalized);
+  if (!templateTarget) return normalized;
+  return createNodeQuickAppItem({
+    ...normalized,
+    label: buildQuickAppHtmlInstanceLabel({ ...normalized, templateTarget }, context),
+    kind: "local_path",
+    type: "html",
+    target: buildQuickAppHtmlInstanceTarget({ ...normalized, templateTarget }, context),
+    templateTarget,
+    openInOdeBrowser: true
+  });
+}
+
+export function applyQuickAppContextToItems(
+  items: readonly NodeQuickAppItem[],
+  context?: QuickAppLaunchContext | null
+): NodeQuickAppItem[] {
+  return items.map((item) => applyQuickAppContextToItem(item, context));
 }
 
 function normalizeQuickAppLibraryContext(context?: QuickAppLaunchContext | null): Pick<
@@ -371,11 +493,20 @@ export function createNodeQuickAppItem(seed?: Partial<NodeQuickAppItem>): NodeQu
   const type = resolveQuickAppTypeCandidate({
     type: seed?.type,
     kind: seed?.kind,
-    target: typeof seed?.target === "string" ? seed.target : ""
+    target:
+      typeof seed?.target === "string"
+        ? seed.target
+        : typeof seed?.templateTarget === "string"
+          ? seed.templateTarget
+          : ""
   });
   const kind = mapQuickAppTypeToKind(type);
-  const rawTarget = trimString(seed?.target);
+  const rawTarget = trimString(seed?.target) || (type === "html" ? trimString(seed?.templateTarget) : "");
   const target = normalizeQuickAppTarget(kind, rawTarget);
+  const templateTarget =
+    type === "html"
+      ? normalizeQuickAppTarget("local_path", trimString(seed?.templateTarget))
+      : "";
   const label = trimString(seed?.label) || deriveQuickAppLabel(type, target);
   return {
     id: trimString(seed?.id) || createQuickAppId(),
@@ -383,6 +514,7 @@ export function createNodeQuickAppItem(seed?: Partial<NodeQuickAppItem>): NodeQu
     kind,
     type,
     target,
+    templateTarget: templateTarget || null,
     iconKey: isQuickAppIconKey(seed?.iconKey) ? seed.iconKey : "auto",
     customIconDataUrl: normalizeQuickAppCustomIconDataUrl(seed?.customIconDataUrl),
     openInOdeBrowser: normalizeQuickAppOpenInOdeBrowser(type, seed?.openInOdeBrowser)
@@ -393,15 +525,20 @@ export function createQuickAppItemFromLibraryItem(
   item: QuickAppLibraryItem,
   context?: QuickAppLaunchContext | null
 ): NodeQuickAppItem {
-  return applyQuickAppLibraryContextLabel(createNodeQuickAppItem({
+  const nextItem = createNodeQuickAppItem({
     label: item.label,
     kind: item.kind,
     type: item.type,
     target: item.target,
+    templateTarget: item.templateTarget,
     iconKey: item.iconKey,
     customIconDataUrl: item.customIconDataUrl,
     openInOdeBrowser: item.openInOdeBrowser
-  }), context, item.ownerLabel);
+  });
+  if (resolveQuickAppItemType(nextItem) === "html") {
+    return applyQuickAppContextToItem(nextItem, context);
+  }
+  return applyQuickAppLibraryContextLabel(nextItem, context, item.ownerLabel);
 }
 
 export function applyQuickAppItemPatch(
@@ -419,6 +556,15 @@ export function applyQuickAppItemPatch(
     patch.target !== undefined && typeof patch.target === "string" ? patch.target : item.target;
   const nextLabel =
     patch.label !== undefined && typeof patch.label === "string" ? patch.label : item.label;
+  const nextTemplateTarget =
+    nextType === "html"
+      ? normalizeQuickAppTarget(
+          "local_path",
+          patch.templateTarget !== undefined
+            ? trimString(patch.templateTarget)
+            : trimString(item.templateTarget) || (currentType === "html" ? "" : nextTarget)
+        )
+      : "";
   const currentAutoLabel = deriveQuickAppLabel(
     currentType,
     normalizeQuickAppTarget(item.kind, item.target)
@@ -443,6 +589,7 @@ export function applyQuickAppItemPatch(
     kind: nextKind,
     type: nextType,
     target: nextTarget,
+    templateTarget: nextTemplateTarget || null,
     iconKey:
       patch.iconKey !== undefined && isQuickAppIconKey(patch.iconKey) ? patch.iconKey : item.iconKey,
     customIconDataUrl:
@@ -469,13 +616,17 @@ export function normalizeNodeQuickApps(raw: unknown): NodeQuickAppItem[] {
     const partial = candidate as Partial<NodeQuickAppItem>;
     const type = resolveQuickAppTypeCandidate(partial);
     const kind = mapQuickAppTypeToKind(type);
-    const target = normalizeQuickAppTarget(kind, trimString(partial.target));
+    const target = normalizeQuickAppTarget(
+      kind,
+      trimString(partial.target) || (type === "html" ? trimString(partial.templateTarget) : "")
+    );
     if (!target) continue;
     const next = createNodeQuickAppItem({
       ...partial,
       type,
       kind,
       target,
+      templateTarget: normalizeQuickAppTarget("local_path", trimString(partial.templateTarget)),
       customIconDataUrl: normalizeQuickAppCustomIconDataUrl(partial.customIconDataUrl)
     });
     if (seenIds.has(next.id)) {
@@ -587,6 +738,7 @@ function normalizeQuickAppLibrary(raw: unknown): QuickAppLibraryItem[] {
       kind: item.kind,
       type: item.type,
       target: item.target,
+      templateTarget: item.templateTarget,
       iconKey: item.iconKey,
       customIconDataUrl: item.customIconDataUrl,
       openInOdeBrowser: item.openInOdeBrowser,
@@ -652,6 +804,7 @@ export function upsertQuickAppLibraryItems(
       kind: normalized.kind,
       type: normalized.type,
       target: normalized.target,
+      templateTarget: normalized.templateTarget,
       iconKey: normalized.iconKey,
       customIconDataUrl: normalized.customIconDataUrl,
       openInOdeBrowser: normalized.openInOdeBrowser,
@@ -682,6 +835,7 @@ export function upsertQuickAppLibraryItems(
       kind: normalized.kind,
       type: normalized.type,
       target: normalized.target,
+      templateTarget: normalized.templateTarget,
       iconKey: normalized.iconKey,
       customIconDataUrl: normalized.customIconDataUrl,
       openInOdeBrowser: normalized.openInOdeBrowser,
@@ -719,7 +873,9 @@ export function getQuickAppLibraryItemsForScope(
   library: QuickAppLibraryItem[],
   scope: QuickAppScope
 ): QuickAppLibraryItem[] {
-  return normalizeQuickAppLibrary(library).filter((item) => item.scope === scope);
+  return normalizeQuickAppLibrary(library).filter(
+    (item) => item.scope === scope || resolveQuickAppItemType(item) === "html"
+  );
 }
 
 export function resolveQuickAppFaviconUrl(target: string): string | null {
@@ -817,23 +973,7 @@ export function buildQuickAppHtmlInstanceFileName(
   item: Pick<NodeQuickAppItem, "id" | "label" | "kind" | "target">,
   context?: QuickAppLaunchContext | null
 ): string {
-  const launchTarget = resolveQuickAppLaunchTarget(item);
-  const localPath = resolveQuickAppLocalPath(launchTarget);
-  const leafName = getQuickAppTargetLeafName(localPath ?? launchTarget);
-  const extension = getQuickAppPathExtension(localPath ?? launchTarget) || "html";
-  const stem = leafName.endsWith(`.${extension}`) ? leafName.slice(0, -(extension.length + 1)) : leafName;
-  const templateToken = slugifyQuickAppInstanceToken(stem || item.label || "template", "template");
-  const scopeToken = mapQuickAppScopeToInstanceToken(context?.scope);
-  const contextTokens = getQuickAppContextLabelParts(context).map((label) =>
-    slugifyQuickAppInstanceToken(label, "context")
-  );
-  const ownerTokenSource = context?.ownerId && context.scope !== "general" ? context.ownerId : "";
-  const ownerToken = ownerTokenSource ? slugifyQuickAppInstanceToken(ownerTokenSource, "owner") : "";
-  const appLabel = stripKnownQuickAppContextSuffixes(item.label, getQuickAppContextLabelParts(context));
-  const appToken = slugifyQuickAppInstanceToken(appLabel || stem || "app", "app");
-  const idToken = slugifyQuickAppInstanceToken(item.id, "quick-app").slice(-8);
-  const segments = [templateToken, scopeToken, ...contextTokens, ownerToken, appToken, idToken].filter(Boolean);
-  return `${segments.join("--")}.${extension}`;
+  return getQuickAppTargetLeafName(buildQuickAppHtmlInstanceTarget(item, context));
 }
 
 export function getQuickAppTargetLeafName(target: string): string {

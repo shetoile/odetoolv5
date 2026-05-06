@@ -1148,8 +1148,8 @@ export function AiCommandBar({
   const canSubmitPrompt = commandText.trim().length > 0 || hasReadyAiCommandAttachments(draftAttachments);
   const compactAttachmentButtonLabel = t("command.ai_attachment_files_empty");
   const compactUtilityButtonClass =
-    "inline-flex h-10 items-center justify-center rounded-full bg-[rgba(5,28,46,0.72)] text-[var(--ode-accent)] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] transition hover:bg-[rgba(8,43,67,0.9)] disabled:cursor-not-allowed disabled:opacity-55";
-  const compactUtilityIconButtonClass = `${compactUtilityButtonClass} w-10`;
+    "inline-flex h-9 items-center justify-center rounded-full bg-[rgba(5,28,46,0.72)] text-[var(--ode-accent)] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] transition hover:bg-[rgba(8,43,67,0.9)] disabled:cursor-not-allowed disabled:opacity-55";
+  const compactUtilityIconButtonClass = `${compactUtilityButtonClass} w-9`;
   const historyHeaderIconButtonClass =
     "inline-flex h-8 w-8 items-center justify-center rounded-full bg-[rgba(5,28,46,0.58)] text-[var(--ode-text-dim)] transition hover:bg-[rgba(8,43,67,0.48)] hover:text-[var(--ode-text)] disabled:cursor-not-allowed disabled:opacity-40";
   const historyDeleteIconButtonClass =
@@ -2840,7 +2840,7 @@ export function AiCommandBar({
                 onDrop={handleComposerDrop}
                 className={
                   compactEmbeddedMode
-                    ? `absolute inset-x-0 bottom-0 z-[2] -mx-4 px-4 pb-3 pt-2 backdrop-blur-[10px] ${
+                    ? `absolute inset-x-0 bottom-0 z-[2] -mx-4 px-4 pb-2 pt-1.5 backdrop-blur-[10px] ${
                         dragActive
                           ? "bg-[rgba(4,24,40,0.98)] shadow-[0_-18px_34px_rgba(0,0,0,0.22)]"
                           : "bg-[rgba(1,13,23,0.98)]"
@@ -2913,7 +2913,7 @@ export function AiCommandBar({
                       ref={inputRef}
                       className={`ode-input w-full rounded-xl px-4 py-3 text-[1rem] leading-6 ${
                         compactEmbeddedMode
-                          ? "min-h-[4.35rem] max-h-[10rem] resize-none overflow-y-auto rounded-[20px] bg-[rgba(5,28,46,0.58)] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] focus:shadow-[0_0_0_1px_rgba(95,220,255,0.2)]"
+                          ? "min-h-[3.45rem] max-h-[8rem] resize-none overflow-y-auto rounded-[16px] bg-[rgba(5,28,46,0.58)] py-2.5 text-[0.94rem] shadow-[inset_0_1px_0_rgba(128,226,255,0.04)] focus:shadow-[0_0_0_1px_rgba(95,220,255,0.2)]"
                           : "min-h-[3.9rem] resize-y"
                       }`}
                       value={commandText}
@@ -3167,7 +3167,7 @@ export function AiCommandBar({
                       <OdeTooltip label={isAnalyzing ? primaryBusyLabel : primaryActionLabel} side="top" align="end">
                         <button
                           type="button"
-                          className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-[linear-gradient(180deg,rgba(18,113,164,0.98),rgba(7,59,90,0.98))] text-white shadow-[0_12px_28px_rgba(9,69,105,0.34)] transition hover:-translate-y-[1px] hover:brightness-[1.04] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:brightness-100"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-[linear-gradient(180deg,rgba(18,113,164,0.98),rgba(7,59,90,0.98))] text-white shadow-[0_12px_28px_rgba(9,69,105,0.34)] transition hover:-translate-y-[1px] hover:brightness-[1.04] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-55 disabled:hover:brightness-100"
                           onMouseDown={(event) => {
                             event.preventDefault();
                           }}

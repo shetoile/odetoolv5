@@ -235,6 +235,7 @@ export function NodeQuickAppsModal({
       ...(typeChanged
         ? {
             target: "",
+            templateTarget: null,
             iconKey: "auto" as const,
             customIconDataUrl: null
           }
